@@ -1,0 +1,12 @@
+[package]
+name = "ui-components"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+askama = "0.12"
+ammonia = "4.0"
+serde = { version = "1.0", features = ["derive"] }
+regex = "1.10"
+
+[dev-dependencies]

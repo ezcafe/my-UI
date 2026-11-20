@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AR Spatial RSS Reader</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* Modern CSS: Container queries and fluid layout without hardcoded breakpoints */
+    :root {
+      color-scheme: dark;
+    }
+
+    /* Spatial AR Glassmorphism */
+    .ar-glass {
+      background: rgba(15, 23, 42, 0.68);
+      backdrop-filter: blur(28px) saturate(190%);
+      -webkit-backdrop-filter: blur(28px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 
+        0 20px 50px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    }
+
+    .ar-glass-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(16px);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .ar-glass-card:hover {
+      background: rgba(255, 255, 255, 0.09);
+      border-color: rgba(99, 102, 241, 0.4);
+      transform: translateY(-1px) scale(1.008);
+    }
+
+    .ar-active-card {
+      background: rgba(99, 102, 241, 0.18) !important;
+      border-color: rgba(129, 140, 248, 0.5) !important;
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.25);
+    }
+
+    /* AR Workspace Shell */
+    .spatial-shell {
+      container-type: inline-size;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(0.75rem, 2.5vw, 2rem);
+    }
+
+    .spatial-window {
+      width: 100%;
+      max-width: 1100px;
+      height: min(90vh, 820px);
+      display: flex;
+      flex-direction: column;
+      border-radius: 28px;
+      overflow: hidden;
+    }
+
+    .spatial-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) minmax(360px, 1fr);
+      height: 100%;
+      overflow: hidden;
+    }
+
+    @container (max-width: 720px) {
+      .spatial-grid {
+        grid-template-columns: 1fr;
+      }
+      .mobile-hide-list {
+        display: none;
+      }
+      .mobile-hide-reader {
+        display: none;
+      }
+    }
+
+    /* Spatial grab bar pill */
+    .spatial-grab-pill {
+      width: 44px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 9999px;
+    }
+
+    /* Passthrough background simulation */
+    .passthrough-env {
+      background: 
+        radial-gradient(circle at 15% 20%, rgba(99, 102, 241, 0.18), transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(168, 85, 247, 0.15), transparent 45%),
+        linear-gradient(135deg, #020617 0%, #0b0f19 50%, #030712 100%);
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="passthrough-env text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <div class="spatial-shell">
+    
+    <!-- AR Floating Spatial Window -->
+    <div class="spatial-window ar-glass flex flex-col">
+      
+      <!-- Spatial Window Top Bar (Gaze & Grab Bar) -->
+      <header class="h-14 px-5 border-b border-white/10 flex items-center justify-between shrink-0 select-none">
+        
+        <!-- Left: App Identity -->
+        <div class="flex items-center gap-3">
+          <a href="index.html" class="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-slate-300 transition-colors" title="Back to menu">
+            <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <i data-lucide="glasses" class="w-4 h-4"></i>
+            </span>
+            <span class="font-bold text-sm tracking-tight text-white">Spatial RSS</span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">AR Mode</span>
+          </div>
+        </div>
+
+        <!-- Center: Spatial Grab Handle (Pinch to move window) -->
+        <div class="hidden sm:flex flex-col items-center gap-1 cursor-grab" title="Pinch to reposition spatial window">
+          <div class="spatial-grab-pill"></div>
+        </div>
+
+        <!-- Right: Controls -->
+        <div class="flex items-center gap-3 text-xs text-slate-300">
+          <button onclick="markAllRead()" class="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 transition-colors">
+            Mark all read
+          </button>
+          <div class="w-2 h-2 rounded-full bg-emerald-400" title="Connected to Spatial Feeds"></div>
+        </div>
+      </header>
+
+      <!-- 2-Column AR Layout -->
+      <div class="spatial-grid flex-1">
+        
+        <!-- Left Column: Title-Only List -->
+        <aside id="list-pane" class="border-r border-white/10 flex flex-col overflow-hidden bg-black/10">
+          
+          <!-- Search / Filter Pill -->
+          <div class="p-3 border-b border-white/10 shrink-0">
+            <div class="relative">
+              <i data-lucide="search" class="w-3.5 h-3.5 absolute left-3.5 top-2.5 text-slate-400"></i>
+              <input 
+                id="search-input" 
+                type="text" 
+                placeholder="Search titles..." 
+                oninput="handleSearch(this.value)"
+                class="w-full bg-white/5 border border-white/10 rounded-full pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400 transition-colors"
+              >
+            </div>
+          </div>
+
+          <!-- Title-Only Feed Stream -->
+          <div id="articles-container" class="overflow-y-auto p-2.5 space-y-1.5 flex-1">
+            <!-- Dynamically populated with titles only -->
+          </div>
+          
+          <div class="p-2.5 border-t border-white/10 text-[11px] font-mono text-slate-400 flex items-center justify-between shrink-0 px-4">
+            <span id="unread-count">4 unread</span>
+            <span>Title-Only View</span>
+          </div>
+        </aside>
+
+        <!-- Right Column: Spatial Article Reader -->
+        <main id="reader-pane" class="flex flex-col overflow-y-auto bg-black/5">
+          <div class="max-w-2xl mx-auto w-full p-6 sm:p-10 space-y-6">
+            
+            <!-- Mobile back navigation -->
+            <div class="block sm:hidden">
+              <button onclick="showListOnMobile()" class="flex items-center gap-1.5 text-xs text-indigo-400 font-semibold py-1">
+                <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                <span>Back to Titles</span>
+              </button>
+            </div>
+
+            <!-- Article Header -->
+            <div id="article-header" class="space-y-3 pb-5 border-b border-white/10">
+              <!-- Dynamically populated -->
+            </div>
+
+            <!-- AI Summary Card -->
+            <div id="article-ai-box" class="p-4 rounded-2xl ar-glass-card space-y-2.5 border border-indigo-500/30">
+              <!-- Dynamically populated -->
+            </div>
+
+            <!-- Clean Article Body -->
+            <article id="article-body" class="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-4 font-sans">
+              <!-- Dynamically populated -->
+            </article>
+
+          </div>
+        </main>
+
+      </div>
+
+      <!-- Spatial Window Bottom Bar -->
+      <footer class="h-10 px-5 border-t border-white/10 flex items-center justify-between text-[11px] text-slate-400 shrink-0 select-none bg-black/10">
+        <span class="flex items-center gap-1.5">
+          <i data-lucide="eye" class="w-3.5 h-3.5 text-indigo-400"></i>
+          Gaze-Optimized Spatial Typography
+        </span>
+        <span class="font-mono text-slate-500">Pinch & Tap Ready</span>
+      </footer>
+
+    </div>
+
+  </div>
+
+  <!-- Stub Data & App Logic -->
+  <script>
+    const RSS_ITEMS = [
+      {
+        id: "item-1",
+        feed: "Ars Technica",
+        title: "NASA's Voyager 1 Resumes Full Science Data Transmission",
+        date: "2 hours ago",
+        readTime: "4 min read",
+        unread: true,
+        summary: "After months of communication issues caused by a corrupted memory chip in the flight data system, NASA engineers restored Voyager 1 to full operation 15 billion miles away.",
+        aiBullets: [
+          "Defective memory chip in the Flight Data Subsystem (FDS) was isolated.",
+          "Commands transmitted across a 22.5-hour one-way light time.",
+          "All four scientific instruments are once again collecting interstellar data."
+        ],
+        body: `
+          <p>NASA reported today that Voyager 1 has resumed full scientific operations for the first time since November. The 46-year-old spacecraft, currently traveling in interstellar space roughly 15 billion miles from Earth, is returning normal telemetry and science readings from all four active instruments.</p>
+          <p>The root cause was traced to a single failing memory chip in the Flight Data Subsystem (FDS). Rather than attempt to replace the hardware remotely, engineers at the Jet Propulsion Laboratory divided the affected code into smaller segments and relocated them to unoccupied sections of the FDS memory.</p>
+          <p>Voyager 1 and its twin, Voyager 2, remain humanity's longest-operating spacecraft, offering unprecedented measurements of the interstellar medium beyond the heliosphere.</p>
+        `
+      },
+      {
+        id: "item-2",
+        feed: "Hacker News",
+        title: "SQLite 3.46 Released with Improved JSON and Query Planning",
+        date: "4 hours ago",
+        readTime: "3 min read",
+        unread: true,
+        summary: "SQLite 3.46 brings significant improvements to JSONB functions, faster subquery flattening, and enhanced memory efficiency in embedded environments.",
+        aiBullets: [
+          "Enhanced JSONB representation accelerates binary serialization by 30%.",
+          "Optimizer improvements eliminate unnecessary temp table allocations for complex CTEs.",
+          "Strict backwards compatibility maintained."
+        ],
+        body: `
+          <p>The SQLite development team has announced version 3.46. This release introduces enhanced support for binary JSON (JSONB), reducing both memory usage and parse overhead when handling high-throughput document payloads.</p>
+          <p>Additionally, query planner refinements allow the optimizer to flatten nested subqueries and Common Table Expressions (CTEs) more aggressively, leading to measurable speedups in analytical queries.</p>
+        `
+      },
+      {
+        id: "item-3",
+        feed: "GitHub Blog",
+        title: "Introducing Workspace-Level Code Intelligence for Monorepos",
+        date: "Yesterday",
+        readTime: "5 min read",
+        unread: true,
+        summary: "GitHub rolled out semantic code navigation across multi-package monorepos, providing instant jump-to-definition and symbol cross-references across repository boundaries.",
+        aiBullets: [
+          "Language Server Protocol (LSP) indexes dependencies across workspace boundaries.",
+          "Supports TypeScript, Go, Rust, and Python monorepo layouts.",
+          "Instant symbol search without manual index rebuilds."
+        ],
+        body: `
+          <p>Navigating large-scale monorepos has historically posed challenges for browser-based code viewers. Today, GitHub is rolling out workspace-aware semantic navigation across enterprise repositories.</p>
+          <p>Developers can now command-click symbols in one package and jump directly to their declaration in an independent internal package, streamlining code reviews and architectural audits.</p>
+        `
+      },
+      {
+        id: "item-4",
+        feed: "The Verge",
+        title: "EU Finalizes Interoperability Standards for Messaging Protocols",
+        date: "Yesterday",
+        readTime: "4 min read",
+        unread: true,
+        summary: "European regulators established technical guidelines requiring designated messaging platforms to support cross-service end-to-end encrypted messaging.",
+        aiBullets: [
+          "Gatekeeper messaging apps must support interoperable 1-on-1 text encryption.",
+          "Signal protocol or equivalent security guarantees required.",
+          "Full compliance deadline set for early next year."
+        ],
+        body: `
+          <p>The European Commission has published the technical architecture guidelines implementing the Digital Markets Act (DMA) interoperability obligations. Gatekeeper messaging platforms must provide open APIs for third-party clients to exchange messages securely.</p>
+          <p>The mandate emphasizes that cross-platform communication must preserve end-to-end encryption without compromising cryptographic key safety.</p>
+        `
+      },
+      {
+        id: "item-5",
+        feed: "MIT Tech Review",
+        title: "Next-Generation Solid-State Batteries Enter Pilot Factory Testing",
+        date: "2 days ago",
+        readTime: "6 min read",
+        unread: false,
+        summary: "A new pilot facility in California began manufacturing ceramic electrolyte solid-state battery cells designed to deliver 500 Wh/kg energy density.",
+        aiBullets: [
+          "Ceramic electrolyte eliminates flammable liquid solvent risk.",
+          "Energy density increases by 65% compared to commercial NMC lithium cells.",
+          "Targeting initial rollout in consumer hardware followed by automotive platforms."
+        ],
+        body: `
+          <p>Researchers and automotive partners have inaugurated a pilot manufacturing line producing ceramic solid-state battery cells at commercial scale. The design demonstrates resilience across 1,000 deep charge cycles with minimal capacity degradation.</p>
+          <p>By replacing organic liquid electrolytes with a non-flammable solid ceramic separator, the cells operate safely at higher voltages while drastically reducing thermal runaway risks.</p>
+        `
+      }
+    ];
+
+    let selectedId = "item-1";
+    let searchQuery = "";
+
+    // Render Title-Only List
+    function renderList() {
+      const container = document.getElementById("articles-container");
+      container.innerHTML = "";
+
+      const filtered = RSS_ITEMS.filter(item => {
+        if (!searchQuery) return true;
+        return item.title.toLowerCase().includes(searchQuery.toLowerCase());
+      });
+
+      const unreadCount = RSS_ITEMS.filter(i => i.unread).length;
+      document.getElementById("unread-count").innerText = `${unreadCount} unread`;
+
+      filtered.forEach(item => {
+        const isSelected = item.id === selectedId;
+        const row = document.createElement("div");
+        row.className = `p-3 rounded-xl cursor-pointer ar-glass-card flex items-center justify-between gap-3 ${
+          isSelected ? "ar-active-card text-white font-semibold" : "text-slate-300"
+        }`;
+        row.onclick = () => selectArticle(item.id);
+
+        // SHOW TITLE ONLY as requested by user
+        row.innerHTML = `
+          <span class="text-xs leading-snug line-clamp-2 select-none">
+            ${item.title}
+          </span>
+          ${item.unread ? '<span class="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" title="Unread"></span>' : ''}
+        `;
+        container.appendChild(row);
+      });
+      lucide.createIcons();
+    }
+
+    // Select Article & Update Reader
+    function selectArticle(id) {
+      selectedId = id;
+      const item = RSS_ITEMS.find(i => i.id === id) || RSS_ITEMS[0];
+      item.unread = false;
+
+      // Header
+      const header = document.getElementById("article-header");
+      header.innerHTML = `
+        <div class="flex items-center gap-2 text-xs font-mono text-slate-400">
+          <span class="text-indigo-400 font-semibold px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20">${item.feed}</span>
+          <span>•</span>
+          <span>${item.date}</span>
+          <span>•</span>
+          <span>${item.readTime}</span>
+        </div>
+        <h1 class="text-xl sm:text-2xl font-bold text-white tracking-tight leading-snug">
+          ${item.title}
+        </h1>
+      `;
+
+      // AI Summary Box
+      const aiBox = document.getElementById("article-ai-box");
+      aiBox.innerHTML = `
+        <div class="flex items-center justify-between text-xs font-semibold text-indigo-300">
+          <span class="flex items-center gap-1.5">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-400"></i>
+            Spatial AI Brief
+          </span>
+          <span class="text-[10px] uppercase font-mono text-slate-400">TL;DR</span>
+        </div>
+        <p class="text-xs text-slate-200 leading-relaxed">
+          ${item.summary}
+        </p>
+        <ul class="space-y-1 pt-1 text-xs text-slate-300">
+          ${item.aiBullets.map(b => `
+            <li class="flex items-start gap-2">
+              <span class="text-indigo-400 font-bold">•</span>
+              <span>${b}</span>
+            </li>
+          `).join('')}
+        </ul>
+      `;
+
+      // Article Body
+      document.getElementById("article-body").innerHTML = item.body;
+
+      renderList();
+      lucide.createIcons();
+    }
+
+    function handleSearch(val) {
+      searchQuery = val.trim();
+      renderList();
+    }
+
+    function markAllRead() {
+      RSS_ITEMS.forEach(i => i.unread = false);
+      renderList();
+    }
+
+    function showListOnMobile() {
+      document.getElementById("list-pane").classList.remove("mobile-hide-list");
+      document.getElementById("reader-pane").classList.add("mobile-hide-reader");
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      renderList();
+      selectArticle(selectedId);
+      lucide.createIcons();
+    });
+  </script>
+</body>
+</html>

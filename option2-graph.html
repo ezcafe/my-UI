@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2030 AI RSS Reader | Spatial Mind-Map & Story Stream</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    .spatial-shell {
+      container-type: inline-size;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .spatial-layout {
+      display: grid;
+      /* Responsive fluid layout: Graph Canvas + Story Drawer */
+      grid-template-columns: minmax(400px, 1.8fr) minmax(360px, 1fr);
+      height: 100%;
+      overflow: hidden;
+    }
+    @container (max-width: 860px) {
+      .spatial-layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+      }
+    }
+    /* Graph node glow animations */
+    .node-pulse {
+      animation: pulse 2.5s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.85; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.05); }
+    }
+    .edge-glow {
+      stroke-dasharray: 6 3;
+      animation: dash 30s linear infinite;
+    }
+    @keyframes dash {
+      to { stroke-dashoffset: -1000; }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-purple-500 selection:text-white">
+
+  <div class="spatial-shell">
+    <!-- Header -->
+    <header class="h-14 border-b border-slate-800/80 bg-slate-900/80 backdrop-blur px-4 flex items-center justify-between shrink-0 z-20">
+      <div class="flex items-center gap-3">
+        <a href="index.html" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors" title="Back to prototypes menu">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+        </a>
+        <div class="flex items-center gap-2">
+          <div class="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse"></div>
+          <span class="font-bold text-sm tracking-wide text-white">NEURA·RSS 2030</span>
+          <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">Option 2: Spatial Neural Graph</span>
+        </div>
+      </div>
+
+      <!-- Graph View Controls -->
+      <div class="flex items-center gap-3 text-xs">
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 text-purple-300 border border-slate-700">
+          <i data-lucide="network" class="w-3.5 h-3.5"></i>
+          <span>Knowledge Web: <strong>6 Narrative Clusters</strong></span>
+        </div>
+        <a href="option1-workspace.html" class="text-xs text-slate-400 hover:text-cyan-300 transition-colors flex items-center gap-1">
+          <span>Switch to Option 1</span>
+          <i data-lucide="chevron-right" class="w-3 h-3"></i>
+        </a>
+      </div>
+    </header>
+
+    <!-- Main Spatial Workspace -->
+    <div class="spatial-layout flex-1">
+      
+      <!-- Left: Interactive Spatial Mind-Map Graph -->
+      <section class="relative bg-gradient-to-br from-slate-950 via-slate-900/60 to-purple-950/20 flex flex-col border-r border-slate-800/80 overflow-hidden">
+        
+        <!-- Graph Overlay Bar -->
+        <div class="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2">
+          <span class="text-xs uppercase font-mono tracking-wider font-bold text-slate-400 bg-slate-900/90 px-2.5 py-1 rounded-lg border border-slate-800">
+            Cross-Feed Causal Web
+          </span>
+          <button onclick="resetGraphView()" class="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-300 text-xs border border-slate-700 transition-colors flex items-center gap-1">
+            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+            Reset View
+          </button>
+        </div>
+
+        <div class="absolute bottom-4 left-4 z-10 text-[11px] text-slate-400 bg-slate-900/90 p-2.5 rounded-lg border border-slate-800 flex items-center gap-3">
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> High Impact</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span> Hardware/Infra</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-purple-400"></span> AI & Logic</span>
+          <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span> Frontier</span>
+        </div>
+
+        <!-- SVG Spatial Graph Canvas -->
+        <svg id="graph-svg" class="w-full h-full cursor-grab active:cursor-grabbing select-none" viewBox="0 0 900 650">
+          <defs>
+            <radialGradient id="grad-pulse" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#a855f7" stop-opacity="0.3" />
+              <stop offset="100%" stop-color="#a855f7" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="edge-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.6"/>
+              <stop offset="100%" stop-color="#a855f7" stop-opacity="0.6"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Background Subtle Grid -->
+          <pattern id="spatial-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(51, 65, 85, 0.15)" stroke-width="1"/>
+          </pattern>
+          <rect width="100%" height="100%" fill="url(#spatial-grid)" />
+
+          <!-- Dynamic Edges (Causal & Topical Connections) -->
+          <g id="graph-edges">
+            <!-- Rendered by JS -->
+          </g>
+
+          <!-- Dynamic Nodes -->
+          <g id="graph-nodes">
+            <!-- Rendered by JS -->
+          </g>
+        </svg>
+      </section>
+
+      <!-- Right: Story Cluster & Reader Drawer -->
+      <aside class="bg-slate-900/50 flex flex-col overflow-hidden">
+        
+        <!-- Story Panel Header -->
+        <div class="p-4 border-b border-slate-800/80 bg-slate-900/80 shrink-0 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="p-1 rounded bg-purple-500/20 text-purple-400">
+              <i data-lucide="book-open" class="w-4 h-4"></i>
+            </span>
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Cluster Intelligence</span>
+          </div>
+          <span id="selected-node-tag" class="text-xs font-mono px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30">
+            Selected Node
+          </span>
+        </div>
+
+        <!-- Scrollable Story Content -->
+        <div class="flex-1 overflow-y-auto p-5 space-y-5" id="story-drawer-content">
+          <!-- Dynamically populated -->
+        </div>
+
+        <!-- Bottom Action Bar -->
+        <div class="p-3 border-t border-slate-800 bg-slate-900/90 flex items-center justify-between shrink-0 text-xs">
+          <button onclick="synthesizeConnectedStorylines()" class="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors flex items-center gap-1.5 shadow-md shadow-purple-900/20">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>Synthesize Connected Nodes</span>
+          </button>
+          <button onclick="exportStorylineMarkdown()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors flex items-center gap-1">
+            <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+            <span>Export Graph Thread</span>
+          </button>
+        </div>
+
+      </aside>
+
+    </div>
+  </div>
+
+  <!-- Graph Logic & Stub Data -->
+  <script>
+    const GRAPH_DATA = {
+      nodes: [
+        {
+          id: "node-1",
+          x: 450,
+          y: 220,
+          label: "Silicon Photonics Fabric",
+          sub: "TSMC · Intel · IEEE",
+          category: "Hardware",
+          impact: 94,
+          color: "#06b6d4",
+          cluster: "infra",
+          stories: [
+            "IEEE Spectrum: 800Tbps on-package optical transceiver passes multi-core test.",
+            "Semiconductor Weekly: Copper retimer market contracts by 40%."
+          ],
+          aiBrief: "Direct laser interconnects eliminate copper interconnect resistance. Enables sub-microsecond tensor sharing across distributed clusters.",
+          causalInsights: "Directly solves regional data center power caps mandated by the 2030 Geneva Energy Accord."
+        },
+        {
+          id: "node-2",
+          x: 230,
+          y: 160,
+          label: "Geneva Energy Quotas",
+          sub: "Reuters · Bloomberg",
+          category: "Regulatory",
+          impact: 86,
+          color: "#f59e0b",
+          cluster: "infra",
+          stories: [
+            "24 nations establish mandatory 250MW fossil compute power draw caps.",
+            "Grid operators mandate on-site small modular nuclear reactors."
+          ],
+          aiBrief: "Geopolitical shift linking AI training permits directly to dedicated clean gigawatt power generation.",
+          causalInsights: "Forces hardware builders to accelerate optical photonics and liquid submersion cooling."
+        },
+        {
+          id: "node-3",
+          x: 670,
+          y: 180,
+          label: "Autonomous Swarm Proofs",
+          sub: "arXiv · MIT Tech Review",
+          category: "AI & Logic",
+          impact: 91,
+          color: "#a855f7",
+          cluster: "ai-systems",
+          stories: [
+            "Formal Lean4 proof verification integrated into real-time agent loops.",
+            "Zero hallucination achieved in decentralized financial consensus."
+          ],
+          aiBrief: "Autonomous multi-agent systems now produce mathematically verified software without human code review.",
+          causalInsights: "Demands lower network latency (sub-50 microsecond AllReduce) enabled by optical photonics."
+        },
+        {
+          id: "node-4",
+          x: 520,
+          y: 430,
+          label: "Bio-Digital DNA Storage",
+          sub: "Nature Biotechnology",
+          category: "Frontier",
+          impact: 79,
+          color: "#10b981",
+          cluster: "storage",
+          stories: [
+            "Synthetic enzymatic vector matching passes 10PB/gram density.",
+            "Cold archive tape replacement testbeds go live."
+          ],
+          aiBrief: "Permanent 1,000-year cold memory for global knowledge models without magnetic tape decay.",
+          causalInsights: "Stores verifiable swarm proof histories indefinitely at zero idle power draw."
+        },
+        {
+          id: "node-5",
+          x: 280,
+          y: 380,
+          label: "Liquid Immersion Racks",
+          sub: "Datacenter Dynamics",
+          category: "Hardware",
+          impact: 82,
+          color: "#06b6d4",
+          cluster: "infra",
+          stories: [
+            "Submerged 100kW rack designs become standard for optical fabrics.",
+            "Zero air conditioning architecture deployed in desert hyperscalers."
+          ],
+          aiBrief: "Direct dielectric fluid submersion eliminates mechanical fans and acoustic vibration.",
+          causalInsights: "Prerequisite physical environment to run dense silicon photonic transceivers reliably."
+        },
+        {
+          id: "node-6",
+          x: 740,
+          y: 390,
+          label: "Quantum-Classical Compiler",
+          sub: "Linux Foundation · Qiskit",
+          category: "Frontier",
+          impact: 72,
+          color: "#ec4899",
+          cluster: "quantum",
+          stories: [
+            "Hybrid IR schedules tensor optimization between GPUs and 100-qubit neutral atom QPUs.",
+            "Circuit depth reduction compiler cuts error rates by 45%."
+          ],
+          aiBrief: "Provides quantum accelerated combinatorial optimization to swarm routing algorithms.",
+          causalInsights: "Integrated with formal swarm verifiers to solve NP-hard graph partitioning."
+        }
+      ],
+      edges: [
+        { from: "node-1", to: "node-2", label: "Resolves Power Bottleneck" },
+        { from: "node-1", to: "node-3", label: "Enables Microsecond AllReduce" },
+        { from: "node-1", to: "node-5", label: "Requires Cleanroom Immersion" },
+        { from: "node-3", to: "node-4", label: "Archives Verified Proof Trees" },
+        { from: "node-3", to: "node-6", label: "Dispatches Combinatorial Graph" },
+        { from: "node-2", to: "node-5", label: "Mandates PUE < 1.05" }
+      ]
+    };
+
+    let selectedNodeId = "node-1";
+
+    function renderGraph() {
+      const edgesGroup = document.getElementById("graph-edges");
+      const nodesGroup = document.getElementById("graph-nodes");
+
+      edgesGroup.innerHTML = "";
+      nodesGroup.innerHTML = "";
+
+      // Render Edges
+      GRAPH_DATA.edges.forEach(edge => {
+        const source = GRAPH_DATA.nodes.find(n => n.id === edge.from);
+        const target = GRAPH_DATA.nodes.find(n => n.id === edge.to);
+        if (!source || !target) return;
+
+        const isConnected = source.id === selectedNodeId || target.id === selectedNodeId;
+
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+
+        // Edge line
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", source.x);
+        line.setAttribute("y1", source.y);
+        line.setAttribute("x2", target.x);
+        line.setAttribute("y2", target.y);
+        line.setAttribute("stroke", isConnected ? "#c084fc" : "#334155");
+        line.setAttribute("stroke-width", isConnected ? "2.5" : "1.2");
+        line.setAttribute("opacity", isConnected ? "1" : "0.5");
+        if (isConnected) line.setAttribute("class", "edge-glow");
+        g.appendChild(line);
+
+        // Edge label at midpoint
+        const midX = (source.x + target.x) / 2;
+        const midY = (source.y + target.y) / 2;
+
+        if (isConnected) {
+          const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          rect.setAttribute("x", midX - 60);
+          rect.setAttribute("y", midY - 10);
+          rect.setAttribute("width", "120");
+          rect.setAttribute("height", "20");
+          rect.setAttribute("rx", "6");
+          rect.setAttribute("fill", "#090d16");
+          rect.setAttribute("stroke", "#475569");
+          rect.setAttribute("stroke-width", "0.8");
+          g.appendChild(rect);
+
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", midX);
+          text.setAttribute("y", midY + 3.5);
+          text.setAttribute("text-anchor", "middle");
+          text.setAttribute("fill", "#e2e8f0");
+          text.setAttribute("font-size", "9");
+          text.setAttribute("font-family", "monospace");
+          text.textContent = edge.label;
+          g.appendChild(text);
+        }
+
+        edgesGroup.appendChild(g);
+      });
+
+      // Render Nodes
+      GRAPH_DATA.nodes.forEach(node => {
+        const isSelected = node.id === selectedNodeId;
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "cursor-pointer transition-transform");
+        g.onclick = () => selectNode(node.id);
+
+        // Ambient outer ring
+        if (isSelected) {
+          const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          halo.setAttribute("cx", node.x);
+          halo.setAttribute("cy", node.y);
+          halo.setAttribute("r", "38");
+          halo.setAttribute("fill", "url(#grad-pulse)");
+          halo.setAttribute("class", "node-pulse");
+          g.appendChild(halo);
+        }
+
+        // Main node circle
+        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        circle.setAttribute("cx", node.x);
+        circle.setAttribute("cy", node.y);
+        circle.setAttribute("r", isSelected ? "24" : "19");
+        circle.setAttribute("fill", "#0f172a");
+        circle.setAttribute("stroke", isSelected ? "#a855f7" : node.color);
+        circle.setAttribute("stroke-width", isSelected ? "3" : "2");
+        g.appendChild(circle);
+
+        // Impact score inside node
+        const score = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        score.setAttribute("x", node.x);
+        score.setAttribute("y", node.y + 4);
+        score.setAttribute("text-anchor", "middle");
+        score.setAttribute("fill", isSelected ? "#f8fafc" : node.color);
+        score.setAttribute("font-size", isSelected ? "11" : "10");
+        score.setAttribute("font-weight", "bold");
+        score.setAttribute("font-family", "monospace");
+        score.textContent = node.impact;
+        g.appendChild(score);
+
+        // Node label
+        const title = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        title.setAttribute("x", node.x);
+        title.setAttribute("y", node.y + 36);
+        title.setAttribute("text-anchor", "middle");
+        title.setAttribute("fill", isSelected ? "#f1f5f9" : "#cbd5e1");
+        title.setAttribute("font-size", "11");
+        title.setAttribute("font-weight", isSelected ? "bold" : "600");
+        title.textContent = node.label;
+        g.appendChild(title);
+
+        // Node source subtitle
+        const sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        sub.setAttribute("x", node.x);
+        sub.setAttribute("y", node.y + 48);
+        sub.setAttribute("text-anchor", "middle");
+        sub.setAttribute("fill", "#64748b");
+        sub.setAttribute("font-size", "9");
+        sub.setAttribute("font-family", "monospace");
+        sub.textContent = node.sub;
+        g.appendChild(sub);
+
+        nodesGroup.appendChild(g);
+      });
+    }
+
+    function selectNode(id) {
+      selectedNodeId = id;
+      renderGraph();
+      updateStoryDrawer();
+    }
+
+    function updateStoryDrawer() {
+      const node = GRAPH_DATA.nodes.find(n => n.id === selectedNodeId) || GRAPH_DATA.nodes[0];
+      const tag = document.getElementById("selected-node-tag");
+      tag.innerText = node.category + " · Impact " + node.impact + "/100";
+
+      const container = document.getElementById("story-drawer-content");
+      
+      // Find connected nodes
+      const connectedEdges = GRAPH_DATA.edges.filter(e => e.from === node.id || e.to === node.id);
+      const connectedNodeDetails = connectedEdges.map(e => {
+        const otherId = e.from === node.id ? e.to : e.from;
+        const otherNode = GRAPH_DATA.nodes.find(n => n.id === otherId);
+        return {
+          node: otherNode,
+          relation: e.label
+        };
+      });
+
+      container.innerHTML = `
+        <!-- Title & Badges -->
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${node.color}"></span>
+            <span class="text-xs font-mono uppercase text-slate-400">${node.sub}</span>
+          </div>
+          <h2 class="text-lg font-bold text-white leading-snug">
+            ${node.label}
+          </h2>
+        </div>
+
+        <!-- AI Cluster Synthesis -->
+        <div class="p-3.5 rounded-xl bg-slate-900 border border-purple-500/30 space-y-2">
+          <div class="flex items-center justify-between text-xs font-semibold text-purple-300">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 text-purple-400"></i>
+              AI Narrative Synthesis
+            </span>
+            <span class="text-[11px] font-mono text-purple-400">${node.impact} / 100 Signal</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            ${node.aiBrief}
+          </p>
+          <div class="pt-2 border-t border-purple-500/20 text-xs text-slate-300">
+            <span class="text-purple-300 font-medium">Cross-Feed Causal Link:</span> ${node.causalInsights}
+          </div>
+        </div>
+
+        <!-- Connected Stories in this Cluster -->
+        <div class="space-y-2">
+          <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            Primary Feed Sources (${node.stories.length})
+          </div>
+          <div class="space-y-1.5">
+            ${node.stories.map(s => `
+              <div class="p-2.5 rounded-lg bg-slate-800/60 border border-slate-700/80 text-xs text-slate-200 flex items-start gap-2">
+                <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5"></i>
+                <span>${s}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Linked Causal Graph Nodes -->
+        <div class="space-y-2">
+          <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            Interconnected Causal Web (${connectedNodeDetails.length})
+          </div>
+          <div class="space-y-1.5">
+            ${connectedNodeDetails.map(c => `
+              <div onclick="selectNode('${c.node.id}')" class="p-2.5 rounded-lg bg-slate-800/40 hover:bg-slate-800 border border-slate-700 cursor-pointer transition-colors flex items-center justify-between text-xs">
+                <div>
+                  <div class="font-semibold text-slate-200">${c.node.label}</div>
+                  <div class="text-[10px] text-purple-300 font-mono">${c.relation}</div>
+                </div>
+                <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-500"></i>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+
+      lucide.createIcons();
+    }
+
+    function resetGraphView() {
+      selectNode("node-1");
+    }
+
+    function synthesizeConnectedStorylines() {
+      const node = GRAPH_DATA.nodes.find(n => n.id === selectedNodeId);
+      alert(`[2030 Agent Swarm Synthesis triggered for "${node.label}"]\n\nCross-analyzing with 4 linked causal nodes. A multi-source intelligence brief has been synthesized.`);
+    }
+
+    function exportStorylineMarkdown() {
+      const node = GRAPH_DATA.nodes.find(n => n.id === selectedNodeId);
+      alert(`[Exported Knowledge Thread for "${node.label}"]\n\nCopied formatted markdown with causal citations to clipboard.`);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      renderGraph();
+      updateStoryDrawer();
+      lucide.createIcons();
+    });
+  </script>
+</body>
+</html>

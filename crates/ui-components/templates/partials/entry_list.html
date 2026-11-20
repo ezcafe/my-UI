@@ -1,0 +1,38 @@
+{% if entries.is_empty() %}
+<div class="flex flex-col items-center justify-center p-12 text-center text-slate-400">
+  <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-slate-500"></i>
+  <p class="text-sm font-medium">All caught up!</p>
+  <p class="text-xs text-slate-500 mt-1">No articles match your current filter.</p>
+</div>
+{% else %}
+{% for entry in entries %}
+<div class="ar-list-item px-4 py-3 rounded-2xl flex items-center justify-between gap-4 cursor-pointer select-none group" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
+  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" onclick="document.getElementById('detail-panel').classList.remove('hidden')">
+    {% if !entry.is_read %}
+    <span class="w-2 h-2 rounded-full bg-indigo-400 ring-4 ring-indigo-500/20 shrink-0 shadow-sm shadow-indigo-400" title="Unread"></span>
+    {% endif %}
+    <span class="article-title text-sm font-medium leading-snug line-clamp-2 text-slate-100 group-hover:text-indigo-200 transition-colors flex-1">
+      {{ entry.title }}
+    </span>
+  </div>
+
+  <div class="flex items-center gap-2 shrink-0">
+    <a 
+      href="{{ entry.url }}" 
+      target="_blank" 
+      rel="noopener noreferrer" 
+      onclick="event.stopPropagation()" 
+      class="p-1.5 rounded-full hover:bg-white/10 text-slate-400 hover:text-indigo-300 transition-colors"
+      title="Open in browser">
+      <i data-lucide="external-link" class="w-4 h-4"></i>
+    </a>
+    <i data-lucide="chevron-right" class="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors"></i>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% if let Some(unread) = unread_count %}
+<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 font-semibold text-[11px]">
+  {{ unread }} unread
+</span>
+{% endif %}

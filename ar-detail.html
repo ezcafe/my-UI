@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AR Spatial RSS | Article Reader</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    /* Spatial Glassmorphism for AR headsets */
+    .ar-glass-panel {
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(32px) saturate(190%);
+      -webkit-backdrop-filter: blur(32px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 
+        0 24px 60px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    }
+
+    .ar-glass-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(16px);
+    }
+
+    /* Exact matching spatial shell */
+    .spatial-shell {
+      container-type: inline-size;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(0.75rem, 3vw, 2.5rem);
+    }
+
+    /* Exact matching spatial window size */
+    .spatial-window {
+      width: 100%;
+      max-width: 720px;
+      height: min(88vh, 780px);
+      display: flex;
+      flex-direction: column;
+      border-radius: 28px;
+      overflow: hidden;
+    }
+
+    /* Exact matching grab pill */
+    .spatial-grab-handle {
+      width: 48px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 9999px;
+    }
+
+    /* Exact matching passthrough ambient environment */
+    .ar-passthrough {
+      background: 
+        radial-gradient(circle at 20% 25%, rgba(99, 102, 241, 0.20), transparent 45%),
+        radial-gradient(circle at 80% 75%, rgba(168, 85, 247, 0.18), transparent 50%),
+        linear-gradient(135deg, #020617 0%, #0a0e1a 50%, #020617 100%);
+    }
+
+    /* Minimal custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="ar-passthrough text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <div class="spatial-shell">
+    
+    <!-- AR Floating Reader Window -->
+    <main class="spatial-window ar-glass-panel flex flex-col">
+      
+      <!-- Spatial Window Header: Exact height, padding & 3-column grid positioning -->
+      <header class="h-14 px-6 border-b border-white/10 grid grid-cols-[1fr_auto_1fr] items-center shrink-0 select-none">
+        
+        <!-- Left: Navigation & Identity -->
+        <div class="flex items-center gap-2.5">
+          <a href="ar-list.html" class="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-slate-300 transition-colors" title="Back to Feeds">
+            <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="p-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="font-bold text-sm tracking-tight text-white">Reader</span>
+          </div>
+        </div>
+
+        <!-- Center: Spatial Grab Handle (Exact absolute center) -->
+        <div class="flex justify-center items-center cursor-grab" title="Pinch to reposition">
+          <div class="spatial-grab-handle"></div>
+        </div>
+
+        <!-- Right: Next / Previous Article Switchers -->
+        <div class="flex items-center justify-end gap-1.5 text-xs font-mono">
+          <button id="btn-prev" onclick="navigateArticle(-1)" class="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-slate-300 transition-colors" title="Previous story">
+            <i data-lucide="chevron-up" class="w-4 h-4"></i>
+          </button>
+          <button id="btn-next" onclick="navigateArticle(1)" class="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-slate-300 transition-colors" title="Next story">
+            <i data-lucide="chevron-down" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </header>
+
+      <!-- Scrollable Content Area: Exact matching padding (p-6) & space-y-4 -->
+      <div class="flex-1 overflow-y-auto p-6 space-y-4">
+        
+        <!-- Metadata & Title Header -->
+        <div id="detail-header" class="space-y-2 pb-3 border-b border-white/10">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Spatial AI Summary Card -->
+        <div id="detail-ai-box" class="p-4 rounded-2xl ar-glass-card space-y-2.5 border border-indigo-500/30">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Clean Article Body (High readability in AR) -->
+        <article id="detail-body" class="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-3 font-sans">
+          <!-- Populated by JS -->
+        </article>
+
+      </div>
+
+      <!-- Spatial Window Footer: Exact height (h-11), padding (px-6) & alignment -->
+      <footer class="h-11 px-6 border-t border-white/10 flex items-center justify-between text-xs text-slate-400 shrink-0 select-none bg-black/10">
+        <a href="ar-list.html" class="flex items-center gap-1.5 text-slate-300 hover:text-indigo-400 transition-colors text-[11px]">
+          <i data-lucide="list" class="w-3.5 h-3.5 text-indigo-400"></i>
+          <span>Return to Title List</span>
+        </a>
+        <span id="current-index-label" class="text-[11px] font-mono text-slate-500">1 of 5</span>
+      </footer>
+
+    </main>
+
+  </div>
+
+  <!-- Shared Data Script -->
+  <script src="ar-data.js"></script>
+
+  <script>
+    let currentArticleId = 'item-1';
+
+    function initReader() {
+      const params = new URLSearchParams(window.location.search);
+      const idParam = params.get('id');
+      if (idParam) {
+        currentArticleId = idParam;
+      }
+
+      markArticleRead(currentArticleId);
+      renderArticle();
+    }
+
+    function renderArticle() {
+      const articles = getStoredArticles();
+      const currentIndex = articles.findIndex(a => a.id === currentArticleId);
+      const article = currentIndex >= 0 ? articles[currentIndex] : articles[0];
+      currentArticleId = article.id;
+
+      // Update Index indicator
+      document.getElementById('current-index-label').innerText = `${(currentIndex >= 0 ? currentIndex + 1 : 1)} of ${articles.length}`;
+
+      // Update Header
+      const header = document.getElementById('detail-header');
+      header.innerHTML = `
+        <div class="flex flex-wrap items-center gap-2 text-xs font-mono text-slate-400">
+          <span class="text-indigo-300 font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-[11px]">
+            ${article.feed}
+          </span>
+          <span>•</span>
+          <span>${article.date}</span>
+          <span>•</span>
+          <span>${article.readTime}</span>
+        </div>
+        <h1 class="text-xl sm:text-2xl font-bold text-white tracking-tight leading-snug">
+          ${article.title}
+        </h1>
+      `;
+
+      // Update AI Summary Card
+      const aiBox = document.getElementById('detail-ai-box');
+      aiBox.innerHTML = `
+        <div class="flex items-center justify-between text-xs font-semibold text-indigo-300 border-b border-indigo-500/20 pb-2">
+          <span class="flex items-center gap-1.5">
+            <i data-lucide="sparkles" class="w-4 h-4 text-indigo-400"></i>
+            Spatial AI Executive Brief
+          </span>
+          <span class="text-[10px] uppercase font-mono text-indigo-300/80 bg-indigo-500/10 px-2 py-0.5 rounded">
+            Instant Digest
+          </span>
+        </div>
+        <p class="text-xs text-slate-200 leading-relaxed font-sans">
+          ${article.summary}
+        </p>
+        <ul class="space-y-1 pt-1 text-xs text-slate-300">
+          ${article.aiBullets.map(bullet => `
+            <li class="flex items-start gap-2">
+              <span class="text-indigo-400 font-bold">•</span>
+              <span>${bullet}</span>
+            </li>
+          `).join('')}
+        </ul>
+      `;
+
+      // Update Body
+      document.getElementById('detail-body').innerHTML = article.body;
+
+      lucide.createIcons();
+    }
+
+    function navigateArticle(direction) {
+      const articles = getStoredArticles();
+      const currentIndex = articles.findIndex(a => a.id === currentArticleId);
+      let nextIndex = currentIndex + direction;
+
+      if (nextIndex < 0) nextIndex = articles.length - 1;
+      if (nextIndex >= articles.length) nextIndex = 0;
+
+      const nextArticle = articles[nextIndex];
+      currentArticleId = nextArticle.id;
+
+      // Update URL without full refresh for fluid AR experience
+      const url = new URL(window.location);
+      url.searchParams.set('id', currentArticleId);
+      window.history.replaceState({}, '', url);
+
+      markArticleRead(currentArticleId);
+      renderArticle();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initReader();
+    });
+  </script>
+</body>
+</html>

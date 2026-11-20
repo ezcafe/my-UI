@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AR Spatial RSS | Feed List</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    /* Spatial Glassmorphism for AR headsets */
+    .ar-glass-panel {
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(32px) saturate(190%);
+      -webkit-backdrop-filter: blur(32px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 
+        0 24px 60px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    }
+
+    /* Gaze-friendly row */
+    .ar-list-item {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(16px);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      min-height: 56px;
+    }
+
+    .ar-list-item:hover, .ar-list-item:focus {
+      background: rgba(99, 102, 241, 0.16);
+      border-color: rgba(129, 140, 248, 0.45);
+      transform: translateY(-1px) scale(1.008);
+      outline: none;
+    }
+
+    /* Exact matching spatial shell */
+    .spatial-shell {
+      container-type: inline-size;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(0.75rem, 3vw, 2.5rem);
+    }
+
+    /* Exact matching spatial window size */
+    .spatial-window {
+      width: 100%;
+      max-width: 720px;
+      height: min(88vh, 780px);
+      display: flex;
+      flex-direction: column;
+      border-radius: 28px;
+      overflow: hidden;
+    }
+
+    /* Exact matching grab pill */
+    .spatial-grab-handle {
+      width: 48px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 9999px;
+    }
+
+    /* Exact matching passthrough ambient environment */
+    .ar-passthrough {
+      background: 
+        radial-gradient(circle at 20% 25%, rgba(99, 102, 241, 0.20), transparent 45%),
+        radial-gradient(circle at 80% 75%, rgba(168, 85, 247, 0.18), transparent 50%),
+        linear-gradient(135deg, #020617 0%, #0a0e1a 50%, #020617 100%);
+    }
+
+    /* Minimal custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="ar-passthrough text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+  <div class="spatial-shell">
+    
+    <!-- AR Floating List Window -->
+    <main class="spatial-window ar-glass-panel flex flex-col">
+      
+      <!-- Spatial Window Header: Exact height, padding & 3-column grid positioning -->
+      <header class="h-14 px-6 border-b border-white/10 grid grid-cols-[1fr_auto_1fr] items-center shrink-0 select-none">
+        
+        <!-- Left: Navigation & Identity -->
+        <div class="flex items-center gap-2.5">
+          <a href="index.html" class="p-1.5 rounded-full bg-white/5 hover:bg-white/15 text-slate-300 transition-colors" title="Hub">
+            <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="p-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <i data-lucide="list" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="font-bold text-sm tracking-tight text-white">Feeds</span>
+          </div>
+        </div>
+
+        <!-- Center: Spatial Grab Handle (Exact absolute center) -->
+        <div class="flex justify-center items-center cursor-grab" title="Pinch to reposition">
+          <div class="spatial-grab-handle"></div>
+        </div>
+
+        <!-- Right: Unread Counter -->
+        <div class="flex items-center justify-end gap-2 text-xs font-mono">
+          <span id="unread-pill" class="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold text-[11px]">
+            ... unread
+          </span>
+        </div>
+      </header>
+
+      <!-- Scrollable Content Area: Exact matching padding (p-6) & space-y-4 -->
+      <div class="flex-1 overflow-y-auto p-6 space-y-4">
+        
+        <!-- Search & Filter Controls -->
+        <div class="space-y-3 pb-1">
+          <!-- Search input -->
+          <div class="relative">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-3 text-slate-400"></i>
+            <input 
+              id="search-input" 
+              type="text" 
+              placeholder="Search titles with gaze or voice..." 
+              oninput="handleSearch(this.value)"
+              class="w-full bg-white/5 border border-white/10 rounded-2xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-400 transition-colors"
+            >
+          </div>
+
+          <!-- Quick Filters -->
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center gap-2">
+              <button onclick="setFilter('all')" id="filter-all" class="filter-pill px-3 py-1 rounded-full bg-white/10 text-white font-medium border border-white/20 transition-colors">
+                All Titles
+              </button>
+              <button onclick="setFilter('unread')" id="filter-unread" class="filter-pill px-3 py-1 rounded-full bg-white/5 text-slate-400 hover:text-white border border-white/10 transition-colors">
+                Unread
+              </button>
+            </div>
+            <button onclick="markAllAsRead()" class="text-xs text-slate-400 hover:text-indigo-300 transition-colors">
+              Mark all read
+            </button>
+          </div>
+        </div>
+
+        <!-- Title-Only Feed List Container -->
+        <div id="list-container" class="space-y-2">
+          <!-- Dynamically populated rows: SHOWS TITLE ONLY -->
+        </div>
+
+      </div>
+
+      <!-- Spatial Window Footer: Exact height (h-11), padding (px-6) & alignment -->
+      <footer class="h-11 px-6 border-t border-white/10 flex items-center justify-between text-xs text-slate-400 shrink-0 select-none bg-black/10">
+        <span class="flex items-center gap-1.5 text-[11px]">
+          <i data-lucide="glasses" class="w-3.5 h-3.5 text-indigo-400"></i>
+          Pinch or tap title to open reader
+        </span>
+        <span class="text-[11px] font-mono text-slate-500">Spatial List</span>
+      </footer>
+
+    </main>
+
+  </div>
+
+  <!-- Shared Data Script -->
+  <script src="ar-data.js"></script>
+
+  <script>
+    let currentFilter = 'all';
+    let searchQuery = '';
+
+    function renderList() {
+      const container = document.getElementById('list-container');
+      const articles = getStoredArticles();
+      
+      const filtered = articles.filter(item => {
+        const matchesSearch = !searchQuery || item.title.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesFilter = currentFilter === 'all' || (currentFilter === 'unread' && item.unread);
+        return matchesSearch && matchesFilter;
+      });
+
+      // Update unread count
+      const unreadCount = articles.filter(a => a.unread).length;
+      document.getElementById('unread-pill').innerText = `${unreadCount} unread`;
+
+      container.innerHTML = '';
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="py-12 text-center text-xs text-slate-400">
+            No matching titles found.
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach(item => {
+        const a = document.createElement('a');
+        a.href = `ar-detail.html?id=${encodeURIComponent(item.id)}`;
+        a.className = 'ar-list-item px-4 py-3 rounded-2xl flex items-center justify-between gap-4 block cursor-pointer select-none';
+
+        // Title-only row
+        a.innerHTML = `
+          <span class="text-sm font-medium leading-snug line-clamp-2 text-slate-100 flex-1">
+            ${item.title}
+          </span>
+          <div class="flex items-center gap-2 shrink-0">
+            ${item.unread ? '<span class="w-2 h-2 rounded-full bg-indigo-400 ring-4 ring-indigo-500/20" title="Unread"></span>' : ''}
+            <i data-lucide="chevron-right" class="w-4 h-4 text-slate-500"></i>
+          </div>
+        `;
+
+        a.onclick = () => {
+          markArticleRead(item.id);
+        };
+
+        container.appendChild(a);
+      });
+
+      lucide.createIcons();
+    }
+
+    function handleSearch(val) {
+      searchQuery = val.trim();
+      renderList();
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.filter-pill').forEach(btn => {
+        btn.classList.remove('bg-white/10', 'text-white', 'border-white/20');
+        btn.classList.add('bg-white/5', 'text-slate-400', 'border-white/10');
+      });
+      const active = document.getElementById(`filter-${filter}`);
+      if (active) {
+        active.classList.add('bg-white/10', 'text-white', 'border-white/20');
+        active.classList.remove('bg-white/5', 'text-slate-400');
+      }
+      renderList();
+    }
+
+    function markAllAsRead() {
+      const articles = getStoredArticles();
+      articles.forEach(a => a.unread = false);
+      saveArticles(articles);
+      renderList();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      renderList();
+      lucide.createIcons();
+    });
+  </script>
+</body>
+</html>

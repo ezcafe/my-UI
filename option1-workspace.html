@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2030 AI RSS Reader | Living Intelligence Workspace</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Lightweight Charts CDN (strictly adhering to user rule for price/financial charts) -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    /* Modern CSS: Container queries and fluid minmax grids instead of hardcoded media breakpoints */
+    :root {
+      color-scheme: dark;
+    }
+    .workspace-shell {
+      container-type: inline-size;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .workspace-grid {
+      display: grid;
+      /* Dynamic fluid columns: Left nav, Middle list, Right workspace */
+      grid-template-columns: minmax(220px, 260px) minmax(320px, 380px) minmax(400px, 1fr);
+      height: 100%;
+      overflow: hidden;
+    }
+    @container (max-width: 900px) {
+      .workspace-grid {
+        grid-template-columns: minmax(240px, 320px) 1fr;
+      }
+      .sidebar-pane {
+        display: none;
+      }
+    }
+    @container (max-width: 620px) {
+      .workspace-grid {
+        grid-template-columns: 1fr;
+      }
+      .list-pane {
+        display: none;
+      }
+    }
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.6);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(51, 65, 85, 0.8);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(100, 116, 139, 1);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-white">
+
+  <div class="workspace-shell">
+    <!-- Top Ambient Intelligence Bar -->
+    <header class="h-14 border-b border-slate-800/80 bg-slate-900/70 backdrop-blur px-4 flex items-center justify-between shrink-0 z-20">
+      <div class="flex items-center gap-3">
+        <a href="index.html" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors" title="Back to prototypes menu">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+        </a>
+        <div class="flex items-center gap-2">
+          <div class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></div>
+          <span class="font-bold text-sm tracking-wide text-white">NEURA·RSS 2030</span>
+          <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Option 1: Living Workspace</span>
+        </div>
+      </div>
+
+      <!-- Agent Activity Indicators -->
+      <div class="flex items-center gap-4 text-xs">
+        <div class="flex items-center gap-2 text-slate-400">
+          <i data-lucide="radio" class="w-4 h-4 text-emerald-400"></i>
+          <span><strong>1,420 Feeds</strong> monitored in ambient background</span>
+        </div>
+        <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800/80 text-cyan-300 border border-slate-700">
+          <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+          <span>Autonomous Triage: <strong>Active</strong></span>
+        </div>
+        <a href="option2-graph.html" class="text-xs text-slate-400 hover:text-purple-300 transition-colors flex items-center gap-1">
+          <span>Switch to Option 2</span>
+          <i data-lucide="chevron-right" class="w-3 h-3"></i>
+        </a>
+      </div>
+    </header>
+
+    <!-- Main 3-Column Workspace -->
+    <div class="workspace-grid flex-1">
+      
+      <!-- Panel 1: Feeds & Agent Hub -->
+      <aside class="sidebar-pane border-r border-slate-800/80 bg-slate-900/40 p-3 flex flex-col justify-between overflow-y-auto">
+        <div class="space-y-4">
+          <!-- Daily Synthesis Debrief Button -->
+          <div class="p-3 rounded-xl bg-gradient-to-br from-cyan-950/60 to-slate-900 border border-cyan-500/30">
+            <div class="flex items-center justify-between text-xs mb-1">
+              <span class="font-bold text-cyan-300 flex items-center gap-1.5">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                Daily Executive Brief
+              </span>
+              <span class="text-[10px] text-slate-400 font-mono">08:00 AM</span>
+            </div>
+            <p class="text-[11px] text-slate-300 mt-1 leading-snug">
+              AI aggregated 34 critical items into 3 macro storylines.
+            </p>
+            <button id="btn-audio-brief" onclick="toggleAudioBrief()" class="w-full mt-2.5 py-1.5 px-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors">
+              <i data-lucide="volume-2" class="w-3.5 h-3.5" id="audio-icon"></i>
+              <span id="audio-label">Listen to 60s Brief</span>
+            </button>
+          </div>
+
+          <!-- Smart Agent Channels -->
+          <div>
+            <div class="text-[10px] uppercase font-mono tracking-wider text-slate-400 px-2 mb-2 font-bold">
+              Autonomous Channels
+            </div>
+            <nav class="space-y-1">
+              <button onclick="filterFeed('all')" id="tab-all" class="channel-btn w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium text-white bg-slate-800 border border-slate-700">
+                <span class="flex items-center gap-2">
+                  <i data-lucide="layers" class="w-3.5 h-3.5 text-cyan-400"></i>
+                  All Curated Items
+                </span>
+                <span class="text-[11px] font-mono text-slate-400">5</span>
+              </button>
+              <button onclick="filterFeed('high-signal')" id="tab-high-signal" class="channel-btn w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors">
+                <span class="flex items-center gap-2">
+                  <i data-lucide="flame" class="w-3.5 h-3.5 text-amber-400"></i>
+                  High Impact (90+)
+                </span>
+                <span class="text-[11px] font-mono text-amber-400">2</span>
+              </button>
+              <button onclick="filterFeed('hardware')" id="tab-hardware" class="channel-btn w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors">
+                <span class="flex items-center gap-2">
+                  <i data-lucide="microchip" class="w-3.5 h-3.5 text-indigo-400"></i>
+                  Semiconductors & Energy
+                </span>
+                <span class="text-[11px] font-mono text-slate-400">2</span>
+              </button>
+              <button onclick="filterFeed('swarms')" id="tab-swarms" class="channel-btn w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors">
+                <span class="flex items-center gap-2">
+                  <i data-lucide="bot" class="w-3.5 h-3.5 text-emerald-400"></i>
+                  Agent Systems & Formal
+                </span>
+                <span class="text-[11px] font-mono text-slate-400">1</span>
+              </button>
+            </nav>
+          </div>
+
+          <!-- Noise Threshold Filter -->
+          <div class="px-2 py-3 rounded-lg bg-slate-900/80 border border-slate-800">
+            <div class="flex items-center justify-between text-xs text-slate-300 mb-1.5">
+              <span class="font-semibold flex items-center gap-1">
+                <i data-lucide="sliders" class="w-3 h-3 text-cyan-400"></i>
+                AI Noise Gate
+              </span>
+              <span id="noise-val" class="font-mono text-cyan-400 font-bold">70%</span>
+            </div>
+            <input type="range" min="0" max="95" value="70" class="w-full accent-cyan-400 h-1 bg-slate-700 rounded-lg cursor-pointer" oninput="updateNoiseGate(this.value)">
+            <p class="text-[10px] text-slate-500 mt-1 leading-tight">
+              Filters out marketing fluff, repetitive reprints, and low-signal press releases.
+            </p>
+          </div>
+        </div>
+
+        <!-- Agent Status Footer -->
+        <div class="pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            Agent Swarm: Idle
+          </span>
+          <span class="font-mono text-[10px] text-slate-500">v2030.4</span>
+        </div>
+      </aside>
+
+      <!-- Panel 2: Curated Feed Stream -->
+      <section class="list-pane border-r border-slate-800/80 bg-slate-900/20 flex flex-col overflow-hidden">
+        <!-- Feed Stream Header -->
+        <div class="p-3 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/40 shrink-0">
+          <div>
+            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300">Curated Signal Stream</h2>
+            <p class="text-[11px] text-slate-500">Ranked by autonomous significance score</p>
+          </div>
+          <span class="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
+            <span id="stream-count">5</span> items
+          </span>
+        </div>
+
+        <!-- Article List -->
+        <div id="article-list-container" class="overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-2">
+          <!-- Dynamically populated by JS -->
+        </div>
+      </section>
+
+      <!-- Panel 3: Generative Workspace & Reader -->
+      <main class="flex-1 bg-slate-950 flex flex-col overflow-hidden">
+        
+        <!-- Reader Content (Scrollable) -->
+        <div class="flex-1 overflow-y-auto p-6 space-y-6" id="reader-container">
+          <!-- Article Header -->
+          <div id="reader-header" class="space-y-3">
+            <!-- Dynamically populated -->
+          </div>
+
+          <!-- AI Synthesis Card -->
+          <div id="reader-synthesis" class="p-4 rounded-xl bg-slate-900/90 border border-cyan-500/30 space-y-3 shadow-lg shadow-cyan-950/20">
+            <!-- Dynamically populated -->
+          </div>
+
+          <!-- Price & Compute Index Chart (Using Lightweight Charts strictly adhering to user rule) -->
+          <div id="chart-section" class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <div class="flex items-center gap-2">
+                <i data-lucide="trending-down" class="w-4 h-4 text-emerald-400"></i>
+                <span class="font-bold text-slate-200">Data Center Token Compute Cost Trend (2028–2030)</span>
+              </div>
+              <span class="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-[11px]">
+                -68.4% Cost/FLOP
+              </span>
+            </div>
+            <p class="text-xs text-slate-400">
+              Interactive price chart powered by <strong>Lightweight Charts</strong>. Demonstrates immediate economic fallout from this silicon photonics breakthrough.
+            </p>
+            <div id="price-chart" class="w-full h-44 rounded-lg overflow-hidden bg-slate-950/80"></div>
+          </div>
+
+          <!-- Full Article Clean Body -->
+          <article id="reader-body" class="prose prose-invert prose-sm max-w-none text-slate-300 leading-relaxed space-y-4">
+            <!-- Dynamically populated -->
+          </article>
+
+          <!-- Agent Action Deck -->
+          <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-3">
+            <div class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <i data-lucide="zap" class="w-3.5 h-3.5 text-cyan-400"></i>
+              Generative Agent Workflows (1-Click)
+            </div>
+            <div class="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-2.5">
+              <button onclick="triggerWorkflow('counter')" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-left text-xs transition-colors flex items-start gap-2">
+                <i data-lucide="shield-alert" class="w-4 h-4 text-amber-400 shrink-0 mt-0.5"></i>
+                <div>
+                  <div class="font-semibold text-slate-200">Argue the Other Side</div>
+                  <div class="text-[10px] text-slate-400">Find dissenting technical flaws & manufacturing yield limits</div>
+                </div>
+              </button>
+              <button onclick="triggerWorkflow('code')" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-left text-xs transition-colors flex items-start gap-2">
+                <i data-lucide="code" class="w-4 h-4 text-cyan-400 shrink-0 mt-0.5"></i>
+                <div>
+                  <div class="font-semibold text-slate-200">Extract Specs & Math</div>
+                  <div class="text-[10px] text-slate-400">Extract fabric bandwidth formulas & interconnect specs</div>
+                </div>
+              </button>
+              <button onclick="triggerWorkflow('memo')" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-left text-xs transition-colors flex items-start gap-2">
+                <i data-lucide="file-text" class="w-4 h-4 text-purple-400 shrink-0 mt-0.5"></i>
+                <div>
+                  <div class="font-semibold text-slate-200">Draft Executive Memo</div>
+                  <div class="text-[10px] text-slate-400">Summarize for VP of Infrastructure & capacity planners</div>
+                </div>
+              </button>
+              <button onclick="triggerWorkflow('markdown')" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700/80 border border-slate-700 text-left text-xs transition-colors flex items-start gap-2">
+                <i data-lucide="copy" class="w-4 h-4 text-emerald-400 shrink-0 mt-0.5"></i>
+                <div>
+                  <div class="font-semibold text-slate-200">Copy Clean Markdown</div>
+                  <div class="text-[10px] text-slate-400">Optimized context format for external LLM prompts</div>
+                </div>
+              </button>
+            </div>
+
+            <!-- Workflow Output Toast/Box -->
+            <div id="workflow-output" class="hidden p-3 rounded-lg bg-slate-950 border border-cyan-500/40 text-xs text-slate-300 font-mono transition-all">
+              <!-- Output inserted by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Agent Prompt Bar -->
+        <div class="p-3 border-t border-slate-800 bg-slate-900/90 shrink-0">
+          <form onsubmit="handleAgentPrompt(event)" class="flex items-center gap-2">
+            <span class="text-cyan-400 pl-2">
+              <i data-lucide="bot" class="w-4 h-4"></i>
+            </span>
+            <input 
+              id="agent-input" 
+              type="text" 
+              placeholder="Ask agent: 'How does this affect our H100 cluster migration?' or 'Verify IEEE claim'..." 
+              class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
+            >
+            <button type="submit" class="px-3 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition-colors flex items-center gap-1.5">
+              <span>Ask Agent</span>
+              <i data-lucide="corner-down-left" class="w-3.5 h-3.5"></i>
+            </button>
+          </form>
+        </div>
+      </main>
+
+    </div>
+  </div>
+
+  <!-- Stub Data & App Logic -->
+  <script>
+    const STUB_ARTICLES = [
+      {
+        id: "art-1",
+        channel: "hardware",
+        title: "Silicon Photonics Reaches 800Tbps Data Center Optical Fabric",
+        source: "IEEE Spectrum + 3 Correlated Sources",
+        date: "Today · 06:14 AM",
+        signalScore: 94,
+        sentiment: "Bullish Infra",
+        category: "Semiconductors & Energy",
+        agentTakeaway: "Eliminates copper wire bottlenecks; cuts interconnect power dissipation by 62% in AI clusters.",
+        verified: true,
+        summary: "Researchers at TSMC and Intel Labs demonstrated a 3D-stacked optical transceiver fabric reaching 800 Terabits/second throughput directly on-package. This effectively breaks the 'interconnect energy wall' that limited cluster scaling beyond 100,000 GPUs.",
+        takeaways: [
+          "Direct chip-to-chip laser modulation removes the need for power-hungry electrical retimers.",
+          "Optical latency drops cluster-wide AllReduce time in distributed model training by 4.2x.",
+          "Commercial mass production scheduled for Q3 2030 across tier-1 hyperscalers."
+        ],
+        body: `
+          <p>The transition from copper backplanes to co-packaged optical interconnects (CPO) has reached commercial viability. In an IEEE symposium paper released this morning, co-authored by TSMC and Intel Labs, benchmark data confirms stable 800 Tbps aggregate throughput over 100-meter multi-core fiber runs.</p>
+          <p>The primary bottleneck of large-scale agentic reasoning clusters in 2030 was no longer raw compute FLOPs, but the thermal energy wasted moving tensors across switch tiers. With silicon photonics integrated directly onto the sub-nanometer logic substrate, data center energy efficiency gains allow training clusters to scale into gigawatt-scale campuses without exceeding regional power grid limits.</p>
+        `,
+        hasChart: true
+      },
+      {
+        id: "art-2",
+        channel: "swarms",
+        title: "Autonomous Agent Swarms Pass Formal Verification Benchmark",
+        source: "arXiv AI · MIT Tech Review",
+        date: "Today · 04:30 AM",
+        signalScore: 91,
+        sentiment: "High Certainty",
+        category: "Agent Systems & Formal",
+        agentTakeaway: "Zero hallucination rate achieved in distributed consensus protocols using formal Lean4 proofs.",
+        verified: true,
+        summary: "A joint team from CMU and Oxford published the 'VeriSwarm-2030' benchmark. Autonomous multi-agent coordination loops were able to write and self-verify complex financial and infrastructure code with 100% mathematical certainty.",
+        takeaways: [
+          "Formal mathematical verification replaces heuristic unit tests in mission-critical deployments.",
+          "Self-correcting agent chains detect and discard speculative logic branches in sub-millisecond cycles.",
+          "Adoption is already live across decentralized clearinghouses and avionics control."
+        ],
+        body: `
+          <p>By coupling neural generation with interactive theorem provers (Lean 4 and Coq), autonomous agents can now formally guarantee safety properties before executing external side effects.</p>
+          <p>The breakthrough marks the transition of autonomous AI from probabilistic best-effort helpers to mathematically verified engineering collaborators.</p>
+        `,
+        hasChart: false
+      },
+      {
+        id: "art-3",
+        channel: "hardware",
+        title: "Global Sovereign Compute Compact Enforces 2030 Energy Quotas",
+        source: "Reuters Tech · Bloomberg",
+        date: "Yesterday · 09:45 PM",
+        signalScore: 86,
+        sentiment: "Regulatory Shift",
+        category: "Semiconductors & Energy",
+        agentTakeaway: "Hyperscalers without on-site fusion or geothermal power will face 35% compute throttling starting Q4.",
+        verified: true,
+        summary: "24 nations ratified the Brussels-Tokyo Energy Accord for Artificial Intelligence, establishing mandatory clean energy baselines for all data centers exceeding 250 Megawatts capacity.",
+        takeaways: [
+          "Direct coupling of small modular nuclear reactors (SMR) to compute parks receives accelerated permits.",
+          "Cloud compute pricing expected to stratify by clean energy provenance certificates.",
+          "Decentralized edge compute receives full regulatory exemption."
+        ],
+        body: `
+          <p>The international accord signed in Geneva establishes enforceable power-draw quotas. Data centers operating purely on fossil-backed grid interconnects will receive tiered compute throttling during peak regional hours.</p>
+        `,
+        hasChart: false
+      },
+      {
+        id: "art-4",
+        channel: "all",
+        title: "Bio-Digital Storage: DNA-Encoded Vector Databases Pass 10PB/Gram",
+        source: "Nature Biotechnology",
+        date: "Yesterday · 02:10 PM",
+        signalScore: 79,
+        sentiment: "Emerging Tech",
+        category: "Emerging Storage",
+        agentTakeaway: "Cold knowledge retrieval from synthetic DNA reaches 10-millisecond optical search latency.",
+        verified: true,
+        summary: "Synthetic biological memory systems can now store human internet-scale knowledge bases in a test tube, eliminating magnetic tape replacement cycles.",
+        takeaways: [
+          "Data longevity exceeds 1,000 years without refresh cycles.",
+          "Enzymatic vector search allows similarity matching directly in biological solution.",
+          "Commercial enterprise racks expected by 2032."
+        ],
+        body: `
+          <p>Molecular data storage has solved the read-latency barrier. Using high-speed microfluidic enzymatic sequencing, synthetic DNA memories now achieve direct similarity lookups across petabyte datasets.</p>
+        `,
+        hasChart: false
+      },
+      {
+        id: "art-5",
+        channel: "all",
+        title: "Open Source Quantum-Classical Hybrid Compiler v4 Released",
+        source: "GitHub Trending · Qiskit Blog",
+        date: "2 days ago",
+        signalScore: 72,
+        sentiment: "Dev Tooling",
+        category: "Quantum Software",
+        agentTakeaway: "Automates task scheduling between GPU tensor cores and 100-qubit neutral-atom processors.",
+        verified: true,
+        summary: "The open source Linux Foundation project merges tensor network simulations with real neutral-atom quantum processors.",
+        takeaways: [
+          "Standard Rust and C++ bindings for hybrid quantum optimization.",
+          "Automatic error mitigation compiler passes cut circuit depth by 45%."
+        ],
+        body: `
+          <p>Developers can now dispatch combinatorial optimization kernels seamlessly between conventional GPU nodes and QPUs using unified high-level IR.</p>
+        `,
+        hasChart: false
+      }
+    ];
+
+    let currentFilter = 'all';
+    let selectedArticleId = 'art-1';
+    let priceChart = null;
+
+    // Render Stream Items
+    function renderArticleList() {
+      const container = document.getElementById('article-list-container');
+      const filtered = STUB_ARTICLES.filter(item => {
+        if (currentFilter === 'all') return true;
+        if (currentFilter === 'high-signal') return item.signalScore >= 90;
+        return item.channel === currentFilter;
+      });
+
+      document.getElementById('stream-count').innerText = filtered.length;
+      container.innerHTML = '';
+
+      filtered.forEach(item => {
+        const isSelected = item.id === selectedArticleId;
+        const card = document.createElement('div');
+        card.className = `p-3.5 rounded-xl cursor-pointer border transition-all ${
+          isSelected 
+            ? 'bg-slate-800/90 border-cyan-500/50 shadow-md shadow-cyan-950/20' 
+            : 'bg-slate-900/40 hover:bg-slate-800/50 border-slate-800/80 hover:border-slate-700'
+        }`;
+        card.onclick = () => selectArticle(item.id);
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between text-[11px] mb-1.5">
+            <span class="text-slate-400 font-mono truncate max-w-[170px]">${item.source}</span>
+            <div class="flex items-center gap-1.5">
+              <span class="font-mono font-bold text-xs ${item.signalScore >= 90 ? 'text-amber-400' : 'text-cyan-400'}">
+                ${item.signalScore}
+              </span>
+              <span class="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                Signal
+              </span>
+            </div>
+          </div>
+          <h3 class="text-xs font-bold leading-snug ${isSelected ? 'text-cyan-200' : 'text-slate-200'}">
+            ${item.title}
+          </h3>
+          <p class="text-[11px] text-slate-400 mt-1.5 line-clamp-2 leading-relaxed">
+            <span class="text-cyan-400 font-medium">AI Takeaway:</span> ${item.agentTakeaway}
+          </p>
+          <div class="flex items-center justify-between text-[10px] text-slate-500 mt-2.5 pt-2 border-t border-slate-800/60 font-mono">
+            <span>${item.date}</span>
+            <span class="text-slate-400">${item.sentiment}</span>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    // Select Article & Update Reader
+    function selectArticle(id) {
+      selectedArticleId = id;
+      const article = STUB_ARTICLES.find(a => a.id === id) || STUB_ARTICLES[0];
+
+      // Update Reader Header
+      const header = document.getElementById('reader-header');
+      header.innerHTML = `
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 font-medium">
+            ${article.category}
+          </span>
+          <span class="font-mono text-slate-400">${article.source}</span>
+          <span class="text-slate-600">•</span>
+          <span class="font-mono text-slate-400">${article.date}</span>
+          ${article.verified ? `
+            <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
+              <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
+              Verified Cross-Feed
+            </span>
+          ` : ''}
+        </div>
+        <h1 class="text-xl sm:text-2xl font-extrabold text-white tracking-tight leading-snug">
+          ${article.title}
+        </h1>
+      `;
+
+      // Update AI Synthesis Card
+      const synthesis = document.getElementById('reader-synthesis');
+      synthesis.innerHTML = `
+        <div class="flex items-center justify-between border-b border-cyan-500/20 pb-2">
+          <span class="text-xs font-bold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+            <i data-lucide="sparkles" class="w-4 h-4 text-cyan-400"></i>
+            Autonomous AI Synthesis (Level 4 Triage)
+          </span>
+          <span class="text-xs font-mono text-cyan-400">Signal Rating: ${article.signalScore}/100</span>
+        </div>
+        <div class="text-xs text-slate-200 leading-relaxed font-sans">
+          <strong>Executive TL;DR:</strong> ${article.summary}
+        </div>
+        <div class="space-y-1.5 pt-1">
+          <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Key Implications:</div>
+          <ul class="space-y-1 text-xs text-slate-300">
+            ${article.takeaways.map(t => `
+              <li class="flex items-start gap-2">
+                <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5"></i>
+                <span>${t}</span>
+              </li>
+            `).join('')}
+          </ul>
+        </div>
+      `;
+
+      // Update Chart Visibility
+      const chartSection = document.getElementById('chart-section');
+      if (article.hasChart) {
+        chartSection.style.display = 'block';
+        initPriceChart();
+      } else {
+        chartSection.style.display = 'none';
+      }
+
+      // Update Body
+      document.getElementById('reader-body').innerHTML = article.body;
+
+      // Reset workflow output
+      const out = document.getElementById('workflow-output');
+      out.classList.add('hidden');
+      out.innerHTML = '';
+
+      renderArticleList();
+      lucide.createIcons();
+    }
+
+    // Initialize Lightweight Charts for price/compute index trend
+    function initPriceChart() {
+      const container = document.getElementById('price-chart');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (typeof LightweightCharts === 'undefined') return;
+
+      priceChart = LightweightCharts.createChart(container, {
+        height: 176,
+        layout: {
+          background: { color: '#090d16' },
+          textColor: '#94a3b8',
+          fontSize: 11,
+          fontFamily: 'monospace'
+        },
+        grid: {
+          vertLines: { color: 'rgba(30, 41, 59, 0.4)' },
+          horzLines: { color: 'rgba(30, 41, 59, 0.4)' },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(51, 65, 85, 0.8)',
+        },
+        timeScale: {
+          borderColor: 'rgba(51, 65, 85, 0.8)',
+        },
+      });
+
+      const areaSeries = priceChart.addAreaSeries({
+        lineColor: '#22d3ee',
+        topColor: 'rgba(34, 211, 238, 0.4)',
+        bottomColor: 'rgba(34, 211, 238, 0.0)',
+        lineWidth: 2,
+        priceFormat: {
+          type: 'custom',
+          formatter: price => '$' + price.toFixed(2) + '/MFLOP',
+        },
+      });
+
+      // Sample downward cost curve
+      const data = [
+        { time: '2028-01-01', value: 14.20 },
+        { time: '2028-06-01', value: 12.10 },
+        { time: '2029-01-01', value: 9.80 },
+        { time: '2029-06-01', value: 7.40 },
+        { time: '2030-01-01', value: 5.60 },
+        { time: '2030-06-01', value: 4.48 },
+      ];
+
+      areaSeries.setData(data);
+      priceChart.timeScale().fitContent();
+    }
+
+    // Filter Feed
+    function filterFeed(filter) {
+      currentFilter = filter;
+      document.querySelectorAll('.channel-btn').forEach(btn => {
+        btn.classList.remove('bg-slate-800', 'text-white', 'border-slate-700');
+        btn.classList.add('text-slate-400');
+      });
+      const activeBtn = document.getElementById('tab-' + filter);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-slate-800', 'text-white', 'border-slate-700');
+        activeBtn.classList.remove('text-slate-400');
+      }
+      renderArticleList();
+    }
+
+    // Noise gate slider update
+    function updateNoiseGate(val) {
+      document.getElementById('noise-val').innerText = val + '%';
+    }
+
+    // Audio Brief toggle
+    let isPlaying = false;
+    function toggleAudioBrief() {
+      isPlaying = !isPlaying;
+      const label = document.getElementById('audio-label');
+      const icon = document.getElementById('audio-icon');
+      if (isPlaying) {
+        label.innerText = 'Playing Debrief (1.5x)...';
+        icon.classList.add('text-cyan-400', 'animate-spin');
+      } else {
+        label.innerText = 'Listen to 60s Brief';
+        icon.classList.remove('text-cyan-400', 'animate-spin');
+      }
+    }
+
+    // 1-Click Generative Agent Workflows
+    function triggerWorkflow(type) {
+      const out = document.getElementById('workflow-output');
+      out.classList.remove('hidden');
+
+      if (type === 'counter') {
+        out.innerHTML = `
+          <div class="text-amber-400 font-bold mb-1">[Agent Devil's Advocate / Counter-Argument Simulation]:</div>
+          <div>1. Thermal Expansion mismatch: Co-packaging InP (indium phosphide) laser dies directly with 1.4nm CMOS silicon yields severe micro-cracking above 85°C.</div>
+          <div>2. Optical connector dust contamination in standard air-cooled data center racks remains unresolved. Cleanroom liquid immersion is strictly required.</div>
+        `;
+      } else if (type === 'code') {
+        out.innerHTML = `
+          <div class="text-cyan-400 font-bold mb-1">[Extracted Technical Specifications]:</div>
+          <div>• Bandwidth Density: 800 Gbps per mm² shoreline interface</div>
+          <div>• Wavelength Division: 16-channel DWDM at 1310nm O-band</div>
+          <div>• Energy Metric: 1.12 pJ/bit (vs 4.85 pJ/bit on Copper PCIe Gen 8)</div>
+        `;
+      } else if (type === 'memo') {
+        out.innerHTML = `
+          <div class="text-purple-400 font-bold mb-1">[Executive Memo Drafted]:</div>
+          <div>To: Infrastructure Architecture Committee<br>Re: Silicon Photonics Transition Impact<br>Action: Halt long-term copper switch spine procurement for 2031 builds. Reallocate $4.2M Capex to liquid-immersion optical pods.</div>
+        `;
+      } else if (type === 'markdown') {
+        out.innerHTML = `
+          <div class="text-emerald-400 font-bold mb-1">[Copied Clean Markdown to Clipboard!]:</div>
+          <div>Formatted with YAML frontmatter, verified citations, and concise bullet points ready for Claude / Gemini / ChatGPT context injection.</div>
+        `;
+      }
+    }
+
+    // Prompt Bar Handling
+    function handleAgentPrompt(e) {
+      e.preventDefault();
+      const input = document.getElementById('agent-input');
+      const val = input.value.trim();
+      if (!val) return;
+
+      const out = document.getElementById('workflow-output');
+      out.classList.remove('hidden');
+      out.innerHTML = `
+        <div class="text-cyan-400 font-bold mb-1">[Agent Response to "${val}"]:</div>
+        <div>Based on cross-referencing this IEEE release with our infrastructure telemetry: Adopting this optical fabric would reduce our annual cluster power bill by $820,000, while lowering distributed checkpoint latency from 450ms down to 105ms. Recommended timeline: deploy pilot testbed in Q1 2030.</div>
+      `;
+      input.value = '';
+    }
+
+    // Initialize on load
+    window.addEventListener('DOMContentLoaded', () => {
+      renderArticleList();
+      selectArticle(selectedArticleId);
+      lucide.createIcons();
+    });
+
+    window.addEventListener('resize', () => {
+      if (priceChart) {
+        priceChart.timeScale().fitContent();
+      }
+    });
+  </script>
+</body>
+</html>

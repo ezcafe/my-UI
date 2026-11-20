@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}AR Spatial RSS{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    .ar-glass-panel {
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(32px) saturate(190%);
+      -webkit-backdrop-filter: blur(32px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 
+        0 24px 60px rgba(0, 0, 0, 0.65),
+        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    }
+    .ar-list-item {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(16px);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      min-height: 56px;
+    }
+    .ar-list-item:hover, .ar-list-item:focus {
+      background: rgba(99, 102, 241, 0.16);
+      border-color: rgba(129, 140, 248, 0.45);
+      transform: translateY(-1px) scale(1.008);
+      outline: none;
+    }
+    .spatial-shell {
+      container-type: inline-size;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: clamp(0.75rem, 3vw, 2.5rem);
+    }
+    .spatial-window {
+      width: 100%;
+      max-width: 720px;
+      height: min(88vh, 780px);
+      display: flex;
+      flex-direction: column;
+      border-radius: 28px;
+      overflow: hidden;
+    }
+    .spatial-grab-handle {
+      width: 48px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 9999px;
+    }
+    .ar-passthrough {
+      background: 
+        radial-gradient(circle at 20% 25%, rgba(99, 102, 241, 0.20), transparent 45%),
+        radial-gradient(circle at 80% 75%, rgba(168, 85, 247, 0.18), transparent 50%),
+        linear-gradient(135deg, #020617 0%, #0a0e1a 50%, #020617 100%);
+    }
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="ar-passthrough text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+  {% block content %}{% endblock %}
+
+  <!-- Out-of-band Toast Container -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      lucide.createIcons();
+    });
+    document.body.addEventListener("htmx:afterSwap", () => {
+      lucide.createIcons();
+    });
+  </script>
+</body>
+</html>

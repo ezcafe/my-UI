@@ -1,0 +1,64 @@
+<div class="flex flex-col h-full">
+  <!-- Detail Header -->
+  <div class="flex items-center justify-between pb-4 border-b border-white/10 mb-6 shrink-0">
+    <button 
+      onclick="document.getElementById('detail-panel').classList.add('hidden')" 
+      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 transition-colors">
+      <i data-lucide="chevron-left" class="w-4 h-4"></i>
+      <span>Back</span>
+    </button>
+
+    <div class="flex items-center gap-2">
+      <a 
+        href="{{ entry.url }}" 
+        target="_blank" 
+        rel="noopener noreferrer" 
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-xs font-medium text-slate-300 transition-colors">
+        <span>Original</span>
+        <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+      </a>
+
+      <button 
+        hx-post="/hx/entries/{{ entry.id }}/read?status=unread" 
+        hx-target="#entry-{{ entry.id }}" 
+        hx-swap="outerHTML" 
+        class="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-indigo-300 transition-colors"
+        title="Mark as unread">
+        <i data-lucide="circle-dot" class="w-4 h-4"></i>
+      </button>
+
+      <button 
+        hx-post="/hx/entries/{{ entry.id }}/bookmark" 
+        hx-target="this" 
+        hx-swap="outerHTML" 
+        class="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-amber-300 transition-colors">
+        {% if entry.is_bookmarked %}
+        <i data-lucide="bookmark" class="w-4 h-4 fill-amber-400 text-amber-400"></i>
+        {% else %}
+        <i data-lucide="bookmark" class="w-4 h-4"></i>
+        {% endif %}
+      </button>
+    </div>
+  </div>
+
+  <!-- Detail Body -->
+  <div class="flex-1 overflow-y-auto pr-2">
+    <div class="flex items-center gap-2 text-xs text-slate-400 mb-2">
+      <span class="text-indigo-400 font-medium">{{ entry.feed_title }}</span>
+      <span>•</span>
+      <span>{{ entry.published_at }}</span>
+    </div>
+
+    <h1 class="text-xl font-bold text-slate-100 mb-6 leading-snug">
+      {{ entry.title }}
+    </h1>
+
+    <!-- AI Brief Card Partial -->
+    {% include "brief_card.html" %}
+
+    <!-- Sanitized Article Content -->
+    <div class="prose prose-invert prose-indigo max-w-none text-slate-300 text-sm leading-relaxed space-y-4">
+      {{ sanitized_content|safe }}
+    </div>
+  </div>
+</div>

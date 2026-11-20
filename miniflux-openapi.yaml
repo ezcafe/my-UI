@@ -1,0 +1,2081 @@
+openapi: 3.1.0
+info:
+  title: Miniflux REST API
+  version: 2.2.0
+  description: "REST API specification for Miniflux, a minimalist and opinionated feed reader."
+  license:
+    name: Apache 2.0
+    url: "https://www.apache.org/licenses/LICENSE-2.0.html"
+servers:
+  - url: "http://localhost:8080"
+    description: Default local instance
+security:
+  - ApiKeyAuth: []
+  - BasicAuth: []
+paths:
+  '/v1/me':
+    get:
+      tags:
+        - Users
+      summary: Get current user profile
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Current user information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/users':
+    get:
+      tags:
+        - Users
+      summary: List all users
+      description: Requires administrator privileges.
+      operationId: getUsers
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '403':
+          $ref: "#/components/responses/ForbiddenError"
+    post:
+      tags:
+        - Users
+      summary: Create a new user
+      description: Requires administrator privileges.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreationRequest"
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '403':
+          $ref: "#/components/responses/ForbiddenError"
+  '/v1/users/{identifier}':
+    get:
+      tags:
+        - Users
+      summary: Get a user by ID or username
+      description: Requires administrator privileges unless fetching self.
+      operationId: getUser
+      parameters:
+        - name: identifier
+          in: path
+          required: true
+          description: User ID (integer) or username (string)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/users/{userID}':
+    put:
+      tags:
+        - Users
+      summary: Update user
+      description: Requires administrator privileges.
+      operationId: updateUser
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserModificationRequest"
+      responses:
+        '201':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '403':
+          $ref: "#/components/responses/ForbiddenError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      tags:
+        - Users
+      summary: Delete user
+      description: Requires administrator privileges.
+      operationId: deleteUser
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: User deleted successfully
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '403':
+          $ref: "#/components/responses/ForbiddenError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/users/{userID}/mark-all-as-read':
+    put:
+      tags:
+        - Users
+      summary: Mark all user entries as read
+      operationId: markUserAsRead
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: All entries marked as read
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories':
+    get:
+      tags:
+        - Categories
+      summary: List categories
+      operationId: getCategories
+      responses:
+        '200':
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Category"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+    post:
+      tags:
+        - Categories
+      summary: Create category
+      operationId: createCategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryCreationRequest"
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories/{categoryID}':
+    put:
+      tags:
+        - Categories
+      summary: Update category
+      operationId: updateCategory
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryModificationRequest"
+      responses:
+        '201':
+          description: Category updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+    delete:
+      tags:
+        - Categories
+      summary: Delete category
+      operationId: deleteCategory
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Category deleted
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories/{categoryID}/mark-all-as-read':
+    put:
+      tags:
+        - Categories
+      summary: Mark all category entries as read
+      operationId: markCategoryAsRead
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Marked as read
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories/{categoryID}/feeds':
+    get:
+      tags:
+        - Categories
+      summary: Get feeds in category
+      operationId: getCategoryFeeds
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: List of feeds in category
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Feed"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories/{categoryID}/refresh':
+    put:
+      tags:
+        - Categories
+      summary: Refresh all feeds in category
+      operationId: refreshCategoryFeeds
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Category feeds refreshed
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories/{categoryID}/entries':
+    get:
+      tags:
+        - Categories
+      summary: Get entries in category
+      operationId: getCategoryEntries
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/statusParam"
+        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/orderParam"
+        - $ref: "#/components/parameters/directionParam"
+        - $ref: "#/components/parameters/starredParam"
+        - $ref: "#/components/parameters/searchParam"
+        - $ref: "#/components/parameters/beforeParam"
+        - $ref: "#/components/parameters/afterParam"
+        - $ref: "#/components/parameters/publishedBeforeParam"
+        - $ref: "#/components/parameters/publishedAfterParam"
+        - $ref: "#/components/parameters/changedBeforeParam"
+        - $ref: "#/components/parameters/changedAfterParam"
+        - $ref: "#/components/parameters/beforeEntryIDParam"
+        - $ref: "#/components/parameters/afterEntryIDParam"
+      responses:
+        '200':
+          description: Entries in category
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryResultSet"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/categories/{categoryID}/entries/{entryID}':
+    get:
+      tags:
+        - Categories
+      summary: Get single entry in category
+      operationId: getCategoryEntry
+      parameters:
+        - name: categoryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Entry details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/discover':
+    post:
+      tags:
+        - Feeds
+      summary: Discover feed URLs from a website URL
+      operationId: discoverSubscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionDiscoveryRequest"
+      responses:
+        '200':
+          description: Discovered subscription feeds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Subscription"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds':
+    get:
+      tags:
+        - Feeds
+      summary: List all feeds
+      operationId: getFeeds
+      responses:
+        '200':
+          description: List of feeds
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Feed"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+    post:
+      tags:
+        - Feeds
+      summary: Create a feed subscription
+      operationId: createFeed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedCreationRequest"
+      responses:
+        '201':
+          description: Feed created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedCreationResponse"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/counters':
+    get:
+      tags:
+        - Feeds
+      summary: Get read and unread counters per feed
+      operationId: fetchCounters
+      responses:
+        '200':
+          description: Read and unread entry counters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedCounters"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/refresh':
+    put:
+      tags:
+        - Feeds
+      summary: Refresh all feeds for current user
+      operationId: refreshAllFeeds
+      responses:
+        '204':
+          description: Refresh started in background
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/{feedID}':
+    get:
+      tags:
+        - Feeds
+      summary: Get feed details
+      operationId: getFeed
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Feed details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      tags:
+        - Feeds
+      summary: Update feed
+      operationId: updateFeed
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedModificationRequest"
+      responses:
+        '201':
+          description: Feed updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+    delete:
+      tags:
+        - Feeds
+      summary: Delete feed
+      operationId: deleteFeed
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Feed deleted
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/feeds/{feedID}/refresh':
+    put:
+      tags:
+        - Feeds
+      summary: Refresh single feed
+      operationId: refreshFeed
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Feed refreshed
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/{feedID}/mark-all-as-read':
+    put:
+      tags:
+        - Feeds
+      summary: Mark feed entries as read
+      operationId: markFeedAsRead
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Marked as read
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/{feedID}/icon':
+    get:
+      tags:
+        - Feeds
+        - Icons
+      summary: Get feed icon
+      operationId: getFeedIcon
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Feed icon data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedIcon"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/feeds/{feedID}/entries':
+    get:
+      tags:
+        - Feeds
+        - Entries
+      summary: Get entries for a feed
+      operationId: getFeedEntries
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - $ref: "#/components/parameters/statusParam"
+        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/orderParam"
+        - $ref: "#/components/parameters/directionParam"
+        - $ref: "#/components/parameters/starredParam"
+        - $ref: "#/components/parameters/searchParam"
+        - $ref: "#/components/parameters/beforeParam"
+        - $ref: "#/components/parameters/afterParam"
+        - $ref: "#/components/parameters/publishedBeforeParam"
+        - $ref: "#/components/parameters/publishedAfterParam"
+        - $ref: "#/components/parameters/changedBeforeParam"
+        - $ref: "#/components/parameters/changedAfterParam"
+        - $ref: "#/components/parameters/beforeEntryIDParam"
+        - $ref: "#/components/parameters/afterEntryIDParam"
+      responses:
+        '200':
+          description: List of entries for the feed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryResultSet"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/{feedID}/entries/import':
+    post:
+      tags:
+        - Feeds
+        - Entries
+      summary: Import a single entry into a feed
+      operationId: importFeedEntry
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryImportRequest"
+      responses:
+        '201':
+          description: Entry imported
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryIDResponse"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/feeds/{feedID}/entries/{entryID}':
+    get:
+      tags:
+        - Feeds
+        - Entries
+      summary: Get a specific entry from a feed
+      operationId: getFeedEntry
+      parameters:
+        - name: feedID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Entry details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/entries':
+    get:
+      tags:
+        - Entries
+      summary: Get entries with query filters
+      operationId: getEntries
+      parameters:
+        - $ref: "#/components/parameters/statusParam"
+        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/orderParam"
+        - $ref: "#/components/parameters/directionParam"
+        - $ref: "#/components/parameters/starredParam"
+        - $ref: "#/components/parameters/searchParam"
+        - name: category_id
+          in: query
+          description: Filter by category ID
+          schema:
+            type: integer
+            format: int64
+        - name: feed_id
+          in: query
+          description: Filter by feed ID
+          schema:
+            type: integer
+            format: int64
+        - name: tags
+          in: query
+          description: Filter by tags
+          schema:
+            type: array
+            items:
+              type: string
+        - name: globally_visible
+          in: query
+          description: Filter by global visibility
+          schema:
+            type: boolean
+            default: true
+        - $ref: "#/components/parameters/beforeParam"
+        - $ref: "#/components/parameters/afterParam"
+        - $ref: "#/components/parameters/publishedBeforeParam"
+        - $ref: "#/components/parameters/publishedAfterParam"
+        - $ref: "#/components/parameters/changedBeforeParam"
+        - $ref: "#/components/parameters/changedAfterParam"
+        - $ref: "#/components/parameters/beforeEntryIDParam"
+        - $ref: "#/components/parameters/afterEntryIDParam"
+      responses:
+        '200':
+          description: List of entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryResultSet"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+    put:
+      tags:
+        - Entries
+      summary: Batch update status and starred status of entries
+      operationId: updateEntriesStatus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntriesStatusUpdateRequest"
+      responses:
+        '204':
+          description: Entries updated successfully
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/entries/ids':
+    get:
+      tags:
+        - Entries
+      summary: Get list of entry IDs matching filters
+      operationId: getEntryIDs
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - read
+              - unread
+              - removed
+        - $ref: "#/components/parameters/offsetParam"
+        - $ref: "#/components/parameters/limitParam"
+        - $ref: "#/components/parameters/starredParam"
+      responses:
+        '200':
+          description: List of entry IDs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryIDsResultSet"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/entries/{entryID}':
+    get:
+      tags:
+        - Entries
+      summary: Get entry by ID
+      operationId: getEntry
+      parameters:
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Entry details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      tags:
+        - Entries
+      summary: Update entry title and content
+      operationId: updateEntry
+      parameters:
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EntryUpdateRequest"
+      responses:
+        '201':
+          description: Entry updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entry"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/entries/{entryID}/bookmark':
+    put:
+      tags:
+        - Entries
+      summary: Toggle bookmark/starred state of entry
+      operationId: toggleBookmark
+      parameters:
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Bookmark state toggled
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/entries/{entryID}/star':
+    put:
+      tags:
+        - Entries
+      summary: Toggle bookmark/starred state of entry (alias)
+      operationId: toggleStar
+      parameters:
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Star state toggled
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/entries/{entryID}/save':
+    post:
+      tags:
+        - Entries
+      summary: "Save entry to configured third-party integrations"
+      operationId: saveEntry
+      parameters:
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '202':
+          description: Entry sent to integration services
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/entries/{entryID}/fetch-content':
+    get:
+      tags:
+        - Entries
+      summary: Scrape and fetch original web page content
+      operationId: fetchContent
+      parameters:
+        - name: entryID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Fetched content and estimated reading time
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntryContentResponse"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/flush-history':
+    put:
+      tags:
+        - Entries
+      summary: Flush read entries history
+      operationId: flushHistoryPut
+      responses:
+        '204':
+          description: History flushed successfully
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+    delete:
+      tags:
+        - Entries
+      summary: Flush read entries history
+      operationId: flushHistoryDelete
+      responses:
+        '204':
+          description: History flushed successfully
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/export':
+    get:
+      tags:
+        - Import/Export
+      summary: Export feeds as OPML XML
+      operationId: exportFeeds
+      responses:
+        '200':
+          description: OPML XML file content
+          content:
+            application/xml:
+              schema:
+                type: string
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/import':
+    post:
+      tags:
+        - Import/Export
+      summary: Import subscriptions from OPML XML
+      operationId: importFeeds
+      requestBody:
+        required: true
+        description: Raw OPML XML content
+        content:
+          application/xml:
+            schema:
+              type: string
+          text/xml:
+            schema:
+              type: string
+      responses:
+        '201':
+          description: Feeds imported successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportFeedsResponse"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/icons/{iconID}':
+    get:
+      tags:
+        - Icons
+      summary: Get icon by ID
+      operationId: getIcon
+      parameters:
+        - name: iconID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Icon information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedIcon"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/enclosures/{enclosureID}':
+    get:
+      tags:
+        - Enclosures
+      summary: Get enclosure by ID
+      operationId: getEnclosure
+      parameters:
+        - name: enclosureID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Enclosure details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Enclosure"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+    put:
+      tags:
+        - Enclosures
+      summary: Update media playback progression for enclosure
+      operationId: updateEnclosureProgression
+      parameters:
+        - name: enclosureID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnclosureUpdateRequest"
+      responses:
+        '204':
+          description: Progression updated
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+        '404':
+          $ref: "#/components/responses/NotFoundError"
+  '/v1/integrations/status':
+    get:
+      tags:
+        - System
+      summary: Get integrations status
+      operationId: getIntegrationsStatus
+      responses:
+        '200':
+          description: "Status indicating if any third-party integrations are active"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsStatusResponse"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/version':
+    get:
+      tags:
+        - System
+      summary: Get Miniflux build and version info
+      operationId: getVersion
+      responses:
+        '200':
+          description: Miniflux build details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/api-keys':
+    get:
+      tags:
+        - API Keys
+      summary: List API keys for current user
+      operationId: getAPIKeys
+      responses:
+        '200':
+          description: List of user API keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKey"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+    post:
+      tags:
+        - API Keys
+      summary: Create a new API key
+      operationId: createAPIKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIKeyCreationRequest"
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKey"
+        '400':
+          $ref: "#/components/responses/BadRequestError"
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+  '/v1/api-keys/{apiKeyID}':
+    delete:
+      tags:
+        - API Keys
+      summary: Delete API key
+      operationId: deleteAPIKey
+      parameters:
+        - name: apiKeyID
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: API key deleted
+        '401':
+          $ref: "#/components/responses/UnauthorizedError"
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: "X-Auth-Token"
+      description: "API token created in user settings or via /v1/api-keys"
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: Miniflux account username and password
+  parameters:
+    statusParam:
+      name: status
+      in: query
+      description: "Filter by entry status (e.g. unread, read, removed)"
+      schema:
+        type: array
+        items:
+          type: string
+          enum:
+            - read
+            - unread
+            - removed
+    offsetParam:
+      name: offset
+      in: query
+      description: Number of items to skip
+      schema:
+        type: integer
+        default: 0
+    limitParam:
+      name: limit
+      in: query
+      description: Number of items to return (default 100)
+      schema:
+        type: integer
+        default: 100
+    orderParam:
+      name: order
+      in: query
+      description: Field used for sorting
+      schema:
+        type: string
+        enum:
+          - id
+          - status
+          - published_at
+          - category_title
+          - category_id
+        default: published_at
+    directionParam:
+      name: direction
+      in: query
+      description: Sorting direction
+      schema:
+        type: string
+        enum:
+          - asc
+          - desc
+        default: desc
+    starredParam:
+      name: starred
+      in: query
+      description: Filter bookmarked/starred entries
+      schema:
+        type: boolean
+    searchParam:
+      name: search
+      in: query
+      description: "Full-text search query"
+      schema:
+        type: string
+    beforeParam:
+      name: before
+      in: query
+      description: Filter entries published before Unix timestamp
+      schema:
+        type: integer
+        format: int64
+    afterParam:
+      name: after
+      in: query
+      description: Filter entries published after Unix timestamp
+      schema:
+        type: integer
+        format: int64
+    publishedBeforeParam:
+      name: published_before
+      in: query
+      description: Filter entries published before Unix timestamp
+      schema:
+        type: integer
+        format: int64
+    publishedAfterParam:
+      name: published_after
+      in: query
+      description: Filter entries published after Unix timestamp
+      schema:
+        type: integer
+        format: int64
+    changedBeforeParam:
+      name: changed_before
+      in: query
+      description: Filter entries modified before Unix timestamp
+      schema:
+        type: integer
+        format: int64
+    changedAfterParam:
+      name: changed_after
+      in: query
+      description: Filter entries modified after Unix timestamp
+      schema:
+        type: integer
+        format: int64
+    beforeEntryIDParam:
+      name: before_entry_id
+      in: query
+      description: Filter entries with ID less than specified
+      schema:
+        type: integer
+        format: int64
+    afterEntryIDParam:
+      name: after_entry_id
+      in: query
+      description: Filter entries with ID greater than specified
+      schema:
+        type: integer
+        format: int64
+  responses:
+    BadRequestError:
+      description: Bad Request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorMessage"
+    UnauthorizedError:
+      description: Unauthorized access
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorMessage"
+    ForbiddenError:
+      description: Access forbidden (requires administrator rights)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorMessage"
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorMessage"
+  schemas:
+    ErrorMessage:
+      type: object
+      required:
+        - error_message
+      properties:
+        error_message:
+          type: string
+    User:
+      type: object
+      required:
+        - id
+        - username
+        - is_admin
+        - theme
+        - language
+        - timezone
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        password:
+          type: string
+        is_admin:
+          type: boolean
+        theme:
+          type: string
+        language:
+          type: string
+        timezone:
+          type: string
+        entry_sorting_direction:
+          type: string
+        entry_sorting_order:
+          type: string
+        stylesheet:
+          type: string
+        custom_js:
+          type: string
+        google_id:
+          type: string
+        openid_connect_id:
+          type: string
+        entries_per_page:
+          type: integer
+        keyboard_shortcuts:
+          type: boolean
+        show_reading_time:
+          type: boolean
+        entry_swipe:
+          type: boolean
+        gesture_nav:
+          type: string
+        last_login_at:
+          type: string
+          format: "date-time"
+          nullable: true
+        display_mode:
+          type: string
+        default_reading_speed:
+          type: integer
+        cjk_reading_speed:
+          type: integer
+        default_home_page:
+          type: string
+        categories_sorting_order:
+          type: string
+        mark_read_on_view:
+          type: boolean
+        media_playback_rate:
+          type: number
+        block_filter_entry_rules:
+          type: string
+        keep_filter_entry_rules:
+          type: string
+        external_font_hosts:
+          type: string
+        always_open_external_links:
+          type: boolean
+        open_external_links_in_new_tab:
+          type: boolean
+    UserCreationRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        is_admin:
+          type: boolean
+        google_id:
+          type: string
+        openid_connect_id:
+          type: string
+    UserModificationRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        is_admin:
+          type: boolean
+        theme:
+          type: string
+        language:
+          type: string
+        timezone:
+          type: string
+        entry_sorting_direction:
+          type: string
+        entry_sorting_order:
+          type: string
+        stylesheet:
+          type: string
+        custom_js:
+          type: string
+        entries_per_page:
+          type: integer
+        keyboard_shortcuts:
+          type: boolean
+        show_reading_time:
+          type: boolean
+        entry_swipe:
+          type: boolean
+        gesture_nav:
+          type: string
+        display_mode:
+          type: string
+        default_reading_speed:
+          type: integer
+        cjk_reading_speed:
+          type: integer
+        default_home_page:
+          type: string
+        categories_sorting_order:
+          type: string
+        mark_read_on_view:
+          type: boolean
+        media_playback_rate:
+          type: number
+        block_filter_entry_rules:
+          type: string
+        keep_filter_entry_rules:
+          type: string
+        external_font_hosts:
+          type: string
+        always_open_external_links:
+          type: boolean
+        open_external_links_in_new_tab:
+          type: boolean
+    Category:
+      type: object
+      required:
+        - id
+        - title
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        user_id:
+          type: integer
+          format: int64
+        hide_globally:
+          type: boolean
+        feed_count:
+          type: integer
+        total_unread:
+          type: integer
+    CategoryCreationRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+        hide_globally:
+          type: boolean
+    CategoryModificationRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        hide_globally:
+          type: boolean
+    Subscription:
+      type: object
+      required:
+        - title
+        - url
+        - type
+      properties:
+        title:
+          type: string
+        url:
+          type: string
+        type:
+          type: string
+    SubscriptionDiscoveryRequest:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+        user_agent:
+          type: string
+        cookie:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        proxy_url:
+          type: string
+        fetch_via_proxy:
+          type: boolean
+        allow_self_signed_certificates:
+          type: boolean
+        disable_http2:
+          type: boolean
+    Feed:
+      type: object
+      required:
+        - id
+        - user_id
+        - feed_url
+        - site_url
+        - title
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        feed_url:
+          type: string
+        site_url:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        language:
+          type: string
+        checked_at:
+          type: string
+          format: "date-time"
+        next_check_at:
+          type: string
+          format: "date-time"
+        etag_header:
+          type: string
+        last_modified_header:
+          type: string
+        parsing_error_message:
+          type: string
+        parsing_error_count:
+          type: integer
+        disabled:
+          type: boolean
+        no_media_player:
+          type: boolean
+        ignore_http_cache:
+          type: boolean
+        allow_self_signed_certificates:
+          type: boolean
+        fetch_via_proxy:
+          type: boolean
+        scraper_rules:
+          type: string
+        rewrite_rules:
+          type: string
+        urlrewrite_rules:
+          type: string
+        blocklist_rules:
+          type: string
+        keeplist_rules:
+          type: string
+        block_filter_entry_rules:
+          type: string
+        keep_filter_entry_rules:
+          type: string
+        crawler:
+          type: boolean
+        ignore_entry_updates:
+          type: boolean
+        user_agent:
+          type: string
+        cookie:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        category:
+          $ref: "#/components/schemas/Category"
+        hide_globally:
+          type: boolean
+        disable_http2:
+          type: boolean
+        proxy_url:
+          type: string
+        apprise_service_urls:
+          type: string
+        webhook_url:
+          type: string
+        ntfy_enabled:
+          type: boolean
+        ntfy_priority:
+          type: integer
+        ntfy_topic:
+          type: string
+        pushover_enabled:
+          type: boolean
+        pushover_priority:
+          type: integer
+        icon:
+          $ref: "#/components/schemas/FeedIcon"
+    FeedCreationRequest:
+      type: object
+      required:
+        - feed_url
+        - category_id
+      properties:
+        feed_url:
+          type: string
+        category_id:
+          type: integer
+          format: int64
+        user_agent:
+          type: string
+        cookie:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        crawler:
+          type: boolean
+        ignore_entry_updates:
+          type: boolean
+        disabled:
+          type: boolean
+        no_media_player:
+          type: boolean
+        ignore_http_cache:
+          type: boolean
+        allow_self_signed_certificates:
+          type: boolean
+        fetch_via_proxy:
+          type: boolean
+        scraper_rules:
+          type: string
+        rewrite_rules:
+          type: string
+        urlrewrite_rules:
+          type: string
+        blocklist_rules:
+          type: string
+        keeplist_rules:
+          type: string
+        block_filter_entry_rules:
+          type: string
+        keep_filter_entry_rules:
+          type: string
+        hide_globally:
+          type: boolean
+        disable_http2:
+          type: boolean
+        proxy_url:
+          type: string
+    FeedModificationRequest:
+      type: object
+      properties:
+        feed_url:
+          type: string
+        site_url:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        scraper_rules:
+          type: string
+        rewrite_rules:
+          type: string
+        urlrewrite_rules:
+          type: string
+        blocklist_rules:
+          type: string
+        keeplist_rules:
+          type: string
+        block_filter_entry_rules:
+          type: string
+        keep_filter_entry_rules:
+          type: string
+        crawler:
+          type: boolean
+        ignore_entry_updates:
+          type: boolean
+        user_agent:
+          type: string
+        cookie:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        category_id:
+          type: integer
+          format: int64
+        disabled:
+          type: boolean
+        no_media_player:
+          type: boolean
+        ignore_http_cache:
+          type: boolean
+        allow_self_signed_certificates:
+          type: boolean
+        fetch_via_proxy:
+          type: boolean
+        hide_globally:
+          type: boolean
+        disable_http2:
+          type: boolean
+        proxy_url:
+          type: string
+    FeedCreationResponse:
+      type: object
+      required:
+        - feed_id
+      properties:
+        feed_id:
+          type: integer
+          format: int64
+    FeedCounters:
+      type: object
+      required:
+        - reads
+        - unreads
+      properties:
+        reads:
+          type: object
+          additionalProperties:
+            type: integer
+        unreads:
+          type: object
+          additionalProperties:
+            type: integer
+    FeedIcon:
+      type: object
+      required:
+        - id
+        - mime_type
+        - data
+      properties:
+        id:
+          type: integer
+          format: int64
+        mime_type:
+          type: string
+        data:
+          type: string
+          description: Base64 data URL string
+    Entry:
+      type: object
+      required:
+        - id
+        - user_id
+        - feed_id
+        - status
+        - hash
+        - title
+        - url
+        - published_at
+        - created_at
+        - changed_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        feed_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+            - read
+            - unread
+            - removed
+        hash:
+          type: string
+        title:
+          type: string
+        url:
+          type: string
+        comments_url:
+          type: string
+        published_at:
+          type: string
+          format: "date-time"
+        created_at:
+          type: string
+          format: "date-time"
+        changed_at:
+          type: string
+          format: "date-time"
+        content:
+          type: string
+        author:
+          type: string
+        share_code:
+          type: string
+        starred:
+          type: boolean
+        reading_time:
+          type: integer
+        tags:
+          type: array
+          items:
+            type: string
+        enclosures:
+          type: array
+          items:
+            $ref: "#/components/schemas/Enclosure"
+        feed:
+          $ref: "#/components/schemas/Feed"
+    EntryResultSet:
+      type: object
+      required:
+        - total
+        - entries
+      properties:
+        total:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entry"
+    EntryIDsResultSet:
+      type: object
+      required:
+        - total
+        - entry_ids
+      properties:
+        total:
+          type: integer
+        entry_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+    EntriesStatusUpdateRequest:
+      type: object
+      required:
+        - entry_ids
+      properties:
+        entry_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        status:
+          type: string
+          enum:
+            - read
+            - unread
+            - removed
+        starred:
+          type: boolean
+    EntryUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+    EntryImportRequest:
+      type: object
+      required:
+        - url
+        - title
+        - content
+      properties:
+        url:
+          type: string
+        title:
+          type: string
+        content:
+          type: string
+        author:
+          type: string
+        comments_url:
+          type: string
+        published_at:
+          type: integer
+          format: int64
+        status:
+          type: string
+        starred:
+          type: boolean
+        tags:
+          type: array
+          items:
+            type: string
+        external_id:
+          type: string
+    EntryIDResponse:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: integer
+          format: int64
+    EntryContentResponse:
+      type: object
+      required:
+        - content
+        - reading_time
+      properties:
+        content:
+          type: string
+        reading_time:
+          type: integer
+    Enclosure:
+      type: object
+      required:
+        - id
+        - user_id
+        - entry_id
+        - url
+        - mime_type
+        - size
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        entry_id:
+          type: integer
+          format: int64
+        url:
+          type: string
+        mime_type:
+          type: string
+        size:
+          type: integer
+        media_progression:
+          type: integer
+          format: int64
+    EnclosureUpdateRequest:
+      type: object
+      required:
+        - media_progression
+      properties:
+        media_progression:
+          type: integer
+          format: int64
+    APIKey:
+      type: object
+      required:
+        - id
+        - user_id
+        - token
+        - description
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        token:
+          type: string
+        description:
+          type: string
+        last_used_at:
+          type: string
+          format: "date-time"
+          nullable: true
+        created_at:
+          type: string
+          format: "date-time"
+    APIKeyCreationRequest:
+      type: object
+      required:
+        - description
+      properties:
+        description:
+          type: string
+    IntegrationsStatusResponse:
+      type: object
+      required:
+        - has_integrations
+      properties:
+        has_integrations:
+          type: boolean
+    VersionResponse:
+      type: object
+      required:
+        - version
+        - commit
+        - build_date
+        - go_version
+        - compiler
+        - arch
+        - os
+      properties:
+        version:
+          type: string
+        commit:
+          type: string
+        build_date:
+          type: string
+        go_version:
+          type: string
+        compiler:
+          type: string
+        arch:
+          type: string
+        os:
+          type: string
+    ImportFeedsResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string

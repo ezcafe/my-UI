@@ -1,5 +1,7 @@
 # Tasks: Counts, Paging, Auto-Mark Read & Fluid Spatial Container
 
+Result: planned
+
 ## Tasks Breakdown
 
 ### Phase 1: GraphQL Schema & Count Query (Miniflux Crate)
@@ -16,8 +18,8 @@
 
 ### Phase 3: Templates & Modern CSS Layout
 - [ ] Task 3.1: Update `crates/ui-components/templates/pages/index.html` filter pills to render `Unread (<count>)` and `Today (<count>)`.
-- [ ] Task 3.2: Update `crates/ui-components/templates/partials/entry_list.html` to render bottom pagination bar (`Previous`, `Page X of Y`, `Next`) with HTMX paging links when `total_pages > 1`.
-- [ ] Task 3.3: Update `crates/ui-components/templates/partials/entry_item.html` to identify the unread indicator dot element as `id="entry-{{ entry.id }}-dot"`.
+- [ ] Task 3.2: Update `crates/ui-components/templates/partials/entry_list.html` to render pagination bar at the bottom of the scrollable entries list (`Previous`, `Page X of Y`, `Next`) with HTMX paging links when `total_pages > 1`.
+- [ ] Task 3.3: Update `crates/ui-components/templates/partials/entry_item.html` to identify the unread indicator dot element as `id="entry-{{ entry.id }}-dot"` so it can be cleared via OOB swap without re-rendering or jumping the row.
 - [ ] Task 3.4: Update `crates/ui-components/templates/base.html` `.spatial-window` max-width to `min(100cqi, 1440px)` using container queries.
 
 ---
@@ -33,6 +35,6 @@
 4. `test_entry_list_hides_pagination_when_single_page`:
    - Validates that when total items are within limit (e.g. 25 items with limit 50), pagination controls are omitted.
 5. `test_get_entry_detail_auto_marks_as_read_and_returns_oob_swaps`:
-   - Validates that viewing an unread entry triggers Miniflux status update and includes out-of-band updates (`hx-swap-oob="true"`) for unread pill and entry dot.
+   - Validates that viewing an unread entry triggers Miniflux status update and includes out-of-band updates (`hx-swap-oob="true"`) for unread pill, filter unread count, and entry dot without deleting the row.
 6. `test_spatial_window_fluid_width_container_query`:
    - Validates that `.spatial-window` CSS uses container queries (`min(100cqi, 1440px)`) instead of fixed 720px width.

@@ -19,6 +19,7 @@ pub struct EntryViewModel {
 #[template(path = "pages/index.html")]
 pub struct IndexTemplate {
     pub unread_count: i32,
+    pub today_count: i64,
     pub entries_list_html: String,
     pub ai_enabled: bool,
 }
@@ -57,6 +58,15 @@ pub struct EntryItemTemplate {
 pub struct EntryListTemplate {
     pub entries: Vec<EntryViewModel>,
     pub unread_count: Option<i32>,
+    pub current_page: i64,
+    pub total_pages: i64,
+    pub has_prev: bool,
+    pub has_next: bool,
+    pub prev_offset: i64,
+    pub next_offset: i64,
+    pub status: String,
+    pub search: String,
+    pub limit: i64,
 }
 
 #[derive(Template)]
@@ -185,6 +195,15 @@ mod tests {
         let template = EntryListTemplate {
             entries,
             unread_count: Some(1),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "all".to_string(),
+            search: "".to_string(),
+            limit: 50,
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
 
@@ -201,6 +220,7 @@ mod tests {
     fn test_filter_bar_reordering() {
         let template = IndexTemplate {
             unread_count: 3,
+            today_count: 0,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: false,
         };
@@ -233,6 +253,7 @@ mod tests {
     fn test_index_template_renders_ai_button_when_enabled() {
         let index_disabled = IndexTemplate {
             unread_count: 5,
+            today_count: 0,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: false,
         };
@@ -241,6 +262,7 @@ mod tests {
 
         let index_enabled = IndexTemplate {
             unread_count: 5,
+            today_count: 0,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: true,
         };
@@ -372,5 +394,271 @@ mod tests {
         assert!(html.contains("id=\"toast-container\""));
         assert!(html.contains("hx-swap-oob=\"beforeend\""));
         assert!(html.contains("Upstream service timeout"));
+    }
+
+    #[test]
+    fn test_index_template_renders_today_and_unread_counts() {
+        let template = IndexTemplate {
+            unread_count: 12,
+            today_count: 5,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+        assert!(
+            html.contains("id=\"filter-unread-count\""),
+            "Must contain filter-unread-count"
+        );
+        assert!(
+            html.contains("(12)"),
+            "Must contain unread count badge (12)"
+        );
+        assert!(
+            html.contains("id=\"filter-today-count\""),
+            "Must contain filter-today-count"
+        );
+        assert!(
+            html.contains("(5)"),
+            "Must contain today count badge (5)"
+        );
+    }
+
+    #[test]
+    fn test_entry_list_renders_pagination_when_multiple_pages() {
+        let entry = EntryViewModel {
+            id: 1,
+            title: "Test Entry".to_string(),
+            feed_title: "Feed".to_string(),
+            published_at: "1 hour ago".to_string(),
+            reading_time: 1,
+            summary: "".to_string(),
+            url: "https://example.com/1".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let template = EntryListTemplate {
+            entries: vec![entry],
+            unread_count: None,
+            current_page: 1,
+            total_pages: 3,
+            has_prev: false,
+            has_next: true,
+            prev_offset: 0,
+            next_offset: 50,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+        };
+        let html = template.render().expect("Failed to render EntryListTemplate");
+        assert!(
+            html.contains("aria-label=\"Pagination\""),
+            "Must contain pagination nav bar"
+        );
+        assert!(
+            html.contains("Page 1 of 3"),
+            "Must display current and total pages"
+        );
+        assert!(
+            html.contains("Previous"),
+            "Must have Previous label"
+        );
+        assert!(
+            html.contains("hx-get=\"/hx/entries?status=unread&amp;search=&amp;offset=50&amp;limit=50\"")
+                || html.contains("hx-get=\"/hx/entries?status=unread&search=&offset=50&limit=50\""),
+            "Must have Next button with HTMX pagination query"
+        );
+        assert!(
+            html.contains("cursor-not-allowed"),
+            "Previous button must be disabled/not-allowed on first page"
+        );
+    }
+
+    #[test]
+    fn test_entry_list_hides_pagination_when_single_page() {
+        let template = EntryListTemplate {
+            entries: vec![],
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+        };
+        let html = template.render().expect("Failed to render EntryListTemplate");
+        assert!(
+            !html.contains("aria-label=\"Pagination\""),
+            "Must NOT contain pagination nav bar when total_pages <= 1"
+        );
+        assert!(
+            !html.contains("Page 1 of 1"),
+            "Must NOT display pagination page numbers when single page"
+        );
+    }
+
+    #[test]
+    fn test_spatial_window_fluid_width_container_query() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+        assert!(
+            html.contains("container-type: inline-size;"),
+            "Must define container-type: inline-size on spatial-shell"
+        );
+        assert!(
+            html.contains("max-width: min(100cqi, 1440px);"),
+            "Must define max-width: min(100cqi, 1440px) on spatial-window"
+        );
+        assert!(
+            !html.contains("max-width: 720px;"),
+            "Must not have fixed 720px max-width"
+        );
+    }
+
+    #[test]
+    fn test_entry_item_wires_open_detail_with_skeleton() {
+        let entry = EntryViewModel {
+            id: 42,
+            title: "Test Entry".to_string(),
+            feed_title: "Test Feed".to_string(),
+            published_at: "Just now".to_string(),
+            reading_time: 1,
+            summary: "Summary".to_string(),
+            url: "https://example.com/item".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let template = EntryItemTemplate {
+            entry,
+            unread_count: None,
+        };
+        let html = template.render().expect("Failed to render EntryItemTemplate");
+        assert!(
+            html.contains("onclick=\"openDetailWithSkeleton()\""),
+            "Entry item must trigger openDetailWithSkeleton()"
+        );
+        assert!(
+            !html.contains("document.getElementById('detail-panel').classList.remove('hidden')"),
+            "Entry item must not use inline classList toggle"
+        );
+    }
+
+    #[test]
+    fn test_entry_list_wires_open_detail_with_skeleton() {
+        let entry = EntryViewModel {
+            id: 42,
+            title: "Test Entry in List".to_string(),
+            feed_title: "Test Feed".to_string(),
+            published_at: "Just now".to_string(),
+            reading_time: 1,
+            summary: "Summary".to_string(),
+            url: "https://example.com/item".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let template = EntryListTemplate {
+            entries: vec![entry],
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+        };
+        let html = template.render().expect("Failed to render EntryListTemplate");
+        assert!(
+            html.contains("onclick=\"openDetailWithSkeleton()\""),
+            "Entry list items must trigger openDetailWithSkeleton()"
+        );
+        assert!(
+            !html.contains("document.getElementById('detail-panel').classList.remove('hidden')"),
+            "Entry list must not use inline classList toggle"
+        );
+    }
+
+    #[test]
+    fn test_entry_detail_wires_close_detail_panel() {
+        let entry = EntryViewModel {
+            id: 105,
+            title: "Test Entry Detail".to_string(),
+            feed_title: "Test Feed".to_string(),
+            published_at: "1 hour ago".to_string(),
+            reading_time: 3,
+            summary: "Summary".to_string(),
+            url: "https://example.com/detail".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "Summary".to_string(),
+            sanitized_content: "<p>Detail body</p>".to_string(),
+        };
+        let html = template.render().expect("Failed to render EntryDetailTemplate");
+        assert!(
+            html.contains("onclick=\"closeDetailPanel()\""),
+            "Detail back button must trigger closeDetailPanel()"
+        );
+        assert!(
+            !html.contains("document.getElementById('detail-panel').classList.add('hidden')"),
+            "Detail back button must not use inline classList toggle"
+        );
+    }
+
+    #[test]
+    fn test_index_template_defines_detail_panel_helpers() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+        assert!(
+            html.contains("function openDetailWithSkeleton()"),
+            "Index template must define openDetailWithSkeleton helper function"
+        );
+        assert!(
+            html.contains("function closeDetailPanel()"),
+            "Index template must define closeDetailPanel helper function"
+        );
+    }
+
+    #[test]
+    fn test_index_template_skeleton_structure() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+        assert!(
+            html.contains("animate-pulse"),
+            "Skeleton placeholder must include animate-pulse"
+        );
+        assert!(
+            html.contains("onclick=\"closeDetailPanel()\""),
+            "Skeleton header must include interactive Back button wired to closeDetailPanel()"
+        );
+        assert!(
+            html.contains("indigo-400"),
+            "Skeleton should reference feed / accent pulse styling"
+        );
     }
 }

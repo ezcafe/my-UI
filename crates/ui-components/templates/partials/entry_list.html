@@ -7,10 +7,12 @@
 {% else %}
 {% for entry in entries %}
 <div class="ar-list-item px-4 py-3 rounded-2xl flex items-center justify-between gap-4 cursor-pointer select-none group" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
-  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" onclick="document.getElementById('detail-panel').classList.remove('hidden')">
+  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" onclick="openDetailWithSkeleton()">
+    <span id="entry-{{ entry.id }}-dot">
     {% if !entry.is_read %}
     <span class="w-2 h-2 rounded-full bg-indigo-400 ring-4 ring-indigo-500/20 shrink-0 shadow-sm shadow-indigo-400" title="Unread"></span>
     {% endif %}
+    </span>
     <span class="article-title text-sm font-medium leading-snug line-clamp-2 text-slate-100 group-hover:text-indigo-200 transition-colors flex-1">
       {{ entry.title }}
     </span>
@@ -30,6 +32,34 @@
   </div>
 </div>
 {% endfor %}
+
+{% if total_pages > 1 %}
+<nav class="flex items-center justify-between pt-4 pb-2 border-t border-white/10 text-xs text-white/70" aria-label="Pagination">
+  {% if has_prev %}
+  <button hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ prev_offset }}&limit={{ limit }}"
+          hx-target="#entries-list"
+          hx-swap="innerHTML"
+          class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+    Previous
+  </button>
+  {% else %}
+  <span class="px-3 py-1.5 rounded-lg text-white/30 cursor-not-allowed">Previous</span>
+  {% endif %}
+
+  <span>Page {{ current_page }} of {{ total_pages }}</span>
+
+  {% if has_next %}
+  <button hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ next_offset }}&limit={{ limit }}"
+          hx-target="#entries-list"
+          hx-swap="innerHTML"
+          class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+    Next
+  </button>
+  {% else %}
+  <span class="px-3 py-1.5 rounded-lg text-white/30 cursor-not-allowed">Next</span>
+  {% endif %}
+</nav>
+{% endif %}
 {% endif %}
 {% if let Some(unread) = unread_count %}
 <span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 font-semibold text-[11px]">

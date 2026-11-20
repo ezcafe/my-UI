@@ -1,8 +1,10 @@
 <div class="ar-list-item px-4 py-3 rounded-2xl flex items-center justify-between gap-4 cursor-pointer select-none group" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
-  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" onclick="document.getElementById('detail-panel').classList.remove('hidden')">
+  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" onclick="openDetailWithSkeleton()">
+    <span id="entry-{{ entry.id }}-dot">
     {% if !entry.is_read %}
     <span class="w-2 h-2 rounded-full bg-indigo-400 ring-4 ring-indigo-500/20 shrink-0 shadow-sm shadow-indigo-400" title="Unread"></span>
     {% endif %}
+    </span>
     <span class="article-title text-sm font-medium leading-snug line-clamp-2 text-slate-100 group-hover:text-indigo-200 transition-colors flex-1">
       {{ entry.title }}
     </span>

@@ -1,4 +1,4 @@
-<div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
+<div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
   <!-- 3px vertical positional red bar (Rule 1: Red marks position, never action) -->
   <div id="entry-{{ entry.id }}-bar" class="w-[3px] self-stretch rounded-full shrink-0 {% if !entry.is_read %}bg-brand{% else %}bg-transparent{% endif %}"></div>
 

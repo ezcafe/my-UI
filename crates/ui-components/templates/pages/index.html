@@ -30,6 +30,7 @@
           <i data-lucide="moon" id="theme-icon-moon" class="w-4 h-4"></i>
         </button>
 
+        {% if auth_enabled %}
         <button 
           id="mark-page-read-btn"
           type="button" 
@@ -42,6 +43,16 @@
           title="Mark This Page as Read">
           <i data-lucide="check-check" class="w-4 h-4"></i>
         </button>
+        {% else %}
+        <button 
+          id="mark-page-read-btn"
+          type="button" 
+          onclick="markVisiblePageLocallyRead()" 
+          class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" 
+          title="Mark This Page as Read">
+          <i data-lucide="check-check" class="w-4 h-4"></i>
+        </button>
+        {% endif %}
         {% if auth_enabled %}
         <a href="/auth/logout" class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" title="Log Out">
           <i data-lucide="log-out" class="w-4 h-4"></i>
@@ -61,8 +72,9 @@
           hx-get="/hx/entries?status=ai" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
+          hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
-          onclick="setActiveFilter(this)"
+          onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors flex items-center gap-1.5">
           <i data-lucide="sparkles" class="w-3.5 h-3.5 text-foreground"></i>
           AI
@@ -74,8 +86,9 @@
           hx-get="/hx/entries?status=unread" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
+          hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
-          onclick="setActiveFilter(this)"
+          onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-bold bg-primary text-primary-foreground border border-primary transition-colors">
           Unread <span id="filter-unread-count" class="text-xs tabular">({{ unread_count }})</span>
         </button>
@@ -85,8 +98,9 @@
           hx-get="/hx/entries?status=today" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
+          hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
-          onclick="setActiveFilter(this)"
+          onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
           Today <span id="filter-today-count" class="text-xs tabular">({{ today_count }})</span>
         </button>
@@ -96,8 +110,9 @@
           hx-get="/hx/entries?status=starred" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
+          hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
-          onclick="setActiveFilter(this)"
+          onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
           Starred
         </button>
@@ -107,8 +122,9 @@
           hx-get="/hx/entries?status=all" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
+          hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
-          onclick="setActiveFilter(this)"
+          onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
           All Titles
         </button>
@@ -120,6 +136,7 @@
         hx-get="/hx/entries" 
         hx-target="#entries-list" 
         hx-swap="innerHTML"
+        hx-indicator="#entries-loading-bar"
         class="relative flex items-center"
         onsubmit="onSearchSubmit(event)"
       >
@@ -139,6 +156,7 @@
     </div>
 
     <!-- Main Content Area: Entries List + Detail Panel Container -->
+    <div id="entries-loading-bar" class="htmx-indicator h-0.5 bg-brand animate-pulse w-full shrink-0"></div>
     <div class="flex-1 flex overflow-hidden relative">
       <div id="entries-list" class="flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card">
         {{ entries_list_html|safe }}
@@ -151,6 +169,42 @@
 </div>
 
 <script>
+  const FILTER_CACHE_TTL_MS = 60000;
+  const filterCache = new Map();
+
+  function invalidateFilterCache() {
+    filterCache.clear();
+  }
+
+  function handleFilterClick(btn, event) {
+    const status = btn.getAttribute('data-status');
+    const searchInput = document.getElementById('search-input');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+
+    if (!searchQuery && filterCache.has(status)) {
+      const cached = filterCache.get(status);
+      if (Date.now() - cached.timestamp < FILTER_CACHE_TTL_MS) {
+        if (event) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        const entriesList = document.getElementById('entries-list');
+        if (entriesList) {
+          entriesList.innerHTML = cached.html;
+          if (window.lucide && typeof lucide.createIcons === 'function') {
+            lucide.createIcons();
+          }
+          if (typeof syncDomReadStates === 'function') {
+            syncDomReadStates();
+          }
+        }
+        setActiveFilter(btn);
+        return;
+      }
+    }
+    setActiveFilter(btn);
+  }
+
   function setActiveFilter(btn) {
     document.querySelectorAll('.filter-pill').forEach(el => {
       el.classList.remove('bg-primary', 'text-primary-foreground', 'font-bold', 'border-primary');
@@ -312,6 +366,29 @@
       closeDetailPanel();
     }
   });
+
+  document.addEventListener('htmx:afterSwap', (evt) => {
+    if (evt.detail && evt.detail.target) {
+      const targetId = evt.detail.target.id || '';
+      if (targetId === 'entries-list') {
+        const activeStatusInput = document.getElementById('active-status');
+        const status = activeStatusInput ? activeStatusInput.value : null;
+        const searchInput = document.getElementById('search-input');
+        const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+        if (status && !searchQuery) {
+          filterCache.set(status, {
+            timestamp: Date.now(),
+            html: evt.detail.target.innerHTML,
+          });
+        }
+        if (typeof syncDomReadStates === 'function') {
+          syncDomReadStates();
+        }
+      } else if (targetId.startsWith('entry-') || evt.detail.target.closest('#detail-panel')) {
+        invalidateFilterCache();
+      }
+    }
+  });
 </script>
 
 {% if !auth_enabled %}
@@ -341,17 +418,37 @@
   }
 
   function syncDomReadStates() {
+    let unreadCount = 0;
     document.querySelectorAll('.annuaire-row').forEach(row => {
       const idStr = row.getAttribute('data-entry-id');
-      if (idStr && readSet.has(Number(idStr))) {
-        row.classList.remove('unread');
-        row.classList.add('read');
-        const bar = row.querySelector('.active-accent-bar');
-        if (bar) bar.style.display = 'none';
-        const dot = row.querySelector('.unread-dot');
-        if (dot) dot.style.display = 'none';
+      if (idStr) {
+        const isRead = readSet.has(Number(idStr));
+        if (isRead) {
+          row.classList.remove('unread');
+          row.classList.add('read');
+          const bar = row.querySelector('.active-accent-bar');
+          if (bar) bar.style.display = 'none';
+          const dot = row.querySelector('.unread-dot');
+          if (dot) dot.style.display = 'none';
+        } else {
+          row.classList.remove('read');
+          row.classList.add('unread');
+          const bar = row.querySelector('.active-accent-bar');
+          if (bar) bar.style.display = '';
+          const dot = row.querySelector('.unread-dot');
+          if (dot) dot.style.display = '';
+          unreadCount++;
+        }
       }
     });
+    const pill = document.getElementById('unread-pill');
+    if (pill) {
+      pill.textContent = unreadCount + ' unread';
+    }
+    const filterCount = document.getElementById('filter-unread-count');
+    if (filterCount) {
+      filterCount.textContent = '(' + unreadCount + ')';
+    }
   }
 
   function markLocallyRead(id) {
@@ -359,6 +456,9 @@
     if (!numId) return;
     readSet.add(numId);
     syncDomReadStates();
+    if (typeof invalidateFilterCache === 'function') {
+      invalidateFilterCache();
+    }
     const req = indexedDB.open(DB_NAME, 1);
     req.onsuccess = (e) => {
       const db = e.target.result;
@@ -372,12 +472,71 @@
     if (!numId) return;
     readSet.delete(numId);
     syncDomReadStates();
+    if (typeof invalidateFilterCache === 'function') {
+      invalidateFilterCache();
+    }
     const req = indexedDB.open(DB_NAME, 1);
     req.onsuccess = (e) => {
       const db = e.target.result;
       const tx = db.transaction(STORE_NAME, 'readwrite');
       tx.objectStore(STORE_NAME).delete(numId);
     };
+  }
+
+  function toggleLocalReadStatus(id) {
+    const numId = Number(id);
+    if (!numId) return;
+    if (readSet.has(numId)) {
+      unmarkLocallyRead(numId);
+    } else {
+      markLocallyRead(numId);
+    }
+    if (typeof invalidateFilterCache === 'function') {
+      invalidateFilterCache();
+    }
+  }
+
+  function markVisiblePageLocallyRead() {
+    const ids = (typeof getVisibleEntryIds === 'function') ? getVisibleEntryIds() : [];
+    if (Array.isArray(ids) && ids.length > 0) {
+      ids.forEach(id => markLocallyRead(id));
+    } else {
+      document.querySelectorAll('.annuaire-row').forEach(row => {
+        const id = row.getAttribute('data-entry-id');
+        if (id) markLocallyRead(id);
+      });
+    }
+    if (typeof invalidateFilterCache === 'function') {
+      invalidateFilterCache();
+    }
+  }
+
+  function showToast(message) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background px-4 py-2.5 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
+    toast.innerHTML = '<i data-lucide="bookmark" class="w-4 h-4 text-brand shrink-0"></i><span>' + message + '</span>';
+    container.appendChild(toast);
+    if (window.lucide) { lucide.createIcons(); }
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      setTimeout(() => toast.remove(), 300);
+    }, 3000);
+  }
+
+  function triggerNativeBookmark(title, url) {
+    if (navigator.share) {
+      navigator.share({ title: title, url: url }).catch(() => {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('Link copied to clipboard for bookmarking');
+      }).catch(() => {
+        showToast('Press Cmd+D / Ctrl+D to bookmark');
+      });
+    } else {
+      showToast('Press Cmd+D / Ctrl+D to bookmark');
+    }
   }
 
   document.addEventListener('DOMContentLoaded', () => {

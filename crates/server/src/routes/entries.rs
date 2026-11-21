@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::error::{handle_htmx_error, AppError};
 use askama::Template;
 use axum::extract::{Form, Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use miniflux_client::schema::AppSchema;
 use serde::Deserialize;
@@ -395,6 +395,10 @@ pub async fn mark_page_read_htmx(
     headers: HeaderMap,
     Form(form): Form<MarkPageReadForm>,
 ) -> Response {
+    if !config.auth_enabled {
+        return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
+    }
+
     let ids: Vec<String> = if let Some(raw) = &form.entry_ids {
         if raw.trim().starts_with('[') {
             serde_json::from_str::<Vec<serde_json::Value>>(raw)
@@ -553,6 +557,7 @@ pub async fn get_entry_detail_htmx(
         entry,
         summary,
         sanitized_content,
+        auth_enabled: config.auth_enabled,
     };
 
     let mut html = match template.render() {
@@ -594,10 +599,7 @@ pub async fn toggle_bookmark_htmx(
     Path(id): Path<i64>,
 ) -> Response {
     if !config.auth_enabled {
-        let button_html = format!(
-            r#"<button hx-post="/hx/entries/{id}/bookmark" hx-target="this" hx-swap="outerHTML" class="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-amber-300 transition-colors" title="Toggle Bookmark"><i data-lucide="bookmark" class="w-4 h-4 fill-amber-400 text-amber-400"></i></button>"#
-        );
-        return Html(button_html).into_response();
+        return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
     }
 
     let gql = format!(r#"mutation {{ toggleBookmark(id: "{id}") }}"#);
@@ -641,6 +643,10 @@ pub async fn mark_entry_read_htmx(
     Path(id): Path<i64>,
     Query(query): Query<ReadStatusQuery>,
 ) -> Response {
+    if !config.auth_enabled {
+        return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
+    }
+
     let status_enum = match query.status.as_deref() {
         Some("unread") => "UNREAD",
         _ => "READ",
@@ -742,24 +748,24 @@ pub async fn mark_feed_read_htmx(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
-    let unread_count = if config.auth_enabled {
-        let gql = format!(r#"mutation {{ markFeedAsRead(feedId: "{id}") }}"#);
-        let res = schema.execute(&gql).await;
-        if !res.errors.is_empty() {
-            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
-        }
+    if !config.auth_enabled {
+        return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
+    }
 
-        // Retrieve updated unread counter
-        let counter_res = schema.execute("{ unreadCounter }").await;
-        counter_res
-            .data
-            .into_json()
-            .ok()
-            .and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64()))
-            .map(|c| c as i32)
-    } else {
-        Some(0)
-    };
+    let gql = format!(r#"mutation {{ markFeedAsRead(feedId: "{id}") }}"#);
+    let res = schema.execute(&gql).await;
+    if !res.errors.is_empty() {
+        return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+    }
+
+    // Retrieve updated unread counter
+    let counter_res = schema.execute("{ unreadCounter }").await;
+    let unread_count = counter_res
+        .data
+        .into_json()
+        .ok()
+        .and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64()))
+        .map(|c| c as i32);
 
     let template = EntryListTemplate {
         entries: Vec::new(),
@@ -787,12 +793,14 @@ pub async fn mark_all_read_htmx(
     State(config): State<Arc<Config>>,
     headers: HeaderMap,
 ) -> Response {
-    if config.auth_enabled {
-        let gql = "mutation { markAllAsRead }";
-        let res = schema.execute(gql).await;
-        if !res.errors.is_empty() {
-            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
-        }
+    if !config.auth_enabled {
+        return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
+    }
+
+    let gql = "mutation { markAllAsRead }";
+    let res = schema.execute(gql).await;
+    if !res.errors.is_empty() {
+        return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
     }
 
     let template = EntryListTemplate {

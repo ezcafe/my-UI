@@ -261,7 +261,7 @@ async fn test_e2e_guest_mode_flow() {
     let list_body = String::from_utf8(list_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
     assert!(list_body.contains("Guest Flow Entry"));
 
-    // 4. Guest mark read returns UI update without calling upstream Miniflux
+    // 4. Guest mark read returns 403 Forbidden without calling upstream Miniflux
     let read_req = Request::builder()
         .method("POST")
         .uri("/hx/entries/888/read?status=read")
@@ -269,9 +269,7 @@ async fn test_e2e_guest_mode_flow() {
         .body(Body::empty())
         .unwrap();
     let read_resp = app.clone().oneshot(read_req).await.unwrap();
-    assert_eq!(read_resp.status(), StatusCode::OK);
-    let read_body = String::from_utf8(read_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
-    assert!(read_body.contains("id=\"entry-888\""));
+    assert_eq!(read_resp.status(), StatusCode::FORBIDDEN);
 
     // 5. DDoS oversized body protection (> 64KB) returns 413 Payload Too Large
     let oversized = format!("entry_ids={}", "a".repeat(70 * 1024));
@@ -284,4 +282,83 @@ async fn test_e2e_guest_mode_flow() {
         .unwrap();
     let ddos_resp = app.clone().oneshot(ddos_req).await.unwrap();
     assert_eq!(ddos_resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn test_mutation_endpoints_reject_with_403_when_auth_disabled() {
+    let mock_upstream = MockServer::start().await;
+
+    let config = Arc::new(Config {
+        host: "127.0.0.1".to_string(),
+        port: 3000,
+        app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: false,
+        session_secret: "guest-mode-session-secret-at-least-32-chars-long!".to_string(),
+        oidc_issuer_url: "https://auth-disabled.local".to_string(),
+        oidc_client_id: "guest".to_string(),
+        oidc_client_secret: "guest".to_string(),
+        oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+        miniflux_base_url: mock_upstream.uri(),
+        miniflux_api_key: "api-key".to_string(),
+        ai_enabled: false,
+        llm_cli_cmd: "llm".to_string(),
+        llm_model: "gpt-4o-mini".to_string(),
+        llm_extra_args: vec![],
+        ai_db_path: "data/summaries.db".to_string(),
+    });
+
+    let client = MinifluxClient::new(mock_upstream.uri(), "api-key".to_string());
+    let schema = build_schema(client);
+    let app = build_app(config, schema);
+
+    // 1. Mark entry read returns 403
+    let req = Request::builder()
+        .method("POST")
+        .uri("/hx/entries/123/read?status=read")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 2. Toggle bookmark returns 403
+    let req = Request::builder()
+        .method("POST")
+        .uri("/hx/entries/123/bookmark")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 3. Mark page read returns 403
+    let req = Request::builder()
+        .method("POST")
+        .uri("/hx/mark-page-read")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("HX-Request", "true")
+        .body(Body::from("entry_ids=123,124"))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 4. Mark feed read returns 403
+    let req = Request::builder()
+        .method("POST")
+        .uri("/hx/feeds/1/mark-all-read")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 5. Mark all read returns 403
+    let req = Request::builder()
+        .method("POST")
+        .uri("/hx/mark-all-read")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

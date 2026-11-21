@@ -76,6 +76,7 @@ pub struct EntryDetailTemplate {
     pub entry: EntryViewModel,
     pub summary: String,
     pub sanitized_content: String,
+    pub auth_enabled: bool,
 }
 
 #[derive(Template)]
@@ -143,6 +144,7 @@ mod tests {
         assert!(!html_unread.contains("leader"), "Must omit dotted leader in entry item");
         assert!(!html_unread.contains("2 hours ago"), "Must omit published_at timestamp in entry item");
         assert!(html_unread.contains("bg-brand") || html_unread.contains("var(--brand)"), "Must include brand red indicator");
+        assert!(html_unread.contains("last:border-b-0"), "Entry item must include last:border-b-0");
 
         // When is_read = true, unread indicator dot is omitted
         let entry_read = EntryViewModel {
@@ -220,6 +222,7 @@ mod tests {
         assert!(html.contains("data-lucide=\"external-link\""));
         assert!(html.contains("href=\"https://example.com/1\""));
         assert!(html.contains("href=\"https://example.com/2\""));
+        assert!(html.contains("last:border-b-0"), "Entry list item must include last:border-b-0");
     }
 
     #[test]
@@ -370,6 +373,7 @@ mod tests {
             entry,
             summary: "Extractive summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
+            auth_enabled: true,
         };
 
         let html = template.render().expect("Failed to render EntryDetailTemplate");
@@ -402,6 +406,7 @@ mod tests {
             entry,
             summary: "XR summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
+            auth_enabled: true,
         };
 
         let html = template.render().expect("Failed to render EntryDetailTemplate");
@@ -426,6 +431,90 @@ mod tests {
         assert!(
             pos_mark_unread < pos_bookmark,
             "Mark as unread button must precede bookmark button"
+        );
+    }
+
+    #[test]
+    fn test_entry_detail_renders_local_actions_when_auth_disabled() {
+        let entry = EntryViewModel {
+            id: 102,
+            title: "Micro-gestures in WebXR".to_string(),
+            feed_title: "XR Trends".to_string(),
+            published_at: "1 hour ago".to_string(),
+            reading_time: 4,
+            summary: "XR summary.".to_string(),
+            url: "https://example.com/xr".to_string(),
+            author: None,
+            is_read: true,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "XR summary".to_string(),
+            sanitized_content: "<p>Content</p>".to_string(),
+            auth_enabled: false,
+        };
+
+        let html = template.render().expect("Failed to render EntryDetailTemplate");
+
+        assert!(
+            !html.contains("hx-post=\"/hx/entries/102/read"),
+            "Guest mode must not contain hx-post for mark read"
+        );
+        assert!(
+            !html.contains("hx-post=\"/hx/entries/102/bookmark\""),
+            "Guest mode must not contain hx-post for bookmark"
+        );
+        assert!(
+            html.contains("onclick=\"toggleLocalReadStatus(102)\""),
+            "Guest mode must render onclick=\"toggleLocalReadStatus(102)\""
+        );
+        assert!(
+            html.contains("onclick=\"triggerNativeBookmark("),
+            "Guest mode must render onclick=\"triggerNativeBookmark(...)\""
+        );
+    }
+
+    #[test]
+    fn test_entry_detail_renders_htmx_actions_when_auth_enabled() {
+        let entry = EntryViewModel {
+            id: 102,
+            title: "Micro-gestures in WebXR".to_string(),
+            feed_title: "XR Trends".to_string(),
+            published_at: "1 hour ago".to_string(),
+            reading_time: 4,
+            summary: "XR summary.".to_string(),
+            url: "https://example.com/xr".to_string(),
+            author: None,
+            is_read: true,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "XR summary".to_string(),
+            sanitized_content: "<p>Content</p>".to_string(),
+            auth_enabled: true,
+        };
+
+        let html = template.render().expect("Failed to render EntryDetailTemplate");
+
+        assert!(
+            html.contains("hx-post=\"/hx/entries/102/read?status=unread\""),
+            "Auth mode must contain hx-post for mark read"
+        );
+        assert!(
+            html.contains("hx-post=\"/hx/entries/102/bookmark\""),
+            "Auth mode must contain hx-post for bookmark"
+        );
+        assert!(
+            !html.contains("toggleLocalReadStatus"),
+            "Auth mode must not contain toggleLocalReadStatus"
+        );
+        assert!(
+            !html.contains("triggerNativeBookmark"),
+            "Auth mode must not contain triggerNativeBookmark"
         );
     }
 
@@ -661,6 +750,7 @@ mod tests {
             entry,
             summary: "Summary".to_string(),
             sanitized_content: "<p>Detail body</p>".to_string(),
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render EntryDetailTemplate");
         assert!(
@@ -751,28 +841,139 @@ mod tests {
     }
 
     #[test]
-    fn test_login_page_renders_dual_panel_swiss_brand() {
+    fn test_login_page_renders_centered_card() {
         let template = LoginTemplate;
         let html = template.render().expect("Failed to render LoginTemplate");
 
-        // Dual-panel Swiss layout
-        assert!(html.contains("grid-cols-1 md:grid-cols-2"), "Must use dual-panel grid layout");
-
-        // Left brand panel with rich Annuaire red background and Big Shoulders Display wordmark
+        // Centered Swiss card layout
         assert!(
-            html.contains("bg-[var(--brand-surface)]") || html.contains("var(--brand-surface)"),
-            "Left panel must use Annuaire brand surface red"
+            html.contains("min-h-screen flex items-center justify-center"),
+            "Must use centered layout"
+        );
+        assert!(
+            html.contains("max-w-sm rounded-lg border border-border bg-card"),
+            "Must use Swiss card container"
+        );
+
+        // Wordmark and badge
+        assert!(
+            html.contains("Editorial Directory"),
+            "Must contain Editorial Directory badge"
         );
         assert!(
             html.contains("font-display") && html.contains("MY NEWS"),
             "Wordmark must use font-display and MY NEWS"
         );
 
-        // Right login card with Pocket-ID ink pill
-        assert!(html.contains("Sign in with Pocket-ID"), "Must contain Sign in with Pocket-ID");
+        // Pocket-ID ink pill button
+        assert!(
+            html.contains("Sign in with Pocket-ID"),
+            "Must contain Sign in with Pocket-ID"
+        );
         assert!(
             html.contains("bg-primary text-primary-foreground") && html.contains("rounded-full"),
             "Login button must be an ink pill"
+        );
+    }
+
+    #[test]
+    fn test_index_template_mark_page_read_button_auth_toggle() {
+        let template_auth = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: true,
+        };
+        let html_auth = template_auth.render().expect("Failed to render IndexTemplate with auth_enabled: true");
+        assert!(
+            html_auth.contains("hx-post=\"/hx/mark-page-read\""),
+            "Authenticated mode must include hx-post on mark-page-read button"
+        );
+        assert!(
+            !html_auth.contains("markVisiblePageLocallyRead()"),
+            "Authenticated mode must not use client-side markVisiblePageLocallyRead"
+        );
+
+        let template_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html_guest = template_guest.render().expect("Failed to render IndexTemplate with auth_enabled: false");
+        assert!(
+            !html_guest.contains("hx-post=\"/hx/mark-page-read\""),
+            "Guest mode must not include hx-post on mark-page-read button"
+        );
+        assert!(
+            html_guest.contains("onclick=\"markVisiblePageLocallyRead()\""),
+            "Guest mode must use onclick=\"markVisiblePageLocallyRead()\" on mark-page-read button"
+        );
+        assert!(
+            html_guest.contains("function markVisiblePageLocallyRead()"),
+            "Guest mode must define markVisiblePageLocallyRead() function"
+        );
+        assert!(
+            html_guest.contains("function toggleLocalReadStatus("),
+            "Guest mode must define toggleLocalReadStatus() function"
+        );
+        assert!(
+            html_guest.contains("function triggerNativeBookmark("),
+            "Guest mode must define triggerNativeBookmark() function"
+        );
+    }
+
+    #[test]
+    fn test_index_template_loading_indicator_and_filter_cache() {
+        let template = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        // HTMX loading indicator
+        assert!(
+            html.contains("id=\"entries-loading-bar\""),
+            "Must render entries loading bar"
+        );
+        assert!(
+            html.contains("class=\"htmx-indicator h-0.5 bg-brand animate-pulse"),
+            "Loading bar must have htmx-indicator and pulse classes"
+        );
+        assert!(
+            html.contains(".htmx-indicator"),
+            "Base styles must include .htmx-indicator"
+        );
+        assert!(
+            html.contains("hx-indicator=\"#entries-loading-bar\""),
+            "Filter pills and search must declare hx-indicator"
+        );
+
+        // Client-side filter cache
+        assert!(
+            html.contains("const FILTER_CACHE_TTL_MS = 60000;"),
+            "Must declare FILTER_CACHE_TTL_MS constant"
+        );
+        assert!(
+            html.contains("const filterCache = new Map();"),
+            "Must declare filterCache Map"
+        );
+        assert!(
+            html.contains("function handleFilterClick(btn, event)"),
+            "Must declare handleFilterClick function"
+        );
+        assert!(
+            html.contains("function invalidateFilterCache()"),
+            "Must declare invalidateFilterCache function"
+        );
+        assert!(
+            html.contains("onclick=\"handleFilterClick(this, event)\""),
+            "Filter pills must wire handleFilterClick"
         );
     }
 }

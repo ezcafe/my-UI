@@ -22,6 +22,10 @@ pub struct AuthCallbackQuery {
 }
 
 pub async fn login_handler(State(config): State<Arc<Config>>) -> Result<Response, (StatusCode, String)> {
+    if !config.auth_enabled {
+        return Ok(Redirect::to("/").into_response());
+    }
+
     let req = generate_auth_request(&config).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let temp_data = OidcTempData {
@@ -46,6 +50,10 @@ pub async fn callback_handler(
     headers: HeaderMap,
     Query(query): Query<AuthCallbackQuery>,
 ) -> Result<Response, (StatusCode, String)> {
+    if !config.auth_enabled {
+        return Ok(Redirect::to("/").into_response());
+    }
+
     if let Some(err) = query.error {
         return Err((StatusCode::BAD_REQUEST, format!("OIDC error: {}", err)));
     }
@@ -83,6 +91,10 @@ pub async fn callback_handler(
 }
 
 pub async fn logout_handler(State(config): State<Arc<Config>>) -> Response {
+    if !config.auth_enabled {
+        return Redirect::to("/").into_response();
+    }
+
     let clear_session = build_clear_session_cookie_header(config.is_secure());
     let mut response = Redirect::to("/login").into_response();
     response

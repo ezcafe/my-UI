@@ -18,6 +18,7 @@ async fn test_app_starts_and_responds_to_health_check() {
         host: "127.0.0.1".to_string(),
         port: 3000,
         app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: true,
         session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
         oidc_issuer_url: "https://id.example.com".to_string(),
         oidc_client_id: "client-id".to_string(),
@@ -95,6 +96,7 @@ async fn test_e2e_authenticated_session_flow() {
         host: "127.0.0.1".to_string(),
         port: 3000,
         app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: true,
         session_secret: secret.to_string(),
         oidc_issuer_url: "https://id.example.com".to_string(),
         oidc_client_id: "client-id".to_string(),
@@ -163,4 +165,123 @@ async fn test_e2e_authenticated_session_flow() {
     assert_eq!(logout_resp.headers().get(header::LOCATION).unwrap(), "/login");
     let set_cookie = logout_resp.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
     assert!(set_cookie.contains("__session=") && set_cookie.contains("Max-Age=0"));
+}
+
+#[tokio::test]
+async fn test_e2e_guest_mode_flow() {
+    let mock_upstream = MockServer::start().await;
+
+    // Upstream mocks for entries & unread counters
+    Mock::given(method("GET"))
+        .and(path("/v1/feeds/counters"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "reads": {},
+            "unreads": { "1": 2 }
+        })))
+        .mount(&mock_upstream)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/v1/entries"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total": 1,
+            "entries": [
+                {
+                    "id": 888,
+                    "feed_id": 1,
+                    "title": "Guest Flow Entry",
+                    "url": "https://example.com/guest",
+                    "content": "Full content of the guest test article.",
+                    "published_at": "Today",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 1
+                }
+            ]
+        })))
+        .mount(&mock_upstream)
+        .await;
+
+    // Notice: NO PUT /v1/entries mock is mounted!
+    // If guest mode attempted to mutate upstream, wiremock would fail with unmatched request!
+
+    let config = Arc::new(Config {
+        host: "127.0.0.1".to_string(),
+        port: 3000,
+        app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: false,
+        session_secret: "guest-mode-session-secret-at-least-32-chars-long!".to_string(),
+        oidc_issuer_url: "https://auth-disabled.local".to_string(),
+        oidc_client_id: "guest".to_string(),
+        oidc_client_secret: "guest".to_string(),
+        oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+        miniflux_base_url: mock_upstream.uri(),
+        miniflux_api_key: "api-key".to_string(),
+        ai_enabled: false,
+        llm_cli_cmd: "llm".to_string(),
+        llm_model: "gpt-4o-mini".to_string(),
+        llm_extra_args: vec![],
+        ai_db_path: "data/summaries.db".to_string(),
+    });
+
+    let client = MinifluxClient::new(mock_upstream.uri(), "api-key".to_string());
+    let schema = build_schema(client);
+    let app = build_app(config, schema);
+
+    // 1. Root page serves HTML shell without auth cookies
+    let root_req = Request::builder()
+        .uri("/")
+        .body(Body::empty())
+        .unwrap();
+
+    let root_resp = app.clone().oneshot(root_req).await.unwrap();
+    assert_eq!(root_resp.status(), StatusCode::OK);
+    let root_body = String::from_utf8(root_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(root_body.contains("my_news_guest_db"));
+    assert!(root_body.contains("read_entries"));
+    assert!(!root_body.contains("hx-post=\"/auth/logout\""));
+
+    // 2. Auth routes redirect to root
+    let login_req = Request::builder()
+        .uri("/login")
+        .body(Body::empty())
+        .unwrap();
+    let login_resp = app.clone().oneshot(login_req).await.unwrap();
+    assert_eq!(login_resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(login_resp.headers().get(header::LOCATION).unwrap(), "/");
+
+    // 3. Guest HTMX entries request succeeds without login redirect
+    let list_req = Request::builder()
+        .uri("/hx/entries")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let list_resp = app.clone().oneshot(list_req).await.unwrap();
+    assert_eq!(list_resp.status(), StatusCode::OK);
+    let list_body = String::from_utf8(list_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(list_body.contains("Guest Flow Entry"));
+
+    // 4. Guest mark read returns UI update without calling upstream Miniflux
+    let read_req = Request::builder()
+        .method("POST")
+        .uri("/hx/entries/888/read?status=read")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let read_resp = app.clone().oneshot(read_req).await.unwrap();
+    assert_eq!(read_resp.status(), StatusCode::OK);
+    let read_body = String::from_utf8(read_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    assert!(read_body.contains("id=\"entry-888\""));
+
+    // 5. DDoS oversized body protection (> 64KB) returns 413 Payload Too Large
+    let oversized = format!("entry_ids={}", "a".repeat(70 * 1024));
+    let ddos_req = Request::builder()
+        .method("POST")
+        .uri("/hx/mark-page-read")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("HX-Request", "true")
+        .body(Body::from(oversized))
+        .unwrap();
+    let ddos_resp = app.clone().oneshot(ddos_req).await.unwrap();
+    assert_eq!(ddos_resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }

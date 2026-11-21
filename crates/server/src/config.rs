@@ -15,6 +15,7 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub app_base_url: String,
+    pub auth_enabled: bool,
     pub session_secret: String,
     pub oidc_issuer_url: String,
     pub oidc_client_id: String,
@@ -70,17 +71,58 @@ impl Config {
         let host = map.get("HOST").cloned().unwrap_or_else(|| "0.0.0.0".to_string());
         let app_base_url = map.get("APP_BASE_URL").cloned().unwrap_or_else(|| format!("http://{}:{}", host, port));
 
-        let session_secret = get_req("SESSION_SECRET")?;
-        if session_secret.len() < 32 {
-            return Err(ConfigError::InvalidValue(
-                "SESSION_SECRET must be at least 32 bytes long".to_string(),
-            ));
-        }
+        let auth_enabled = map
+            .get("AUTH_ENABLED")
+            .map(|v| !v.eq_ignore_ascii_case("false") && v != "0")
+            .unwrap_or(true);
 
-        let oidc_issuer_url = get_req("OIDC_ISSUER_URL")?;
-        let oidc_client_id = get_req("OIDC_CLIENT_ID")?;
-        let oidc_client_secret = get_req("OIDC_CLIENT_SECRET")?;
-        let oidc_redirect_url = get_req("OIDC_REDIRECT_URL")?;
+        let session_secret = if auth_enabled {
+            let secret = get_req("SESSION_SECRET")?;
+            if secret.len() < 32 {
+                return Err(ConfigError::InvalidValue(
+                    "SESSION_SECRET must be at least 32 bytes long".to_string(),
+                ));
+            }
+            secret
+        } else {
+            map.get("SESSION_SECRET")
+                .cloned()
+                .filter(|s| s.len() >= 32)
+                .unwrap_or_else(|| "guest-mode-session-secret-at-least-32-chars-long!".to_string())
+        };
+
+        let oidc_issuer_url = if auth_enabled {
+            get_req("OIDC_ISSUER_URL")?
+        } else {
+            map.get("OIDC_ISSUER_URL")
+                .cloned()
+                .unwrap_or_else(|| "https://auth-disabled.local".to_string())
+        };
+
+        let oidc_client_id = if auth_enabled {
+            get_req("OIDC_CLIENT_ID")?
+        } else {
+            map.get("OIDC_CLIENT_ID")
+                .cloned()
+                .unwrap_or_else(|| "guest".to_string())
+        };
+
+        let oidc_client_secret = if auth_enabled {
+            get_req("OIDC_CLIENT_SECRET")?
+        } else {
+            map.get("OIDC_CLIENT_SECRET")
+                .cloned()
+                .unwrap_or_else(|| "guest".to_string())
+        };
+
+        let oidc_redirect_url = if auth_enabled {
+            get_req("OIDC_REDIRECT_URL")?
+        } else {
+            map.get("OIDC_REDIRECT_URL")
+                .cloned()
+                .unwrap_or_else(|| format!("{}/auth/callback", app_base_url))
+        };
+
         let miniflux_base_url = get_req("MINIFLUX_BASE_URL")?;
         let miniflux_api_key = get_req("MINIFLUX_API_KEY")?;
 
@@ -116,6 +158,7 @@ impl Config {
             host,
             port,
             app_base_url,
+            auth_enabled,
             session_secret,
             oidc_issuer_url,
             oidc_client_id,
@@ -242,5 +285,38 @@ mod tests {
         assert_eq!(custom_config.llm_model, "claude-3-5");
         assert_eq!(custom_config.llm_extra_args, vec!["--thinking-budget", "0", "--opt", "foo"]);
         assert_eq!(custom_config.ai_db_path, "custom/db.sqlite");
+    }
+
+    #[test]
+    fn test_config_parses_auth_enabled_and_defaults() {
+        let vars = [
+            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            ("OIDC_ISSUER_URL", "https://id.example.com"),
+            ("OIDC_CLIENT_ID", "client-123"),
+            ("OIDC_CLIENT_SECRET", "secret-456"),
+            ("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback"),
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+        ];
+        let def_config = Config::from_map(&make_test_env(&vars)).expect("defaults");
+        assert!(def_config.auth_enabled, "auth_enabled should default to true");
+
+        let mut false_vars = make_test_env(&vars);
+        false_vars.insert("AUTH_ENABLED".to_string(), "false".to_string());
+        let false_config = Config::from_map(&false_vars).expect("auth disabled");
+        assert!(!false_config.auth_enabled);
+    }
+
+    #[test]
+    fn test_config_allows_missing_oidc_when_auth_disabled() {
+        let vars = [
+            ("AUTH_ENABLED", "false"),
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+        ];
+        let config = Config::from_map(&make_test_env(&vars)).expect("should succeed without OIDC vars");
+        assert!(!config.auth_enabled);
+        assert!(!config.session_secret.is_empty());
+        assert!(!config.oidc_issuer_url.is_empty());
     }
 }

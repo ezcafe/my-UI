@@ -1,5 +1,6 @@
 use crate::ai::AiService;
 use crate::auth::AuthenticatedUser;
+use crate::cache::MinifluxCache;
 use crate::config::Config;
 use crate::error::{handle_htmx_error, AppError};
 use askama::Template;
@@ -9,6 +10,7 @@ use axum::response::{Html, IntoResponse, Response};
 use miniflux_client::schema::AppSchema;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Duration;
 use ui_components::sanitizer::sanitize_html;
 use ui_components::templates::{
     AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate, EntryItemTemplate,
@@ -83,40 +85,79 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
 
 pub async fn render_entries_list(
     schema: &AppSchema,
+    cache: Option<&MinifluxCache>,
     headers: &HeaderMap,
     query: &EntriesFilterQuery,
 ) -> Response {
     let limit_val = query.limit.unwrap_or(50);
     let offset_val = query.offset.unwrap_or(0);
     let filter_str = build_graphql_filter(query, limit_val, offset_val);
+    let cache_key = format!("entries:{}", filter_str);
 
-    let gql = format!(
-        r#"query {{
-            entriesResult(filter: {{ {filter_str} }}) {{
-                total
-                entries {{
-                    id
-                    title
-                    summary
-                    publishedAt
-                    readingTime
-                    status
-                    isBookmarked
-                    url
+    let data = if let Some(cache) = cache {
+        if let Some(cached_val) = cache.get(&cache_key).await {
+            cached_val
+        } else {
+            let gql = format!(
+                r#"query {{
+                    entriesResult(filter: {{ {filter_str} }}) {{
+                        total
+                        entries {{
+                            id
+                            title
+                            summary
+                            publishedAt
+                            readingTime
+                            status
+                            isBookmarked
+                            url
+                        }}
+                    }}
+                    unreadCounter
+                }}"#
+            );
+
+            let res = schema.execute(&gql).await;
+            if !res.errors.is_empty() {
+                return handle_htmx_error(headers, AppError::Upstream(format!("{:?}", res.errors)));
+            }
+
+            let d = match res.data.into_json() {
+                Ok(d) => d,
+                Err(e) => return handle_htmx_error(headers, AppError::Internal(e.to_string())),
+            };
+            cache.insert_with_ttl(cache_key, d.clone(), Duration::from_secs(30)).await;
+            d
+        }
+    } else {
+        let gql = format!(
+            r#"query {{
+                entriesResult(filter: {{ {filter_str} }}) {{
+                    total
+                    entries {{
+                        id
+                        title
+                        summary
+                        publishedAt
+                        readingTime
+                        status
+                        isBookmarked
+                        url
+                    }}
                 }}
-            }}
-            unreadCounter
-        }}"#
-    );
+                unreadCounter
+            }}"#
+        );
 
-    let res = schema.execute(&gql).await;
-    if !res.errors.is_empty() {
-        return handle_htmx_error(headers, AppError::Upstream(format!("{:?}", res.errors)));
-    }
+        let res = schema.execute(&gql).await;
+        if !res.errors.is_empty() {
+            return handle_htmx_error(headers, AppError::Upstream(format!("{:?}", res.errors)));
+        }
 
-    let data = match res.data.into_json() {
-        Ok(d) => d,
-        Err(e) => return handle_htmx_error(headers, AppError::Internal(e.to_string())),
+        match res.data.into_json() {
+            Ok(d) => d,
+            Err(e) => return handle_htmx_error(headers, AppError::Internal(e.to_string())),
+        }
     };
 
     let unread_count = data.get("unreadCounter").and_then(|v| v.as_i64()).map(|c| c as i32);
@@ -284,6 +325,7 @@ pub async fn list_entries_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
     Query(query): Query<EntriesFilterQuery>,
 ) -> Response {
@@ -293,7 +335,7 @@ pub async fn list_entries_htmx(
         }
         return render_ai_entries_list(&schema, &headers, &query).await;
     }
-    render_entries_list(&schema, &headers, &query).await
+    render_entries_list(&schema, Some(&cache), &headers, &query).await
 }
 
 pub async fn get_entry_ai_summary_htmx(
@@ -348,6 +390,8 @@ pub async fn get_entry_ai_summary_htmx(
 pub async fn mark_page_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
     Form(form): Form<MarkPageReadForm>,
 ) -> Response {
@@ -379,7 +423,7 @@ pub async fn mark_page_read_htmx(
         Vec::new()
     };
 
-    if !ids.is_empty() {
+    if config.auth_enabled && !ids.is_empty() {
         let ids_json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
         let gql = format!(
             r#"mutation {{
@@ -392,6 +436,9 @@ pub async fn mark_page_read_htmx(
         }
     }
 
+    cache.invalidate("entries:").await;
+    cache.invalidate("index_page_entries").await;
+
     let filter_query = EntriesFilterQuery {
         status: form.status,
         search: form.search,
@@ -401,40 +448,49 @@ pub async fn mark_page_read_htmx(
         offset: Some(0),
     };
 
-    render_entries_list(&schema, &headers, &filter_query).await
+    render_entries_list(&schema, None, &headers, &filter_query).await
 }
 
 pub async fn get_entry_detail_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
-    let gql = format!(
-        r#"query {{
-            entry(id: "{id}") {{
-                id
-                title
-                summary
-                content
-                publishedAt
-                readingTime
-                status
-                isBookmarked
-                url
-                author
-                feed {{
+    let cache_key = format!("entry:{}", id);
+    let data = if let Some(cached) = cache.get(&cache_key).await {
+        cached
+    } else {
+        let gql = format!(
+            r#"query {{
+                entry(id: "{id}") {{
+                    id
                     title
+                    summary
+                    content
+                    publishedAt
+                    readingTime
+                    status
+                    isBookmarked
+                    url
+                    author
+                    feed {{
+                        title
+                    }}
                 }}
-            }}
-            unreadCounter
-        }}"#
-    );
+                unreadCounter
+            }}"#
+        );
 
-    let res = schema.execute(&gql).await;
-    let data = match res.data.into_json() {
-        Ok(d) => d,
-        Err(e) => return handle_htmx_error(&headers, AppError::Internal(e.to_string())),
+        let res = schema.execute(&gql).await;
+        let d = match res.data.into_json() {
+            Ok(d) => d,
+            Err(e) => return handle_htmx_error(&headers, AppError::Internal(e.to_string())),
+        };
+        cache.insert_with_ttl(cache_key, d.clone(), Duration::from_secs(300)).await;
+        d
     };
 
     let item = data.get("entry").and_then(|v| {
@@ -454,7 +510,7 @@ pub async fn get_entry_detail_htmx(
 
     let mut unread_count_val = data.get("unreadCounter").and_then(|v| v.as_i64()).unwrap_or(0);
 
-    if is_unread {
+    if is_unread && config.auth_enabled {
         let mutation = format!(
             r#"mutation {{
                 updateEntriesStatus(entryIds: ["{id}"], status: READ)
@@ -466,6 +522,8 @@ pub async fn get_entry_detail_htmx(
         if let Some(c) = counter_res.data.into_json().ok().and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64())) {
             unread_count_val = c;
         }
+    } else if is_unread {
+        unread_count_val = (unread_count_val - 1).max(0);
     }
 
     let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -531,9 +589,17 @@ pub async fn get_entry_detail_htmx(
 pub async fn toggle_bookmark_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
+    if !config.auth_enabled {
+        let button_html = format!(
+            r#"<button hx-post="/hx/entries/{id}/bookmark" hx-target="this" hx-swap="outerHTML" class="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-amber-300 transition-colors" title="Toggle Bookmark"><i data-lucide="bookmark" class="w-4 h-4 fill-amber-400 text-amber-400"></i></button>"#
+        );
+        return Html(button_html).into_response();
+    }
+
     let gql = format!(r#"mutation {{ toggleBookmark(id: "{id}") }}"#);
     let res = schema.execute(&gql).await;
     if !res.errors.is_empty() {
@@ -570,6 +636,7 @@ pub struct ReadStatusQuery {
 pub async fn mark_entry_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
     Query(query): Query<ReadStatusQuery>,
@@ -579,14 +646,16 @@ pub async fn mark_entry_read_htmx(
         _ => "READ",
     };
 
-    let gql = format!(
-        r#"mutation {{
-            updateEntryStatus(id: "{id}", status: {status_enum})
-        }}"#
-    );
-    let res = schema.execute(&gql).await;
-    if !res.errors.is_empty() {
-        return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+    if config.auth_enabled {
+        let gql = format!(
+            r#"mutation {{
+                updateEntryStatus(id: "{id}", status: {status_enum})
+            }}"#
+        );
+        let res = schema.execute(&gql).await;
+        if !res.errors.is_empty() {
+            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+        }
     }
 
     // Retrieve updated entry details and unread counter
@@ -669,23 +738,28 @@ pub async fn mark_entry_read_htmx(
 pub async fn mark_feed_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
-    let gql = format!(r#"mutation {{ markFeedAsRead(feedId: "{id}") }}"#);
-    let res = schema.execute(&gql).await;
-    if !res.errors.is_empty() {
-        return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
-    }
+    let unread_count = if config.auth_enabled {
+        let gql = format!(r#"mutation {{ markFeedAsRead(feedId: "{id}") }}"#);
+        let res = schema.execute(&gql).await;
+        if !res.errors.is_empty() {
+            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+        }
 
-    // Retrieve updated unread counter
-    let counter_res = schema.execute("{ unreadCounter }").await;
-    let unread_count = counter_res
-        .data
-        .into_json()
-        .ok()
-        .and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64()))
-        .map(|c| c as i32);
+        // Retrieve updated unread counter
+        let counter_res = schema.execute("{ unreadCounter }").await;
+        counter_res
+            .data
+            .into_json()
+            .ok()
+            .and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64()))
+            .map(|c| c as i32)
+    } else {
+        Some(0)
+    };
 
     let template = EntryListTemplate {
         entries: Vec::new(),
@@ -710,12 +784,15 @@ pub async fn mark_feed_read_htmx(
 pub async fn mark_all_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
     headers: HeaderMap,
 ) -> Response {
-    let gql = "mutation { markAllAsRead }";
-    let res = schema.execute(gql).await;
-    if !res.errors.is_empty() {
-        return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+    if config.auth_enabled {
+        let gql = "mutation { markAllAsRead }";
+        let res = schema.execute(gql).await;
+        if !res.errors.is_empty() {
+            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+        }
     }
 
     let template = EntryListTemplate {

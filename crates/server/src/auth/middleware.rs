@@ -41,6 +41,14 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let config = Arc::<Config>::from_ref(state);
+        if !config.auth_enabled {
+            return Ok(AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            });
+        }
+
         let is_htmx = parts
             .headers
             .get("HX-Request")

@@ -24,6 +24,7 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 3000,
             app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
             session_secret: secret.to_string(),
             oidc_issuer_url: "https://id.example.com".to_string(),
             oidc_client_id: "test-client".to_string(),
@@ -551,6 +552,7 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 3000,
             app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
             session_secret: secret.to_string(),
             oidc_issuer_url: "https://id.example.com".to_string(),
             oidc_client_id: "test-client".to_string(),
@@ -709,5 +711,180 @@ mod tests {
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(html.contains("ai-summary-card"));
         assert!(html.contains("Quantum leap achieved today."));
+    }
+
+    #[tokio::test]
+    async fn test_list_entries_serves_from_cache_when_cached() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 1,
+                "entries": [
+                    {
+                        "id": 42,
+                        "feed_id": 1,
+                        "title": "Cached Entry",
+                        "url": "https://example.com/cached",
+                        "content": "Content",
+                        "published_at": "2026-11-20T12:00:00Z",
+                        "status": "unread",
+                        "starred": false,
+                        "reading_time": 1
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })))
+            .mount(&server)
+            .await;
+
+        let (app, cookie) = setup_test_app(&server.uri()).await;
+
+        let req1 = Request::builder()
+            .uri("/hx/entries?status=unread")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let resp1 = app.clone().oneshot(req1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+
+        let req2 = Request::builder()
+            .uri("/hx/entries?status=unread")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        let resp2 = app.oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+    }
+
+    async fn setup_test_app_guest(server_uri: &str) -> axum::Router {
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: server_uri.to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: false,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            ai_db_path: "data/summaries.db".to_string(),
+        });
+
+        let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());
+        let schema = build_schema(client);
+        build_app(config, schema)
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_detail_skips_miniflux_mutation_when_auth_disabled() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 123,
+                "feed_id": 1,
+                "title": "Guest Detail Article",
+                "url": "https://example.com/detail",
+                "content": "<p>Content</p>",
+                "published_at": "2026-11-20T12:00:00Z",
+                "status": "unread",
+                "reading_time": 2,
+                "starred": false
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": { "1": 1 } })))
+            .mount(&server)
+            .await;
+
+        // Mutation must NOT be called in guest mode
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let app = setup_test_app_guest(&server.uri()).await;
+
+        let req = Request::builder()
+            .uri("/hx/entries/123")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_toggle_bookmark_htmx_skips_miniflux_when_auth_disabled() {
+        let server = MockServer::start().await;
+
+        // Mutation must NOT be called in guest mode
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries/88/bookmark"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let app = setup_test_app_guest(&server.uri()).await;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hx/entries/88/bookmark")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_mark_entry_read_htmx_skips_miniflux_when_auth_disabled() {
+        let server = MockServer::start().await;
+
+        // Mutation must NOT be called in guest mode
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries/88"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let app = setup_test_app_guest(&server.uri()).await;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hx/entries/88/read")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }

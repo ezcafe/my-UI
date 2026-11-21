@@ -22,6 +22,7 @@ pub struct IndexTemplate {
     pub today_count: i64,
     pub entries_list_html: String,
     pub ai_enabled: bool,
+    pub auth_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +229,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render IndexTemplate");
 
@@ -260,6 +262,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html_disabled = index_disabled.render().expect("Failed to render IndexTemplate disabled");
         assert!(!html_disabled.contains("id=\"filter-ai\""));
@@ -269,6 +272,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: true,
+            auth_enabled: true,
         };
         let html_enabled = index_enabled.render().expect("Failed to render IndexTemplate enabled");
         assert!(html_enabled.contains("id=\"filter-ai\""));
@@ -277,6 +281,44 @@ mod tests {
         let pos_ai = html_enabled.find("id=\"filter-ai\"").expect("filter-ai not found");
         let pos_unread = html_enabled.find("id=\"filter-unread\"").expect("filter-unread not found");
         assert!(pos_ai < pos_unread, "AI button must render before Unread button");
+    }
+
+    #[test]
+    fn test_index_template_hides_logout_button_when_auth_disabled() {
+        let index_auth_enabled = IndexTemplate {
+            unread_count: 5,
+            today_count: 0,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: true,
+        };
+        let html_enabled = index_auth_enabled.render().expect("Failed to render with auth enabled");
+        assert!(html_enabled.contains("/auth/logout"), "Logout button must render when auth_enabled is true");
+
+        let index_auth_disabled = IndexTemplate {
+            unread_count: 5,
+            today_count: 0,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html_disabled = index_auth_disabled.render().expect("Failed to render with auth disabled");
+        assert!(!html_disabled.contains("/auth/logout"), "Logout button must be hidden when auth_enabled is false");
+    }
+
+    #[test]
+    fn test_index_template_renders_guest_state_script_when_auth_disabled() {
+        let index_auth_disabled = IndexTemplate {
+            unread_count: 5,
+            today_count: 0,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = index_auth_disabled.render().expect("Failed to render with auth disabled");
+        assert!(html.contains("my_news_guest_db"), "Must initialize guest IndexedDB");
+        assert!(html.contains("read_entries"), "Must reference read_entries store");
+        assert!(html.contains("readSet"), "Must maintain in-memory readSet");
     }
 
     #[test]
@@ -412,6 +454,7 @@ mod tests {
             today_count: 5,
             entries_list_html: "<div>entries</div>".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render IndexTemplate");
         assert!(
@@ -516,6 +559,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render IndexTemplate");
         assert!(
@@ -636,6 +680,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render IndexTemplate");
         assert!(
@@ -655,6 +700,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render IndexTemplate");
         assert!(
@@ -678,6 +724,7 @@ mod tests {
             today_count: 0,
             entries_list_html: "".to_string(),
             ai_enabled: false,
+            auth_enabled: true,
         };
         let html = template.render().expect("Failed to render IndexTemplate");
 

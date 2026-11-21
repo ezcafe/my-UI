@@ -13,6 +13,8 @@ mod tests {
     use super::temp_cookie::{
         create_temp_cookie_value, OidcTempData,
     };
+    use super::AuthenticatedUser;
+    use axum::extract::FromRequestParts;
     use crate::app::build_app;
     use crate::config::Config;
     use axum::body::Body;
@@ -27,6 +29,7 @@ mod tests {
             host: "127.0.0.1".to_string(),
             port: 3000,
             app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
             session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
             oidc_issuer_url: "https://id.example.com".to_string(),
             oidc_client_id: "test-client".to_string(),
@@ -242,5 +245,61 @@ mod tests {
         for c in &cookies {
             assert!(c.contains("Secure"), "Cookie must contain Secure flag in HTTPS: {}", c);
         }
+    }
+
+    #[tokio::test]
+    async fn test_authenticated_user_bypasses_when_auth_disabled() {
+        let mut cfg = (*test_config()).clone();
+        cfg.auth_enabled = false;
+        let config = Arc::new(cfg);
+
+        let req = Request::builder()
+            .uri("/")
+            .body(Body::empty())
+            .unwrap();
+
+        let (mut parts, _) = req.into_parts();
+        let user = AuthenticatedUser::from_request_parts(&mut parts, &config)
+            .await
+            .expect("Guest user should be returned when auth is disabled");
+
+        assert_eq!(user.user_id, "guest");
+        assert_eq!(user.username, "Guest");
+        assert_eq!(user.access_token, "");
+    }
+
+    #[tokio::test]
+    async fn test_auth_routes_redirect_to_root_when_auth_disabled() {
+        let mut cfg = (*test_config()).clone();
+        cfg.auth_enabled = false;
+        let config = Arc::new(cfg);
+
+        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let schema = build_schema(client);
+        let app = build_app(config, schema);
+
+        // /auth/login
+        let req = Request::builder().uri("/auth/login").body(Body::empty()).unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
+
+        // /auth/callback
+        let req = Request::builder().uri("/auth/callback").body(Body::empty()).unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
+
+        // /auth/logout
+        let req = Request::builder().uri("/auth/logout").body(Body::empty()).unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
+
+        // /login
+        let req = Request::builder().uri("/login").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
     }
 }

@@ -42,9 +42,11 @@
           title="Mark This Page as Read">
           <i data-lucide="check-check" class="w-4 h-4"></i>
         </button>
+        {% if auth_enabled %}
         <a href="/auth/logout" class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" title="Log Out">
           <i data-lucide="log-out" class="w-4 h-4"></i>
         </a>
+        {% endif %}
       </div>
     </header>
 
@@ -311,4 +313,87 @@
     }
   });
 </script>
+
+{% if !auth_enabled %}
+<script>
+  const DB_NAME = 'my_news_guest_db';
+  const STORE_NAME = 'read_entries';
+  let readSet = new Set();
+
+  function initGuestDb() {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const getAllReq = store.getAllKeys();
+      getAllReq.onsuccess = (ev) => {
+        readSet = new Set(ev.target.result);
+        syncDomReadStates();
+      };
+    };
+  }
+
+  function syncDomReadStates() {
+    document.querySelectorAll('.annuaire-row').forEach(row => {
+      const idStr = row.getAttribute('data-entry-id');
+      if (idStr && readSet.has(Number(idStr))) {
+        row.classList.remove('unread');
+        row.classList.add('read');
+        const bar = row.querySelector('.active-accent-bar');
+        if (bar) bar.style.display = 'none';
+        const dot = row.querySelector('.unread-dot');
+        if (dot) dot.style.display = 'none';
+      }
+    });
+  }
+
+  function markLocallyRead(id) {
+    const numId = Number(id);
+    if (!numId) return;
+    readSet.add(numId);
+    syncDomReadStates();
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put({ id: numId, read_at: Date.now() });
+    };
+  }
+
+  function unmarkLocallyRead(id) {
+    const numId = Number(id);
+    if (!numId) return;
+    readSet.delete(numId);
+    syncDomReadStates();
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(numId);
+    };
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initGuestDb();
+  });
+
+  document.addEventListener('htmx:afterSwap', (evt) => {
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'detail-panel') {
+      const detail = evt.detail.target.querySelector('[data-entry-id]');
+      if (detail) {
+        const id = detail.getAttribute('data-entry-id');
+        if (id) markLocallyRead(id);
+      }
+    }
+    syncDomReadStates();
+  });
+</script>
+{% endif %}
 {% endblock %}

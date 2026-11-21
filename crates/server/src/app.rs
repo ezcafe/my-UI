@@ -1,13 +1,16 @@
 use crate::ai::AiService;
 use crate::auth::handlers::{callback_handler, login_handler, logout_handler};
+use crate::cache::MinifluxCache;
 use crate::config::Config;
+use crate::rate_limit::{rate_limit_middleware, RateLimiter};
 use crate::routes::entries::{
     get_entry_ai_summary_htmx, get_entry_detail_htmx, list_entries_htmx, mark_all_read_htmx,
     mark_entry_read_htmx, mark_feed_read_htmx, mark_page_read_htmx, toggle_bookmark_htmx,
 };
 use crate::routes::graphql::graphql_handler;
 use crate::routes::pages::{index_page, login_page};
-use axum::extract::FromRef;
+use axum::extract::{DefaultBodyLimit, FromRef};
+use axum::middleware::from_fn_with_state;
 use axum::routing::{get, post};
 use axum::Router;
 use miniflux_client::schema::AppSchema;
@@ -18,6 +21,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub schema: AppSchema,
     pub ai_service: Arc<AiService>,
+    pub cache: Arc<MinifluxCache>,
+    pub rate_limiter: Arc<RateLimiter>,
 }
 
 impl FromRef<AppState> for Arc<Config> {
@@ -35,6 +40,18 @@ impl FromRef<AppState> for AppSchema {
 impl FromRef<AppState> for Arc<AiService> {
     fn from_ref(state: &AppState) -> Self {
         state.ai_service.clone()
+    }
+}
+
+impl FromRef<AppState> for Arc<MinifluxCache> {
+    fn from_ref(state: &AppState) -> Self {
+        state.cache.clone()
+    }
+}
+
+impl FromRef<AppState> for Arc<RateLimiter> {
+    fn from_ref(state: &AppState) -> Self {
+        state.rate_limiter.clone()
     }
 }
 
@@ -58,10 +75,14 @@ pub fn build_app_with_ai(
     schema: AppSchema,
     ai_service: Arc<AiService>,
 ) -> Router {
+    let cache = Arc::new(MinifluxCache::default());
+    let rate_limiter = Arc::new(RateLimiter::default());
     let state = AppState {
         config,
         schema,
         ai_service,
+        cache,
+        rate_limiter: rate_limiter.clone(),
     };
 
     Router::new()
@@ -81,5 +102,7 @@ pub fn build_app_with_ai(
         .route("/hx/mark-all-read", post(mark_all_read_htmx))
         .route("/hx/mark-page-read", post(mark_page_read_htmx))
         .route("/graphql", post(graphql_handler))
+        .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
+        .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }

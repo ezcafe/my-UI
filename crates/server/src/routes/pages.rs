@@ -1,43 +1,55 @@
 use crate::auth::AuthenticatedUser;
+use crate::cache::MinifluxCache;
 use crate::config::Config;
 use crate::error::AppError;
 use axum::extract::State;
-use axum::response::{Html, IntoResponse};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use miniflux_client::schema::AppSchema;
 use std::sync::Arc;
+use std::time::Duration;
 use ui_components::templates::{IndexTemplate, LoginTemplate};
 use askama::Template;
 
-pub async fn login_page() -> impl IntoResponse {
-    let html = LoginTemplate.render().unwrap_or_default();
-    Html(html)
+pub async fn login_page(State(config): State<Arc<Config>>) -> Response {
+    if !config.auth_enabled {
+        return Redirect::to("/").into_response();
+    }
+    Html(LoginTemplate.render().unwrap_or_default()).into_response()
 }
 
 pub async fn index_page(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
 ) -> Result<Html<String>, AppError> {
-    let gql = r#"query {
-        unreadCounter
-        todayCounter
-        entriesResult(filter: { limit: 50, status: UNREAD }) {
-            total
-            entries {
-                id
-                title
-                summary
-                publishedAt
-                readingTime
-                isBookmarked
-                url
-                status
+    let cache_key = "index_page_entries";
+    let data = if let Some(cached) = cache.get(cache_key).await {
+        cached
+    } else {
+        let gql = r#"query {
+            unreadCounter
+            todayCounter
+            entriesResult(filter: { limit: 50, status: UNREAD }) {
+                total
+                entries {
+                    id
+                    title
+                    summary
+                    publishedAt
+                    readingTime
+                    isBookmarked
+                    url
+                    status
+                }
             }
-        }
-    }"#;
+        }"#;
 
-    let res = schema.execute(gql).await;
-    let data = res.data.into_json().unwrap_or_default();
+        let res = schema.execute(gql).await;
+        let d = res.data.into_json().unwrap_or_default();
+        cache.insert_with_ttl(cache_key.to_string(), d.clone(), Duration::from_secs(30)).await;
+        d
+    };
 
     let unread_count = data
         .get("unreadCounter")
@@ -111,6 +123,7 @@ pub async fn index_page(
         today_count,
         entries_list_html,
         ai_enabled: config.ai_enabled,
+        auth_enabled: config.auth_enabled,
     };
 
     let html = template.render().map_err(|e| AppError::Internal(e.to_string()))?;

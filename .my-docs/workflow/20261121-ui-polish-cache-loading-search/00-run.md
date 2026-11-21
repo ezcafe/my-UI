@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** test-lite
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** auto — gen:0
 - **Build armed:** none
@@ -31,3 +31,4 @@
 - **11:07** · done · code-review-phase · 05 clean
 - **11:09** · done · test-lite · Result: success (82 passed)
 - **11:27** · gate-c · approved: commit
+- **11:28** · done · merge · committed 9e83dcf (paused pending push/merge approval)

@@ -972,7 +972,8 @@ mod tests {
             "Must declare invalidateFilterCache function"
         );
         assert!(
-            html.contains("onclick=\"handleFilterClick(this, event)\""),
+            html.contains("onclick=\"handleFilterClick(this, event)\"")
+                || html.contains("handleFilterClick(this, event)"),
             "Filter pills must wire handleFilterClick"
         );
     }

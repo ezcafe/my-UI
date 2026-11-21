@@ -69,6 +69,7 @@
         <button 
           id="filter-ai"
           data-status="ai"
+          type="button"
           hx-get="/hx/entries?status=ai" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
@@ -83,6 +84,7 @@
         <button 
           id="filter-unread"
           data-status="unread"
+          type="button"
           hx-get="/hx/entries?status=unread" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
@@ -95,6 +97,7 @@
         <button 
           id="filter-today"
           data-status="today"
+          type="button"
           hx-get="/hx/entries?status=today" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
@@ -107,6 +110,7 @@
         <button 
           id="filter-starred"
           data-status="starred"
+          type="button"
           hx-get="/hx/entries?status=starred" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
@@ -119,6 +123,7 @@
         <button 
           id="filter-all"
           data-status="all"
+          type="button"
           hx-get="/hx/entries?status=all" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
@@ -177,6 +182,38 @@
     filterCache.clear();
   }
 
+  function seedInitialFilterCache() {
+    const entriesList = document.getElementById('entries-list');
+    const activeStatus = document.getElementById('active-status');
+    const searchInput = document.getElementById('search-input');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+    if (entriesList && activeStatus && activeStatus.value && !searchQuery) {
+      filterCache.set(activeStatus.value, {
+        timestamp: Date.now(),
+        html: entriesList.innerHTML,
+      });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', seedInitialFilterCache);
+  } else {
+    seedInitialFilterCache();
+  }
+
+  function applyCachedList(cachedHtml) {
+    const entriesList = document.getElementById('entries-list');
+    if (entriesList) {
+      entriesList.innerHTML = cachedHtml;
+      if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+      }
+      if (typeof syncDomReadStates === 'function') {
+        syncDomReadStates();
+      }
+    }
+  }
+
   function handleFilterClick(btn, event) {
     const status = btn.getAttribute('data-status');
     const searchInput = document.getElementById('search-input');
@@ -188,23 +225,36 @@
         if (event) {
           event.preventDefault();
           event.stopPropagation();
-        }
-        const entriesList = document.getElementById('entries-list');
-        if (entriesList) {
-          entriesList.innerHTML = cached.html;
-          if (window.lucide && typeof lucide.createIcons === 'function') {
-            lucide.createIcons();
-          }
-          if (typeof syncDomReadStates === 'function') {
-            syncDomReadStates();
+          if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation();
           }
         }
+        applyCachedList(cached.html);
         setActiveFilter(btn);
-        return;
+        return false;
       }
     }
     setActiveFilter(btn);
+    return true;
   }
+
+  // HTMX request interceptor: Cancel server request if valid client cache exists
+  document.addEventListener('htmx:beforeRequest', (evt) => {
+    const trigger = evt.detail && evt.detail.elt;
+    if (trigger && trigger.classList && trigger.classList.contains('filter-pill')) {
+      const status = trigger.getAttribute('data-status');
+      const searchInput = document.getElementById('search-input');
+      const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+      if (!searchQuery && filterCache.has(status)) {
+        const cached = filterCache.get(status);
+        if (Date.now() - cached.timestamp < FILTER_CACHE_TTL_MS) {
+          evt.preventDefault();
+          applyCachedList(cached.html);
+          setActiveFilter(trigger);
+        }
+      }
+    }
+  });
 
   function setActiveFilter(btn) {
     document.querySelectorAll('.filter-pill').forEach(el => {
@@ -372,8 +422,14 @@
     if (evt.detail && evt.detail.target) {
       const targetId = evt.detail.target.id || '';
       if (targetId === 'entries-list') {
-        const activeStatusInput = document.getElementById('active-status');
-        const status = activeStatusInput ? activeStatusInput.value : null;
+        let status = null;
+        if (evt.detail.elt && typeof evt.detail.elt.getAttribute === 'function') {
+          status = evt.detail.elt.getAttribute('data-status');
+        }
+        if (!status) {
+          const activeStatusInput = document.getElementById('active-status');
+          status = activeStatusInput ? activeStatusInput.value : null;
+        }
         const searchInput = document.getElementById('search-input');
         const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
         if (status && !searchQuery) {

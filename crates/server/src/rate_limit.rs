@@ -56,7 +56,7 @@ impl RateLimiter {
 
 impl Default for RateLimiter {
     fn default() -> Self {
-        Self::new(20.0, 1.0)
+        Self::new(60.0, 5.0)
     }
 }
 

@@ -51,7 +51,9 @@
       </button>
 
       <button 
-        onclick="triggerNativeBookmark('{{ entry.title|escape }}', '{{ entry.url|escape }}')" 
+        onclick="triggerNativeBookmark(this.dataset.title, this.dataset.url)" 
+        data-title="{{ entry.title }}"
+        data-url="{{ entry.url }}"
         class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
         title="Bookmark article">
         <i data-lucide="bookmark" class="w-4 h-4 shrink-0"></i>

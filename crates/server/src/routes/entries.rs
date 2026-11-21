@@ -14,7 +14,7 @@ use std::time::Duration;
 use ui_components::sanitizer::sanitize_html;
 use ui_components::templates::{
     AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate, EntryItemTemplate,
-    EntryListTemplate, EntryViewModel, FeedSummaryGroupViewModel,
+    EntryListTemplate, EntryViewModel, ErrorCardTemplate, FeedSummaryGroupViewModel,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -460,7 +460,7 @@ pub async fn get_entry_detail_htmx(
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
     State(cache): State<Arc<MinifluxCache>>,
-    headers: HeaderMap,
+    _headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
     let cache_key = format!("entry:{}", id);
@@ -484,14 +484,29 @@ pub async fn get_entry_detail_htmx(
                         title
                     }}
                 }}
-                unreadCounter
             }}"#
         );
 
         let res = schema.execute(&gql).await;
+        if !res.errors.is_empty() {
+            let error_card = ErrorCardTemplate {
+                message: format!("Could not load article: {:?}", res.errors),
+                retry_url: format!("/hx/entries/{}", id),
+                target: "#detail-panel".to_string(),
+            };
+            return Html(error_card.render().unwrap_or_default()).into_response();
+        }
+
         let d = match res.data.into_json() {
             Ok(d) => d,
-            Err(e) => return handle_htmx_error(&headers, AppError::Internal(e.to_string())),
+            Err(e) => {
+                let error_card = ErrorCardTemplate {
+                    message: format!("Internal parsing error: {}", e),
+                    retry_url: format!("/hx/entries/{}", id),
+                    target: "#detail-panel".to_string(),
+                };
+                return Html(error_card.render().unwrap_or_default()).into_response();
+            }
         };
         cache.insert_with_ttl(cache_key, d.clone(), Duration::from_secs(300)).await;
         d
@@ -507,12 +522,19 @@ pub async fn get_entry_detail_htmx(
 
     let item = match item {
         Some(i) => i,
-        None => return handle_htmx_error(&headers, AppError::NotFound(format!("Entry {} not found", id))),
+        None => {
+            let error_card = ErrorCardTemplate {
+                message: format!("Article {} could not be found or has been removed upstream.", id),
+                retry_url: format!("/hx/entries/{}", id),
+                target: "#detail-panel".to_string(),
+            };
+            return Html(error_card.render().unwrap_or_default()).into_response();
+        }
     };
 
     let is_unread = item.get("status").and_then(|v| v.as_str()) != Some("READ");
 
-    let mut unread_count_val = data.get("unreadCounter").and_then(|v| v.as_i64()).unwrap_or(0);
+    let mut unread_count_val: Option<i64> = None;
 
     if is_unread && config.auth_enabled {
         let mutation = format!(
@@ -524,10 +546,8 @@ pub async fn get_entry_detail_htmx(
         // Fetch updated unread counter
         let counter_res = schema.execute("{ unreadCounter }").await;
         if let Some(c) = counter_res.data.into_json().ok().and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64())) {
-            unread_count_val = c;
+            unread_count_val = Some(c);
         }
-    } else if is_unread {
-        unread_count_val = (unread_count_val - 1).max(0);
     }
 
     let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
@@ -562,18 +582,29 @@ pub async fn get_entry_detail_htmx(
 
     let mut html = match template.render() {
         Ok(h) => h,
-        Err(e) => return handle_htmx_error(&headers, AppError::Internal(e.to_string())),
+        Err(e) => {
+            let error_card = ErrorCardTemplate {
+                message: format!("Template rendering error: {}", e),
+                retry_url: format!("/hx/entries/{}", id),
+                target: "#detail-panel".to_string(),
+            };
+            return Html(error_card.render().unwrap_or_default()).into_response();
+        }
     };
 
     if is_unread {
-        let oob_unread_pill = format!(
-            r#"<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">{} unread</span>"#,
-            unread_count_val
-        );
-        let oob_filter_unread_count = format!(
-            r#"<span id="filter-unread-count" hx-swap-oob="true" class="text-xs tabular">({})</span>"#,
-            unread_count_val
-        );
+        if let Some(count) = unread_count_val {
+            let oob_unread_pill = format!(
+                r#"<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">{} unread</span>"#,
+                count
+            );
+            let oob_filter_unread_count = format!(
+                r#"<span id="filter-unread-count" hx-swap-oob="true" class="text-xs tabular">({})</span>"#,
+                count
+            );
+            html.push_str(&oob_unread_pill);
+            html.push_str(&oob_filter_unread_count);
+        }
         let oob_dot = format!(
             r#"<span id="entry-{}-dot" hx-swap-oob="true"></span>"#,
             id
@@ -582,8 +613,6 @@ pub async fn get_entry_detail_htmx(
             r#"<div id="entry-{}-bar" hx-swap-oob="true" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>"#,
             id
         );
-        html.push_str(&oob_unread_pill);
-        html.push_str(&oob_filter_unread_count);
         html.push_str(&oob_dot);
         html.push_str(&oob_bar);
     }

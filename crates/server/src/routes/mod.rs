@@ -90,7 +90,7 @@ mod tests {
 
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
-        assert!(html.contains("AR Spatial RSS"));
+        assert!(html.contains("My News"));
         assert!(html.contains("id=\"unread-pill\""));
     }
 
@@ -338,6 +338,76 @@ mod tests {
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(html.contains("Specific Deep Article 123"));
         assert!(html.contains("target=\"_blank\""));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_detail_auto_marks_as_read_and_returns_oob_swaps() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/124"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": 124,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Specific Unread Article 124",
+                "url": "https://example.com/124",
+                "content": "<p>Content 124</p>",
+                "published_at": "2026-11-19T12:00:00Z",
+                "status": "unread",
+                "starred": false,
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "title": "Rust Weekly",
+                    "site_url": "https://rustweekly.example.com",
+                    "feed_url": "https://rustweekly.example.com/rss",
+                    "checked_at": "2026-11-19T10:00:00Z",
+                    "unread_count": 1
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "10": 9 }
+            })))
+            .mount(&server)
+            .await;
+
+        let (app, cookie) = setup_test_app(&server.uri()).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/124")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("Specific Unread Article 124"));
+        assert!(html.contains("id=\"unread-pill\""));
+        assert!(html.contains("9 unread"));
+        assert!(html.contains("id=\"filter-unread-count\""));
+        assert!(html.contains("(9)"));
+        assert!(html.contains("id=\"entry-124-dot\""));
+        assert!(html.contains("hx-swap-oob=\"true\""));
     }
 
     #[tokio::test]

@@ -92,15 +92,18 @@ pub async fn render_entries_list(
 
     let gql = format!(
         r#"query {{
-            entries(filter: {{ {filter_str} }}) {{
-                id
-                title
-                summary
-                publishedAt
-                readingTime
-                status
-                isBookmarked
-                url
+            entriesResult(filter: {{ {filter_str} }}) {{
+                total
+                entries {{
+                    id
+                    title
+                    summary
+                    publishedAt
+                    readingTime
+                    status
+                    isBookmarked
+                    url
+                }}
             }}
             unreadCounter
         }}"#
@@ -118,8 +121,27 @@ pub async fn render_entries_list(
 
     let unread_count = data.get("unreadCounter").and_then(|v| v.as_i64()).map(|c| c as i32);
 
-    let entries: Vec<EntryViewModel> = data
-        .get("entries")
+    let entries_result = data.get("entriesResult");
+    let total = entries_result
+        .and_then(|r| r.get("total"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let limit = limit_val as i64;
+    let offset = offset_val as i64;
+    let total_pages = if total <= 0 {
+        1
+    } else {
+        (total + limit - 1) / limit
+    };
+    let current_page = (offset / limit) + 1;
+    let has_prev = offset > 0;
+    let has_next = offset + limit < total;
+    let prev_offset = (offset - limit).max(0);
+    let next_offset = offset + limit;
+
+    let entries: Vec<EntryViewModel> = entries_result
+        .and_then(|r| r.get("entries"))
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -144,6 +166,15 @@ pub async fn render_entries_list(
     let template = EntryListTemplate {
         entries,
         unread_count,
+        current_page,
+        total_pages,
+        has_prev,
+        has_next,
+        prev_offset,
+        next_offset,
+        status: query.status.clone().unwrap_or_else(|| "unread".to_string()),
+        search: query.search.clone().unwrap_or_default(),
+        limit,
     };
     match template.render() {
         Ok(html) => Html(html).into_response(),
@@ -297,7 +328,7 @@ pub async fn get_entry_ai_summary_htmx(
             (title, url, teaser)
         }
         _ => {
-            let fallback_card = r#"<div class="ai-summary-card text-xs text-slate-500 italic mt-3 pt-3 border-t border-white/5">Summary unavailable</div>"#;
+            let fallback_card = r#"<div class="ai-summary-card text-xs text-muted-foreground italic mt-3 pt-3 border-t border-border font-sans">Summary unavailable</div>"#;
             return Html(fallback_card.to_string()).into_response();
         }
     };
@@ -308,7 +339,7 @@ pub async fn get_entry_ai_summary_htmx(
     match template.render() {
         Ok(html) => Html(html).into_response(),
         Err(_) => {
-            let fallback_card = r#"<div class="ai-summary-card text-xs text-slate-500 italic mt-3 pt-3 border-t border-white/5">Summary unavailable</div>"#;
+            let fallback_card = r#"<div class="ai-summary-card text-xs text-muted-foreground italic mt-3 pt-3 border-t border-border font-sans">Summary unavailable</div>"#;
             Html(fallback_card.to_string()).into_response()
         }
     }
@@ -388,6 +419,7 @@ pub async fn get_entry_detail_htmx(
                 content
                 publishedAt
                 readingTime
+                status
                 isBookmarked
                 url
                 author
@@ -395,6 +427,7 @@ pub async fn get_entry_detail_htmx(
                     title
                 }}
             }}
+            unreadCounter
         }}"#
     );
 
@@ -416,6 +449,24 @@ pub async fn get_entry_detail_htmx(
         Some(i) => i,
         None => return handle_htmx_error(&headers, AppError::NotFound(format!("Entry {} not found", id))),
     };
+
+    let is_unread = item.get("status").and_then(|v| v.as_str()) != Some("READ");
+
+    let mut unread_count_val = data.get("unreadCounter").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    if is_unread {
+        let mutation = format!(
+            r#"mutation {{
+                updateEntriesStatus(entryIds: ["{id}"], status: READ)
+            }}"#
+        );
+        let _ = schema.execute(&mutation).await;
+        // Fetch updated unread counter
+        let counter_res = schema.execute("{ unreadCounter }").await;
+        if let Some(c) = counter_res.data.into_json().ok().and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64())) {
+            unread_count_val = c;
+        }
+    }
 
     let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let sanitized_content = sanitize_html(content);
@@ -446,10 +497,35 @@ pub async fn get_entry_detail_htmx(
         sanitized_content,
     };
 
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => handle_htmx_error(&headers, AppError::Internal(e.to_string())),
+    let mut html = match template.render() {
+        Ok(h) => h,
+        Err(e) => return handle_htmx_error(&headers, AppError::Internal(e.to_string())),
+    };
+
+    if is_unread {
+        let oob_unread_pill = format!(
+            r#"<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">{} unread</span>"#,
+            unread_count_val
+        );
+        let oob_filter_unread_count = format!(
+            r#"<span id="filter-unread-count" hx-swap-oob="true" class="text-xs tabular">({})</span>"#,
+            unread_count_val
+        );
+        let oob_dot = format!(
+            r#"<span id="entry-{}-dot" hx-swap-oob="true"></span>"#,
+            id
+        );
+        let oob_bar = format!(
+            r#"<div id="entry-{}-bar" hx-swap-oob="true" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>"#,
+            id
+        );
+        html.push_str(&oob_unread_pill);
+        html.push_str(&oob_filter_unread_count);
+        html.push_str(&oob_dot);
+        html.push_str(&oob_bar);
     }
+
+    Html(html).into_response()
 }
 
 pub async fn toggle_bookmark_htmx(
@@ -614,6 +690,15 @@ pub async fn mark_feed_read_htmx(
     let template = EntryListTemplate {
         entries: Vec::new(),
         unread_count,
+        current_page: 1,
+        total_pages: 1,
+        has_prev: false,
+        has_next: false,
+        prev_offset: 0,
+        next_offset: 0,
+        status: "all".to_string(),
+        search: "".to_string(),
+        limit: 50,
     };
 
     match template.render() {
@@ -636,6 +721,15 @@ pub async fn mark_all_read_htmx(
     let template = EntryListTemplate {
         entries: Vec::new(),
         unread_count: Some(0),
+        current_page: 1,
+        total_pages: 1,
+        has_prev: false,
+        has_next: false,
+        prev_offset: 0,
+        next_offset: 0,
+        status: "all".to_string(),
+        search: "".to_string(),
+        limit: 50,
     };
 
     match template.render() {

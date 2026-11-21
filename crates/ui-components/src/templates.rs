@@ -136,7 +136,12 @@ mod tests {
         assert!(html_unread.contains("data-lucide=\"chevron-right\""));
 
         // Unread indicator dot present when is_read = false
-        assert!(html_unread.contains("title=\"Unread\"") || html_unread.contains("bg-indigo-400"));
+        assert!(html_unread.contains("title=\"Unread\"") || html_unread.contains("bg-brand"));
+
+        // Omission of dotted leader and date time per user preference
+        assert!(!html_unread.contains("leader"), "Must omit dotted leader in entry item");
+        assert!(!html_unread.contains("2 hours ago"), "Must omit published_at timestamp in entry item");
+        assert!(html_unread.contains("bg-brand") || html_unread.contains("var(--brand)"), "Must include brand red indicator");
 
         // When is_read = true, unread indicator dot is omitted
         let entry_read = EntryViewModel {
@@ -236,12 +241,11 @@ mod tests {
         assert!(pos_today < pos_starred, "Today must precede Starred");
         assert!(pos_starred < pos_all, "Starred must precede All Titles");
 
-        // Unread is active by default
+        // Unread is active by default with Annuaire ink pill styling
         assert!(
             html.contains("id=\"filter-unread\"")
-                && html.contains("bg-indigo-500/20 text-indigo-300")
-                && html.contains("border-indigo-400/30"),
-            "Unread filter must be active with styling"
+                && html.contains("bg-primary text-primary-foreground"),
+            "Unread filter must be active with Annuaire ink pill styling"
         );
 
         // Today button triggers /hx/entries?status=today
@@ -394,6 +398,11 @@ mod tests {
         assert!(html.contains("id=\"toast-container\""));
         assert!(html.contains("hx-swap-oob=\"beforeend\""));
         assert!(html.contains("Upstream service timeout"));
+        assert!(html.contains("shadow-float"), "Must use Annuaire .shadow-float elevation");
+        assert!(
+            html.contains("rounded-full") && html.contains("bg-foreground text-background"),
+            "Must use Annuaire ink pill floating toast style"
+        );
     }
 
     #[test]
@@ -657,8 +666,66 @@ mod tests {
             "Skeleton header must include interactive Back button wired to closeDetailPanel()"
         );
         assert!(
-            html.contains("indigo-400"),
-            "Skeleton should reference feed / accent pulse styling"
+            html.contains("bg-muted") || html.contains("bg-primary"),
+            "Skeleton should reference Annuaire token styling"
+        );
+    }
+
+    #[test]
+    fn test_annuaire_theme_tokens_and_toggle_present() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        // Google Fonts for Big Shoulders Display and Work Sans
+        assert!(html.contains("family=Big+Shoulders+Display"), "Must load Big Shoulders Display font");
+        assert!(html.contains("family=Work+Sans"), "Must load Work Sans font");
+
+        // Annuaire OKLCH color tokens in :root and dark theme
+        assert!(html.contains("--brand: oklch(0.569 0.213 29)"), "Must define --brand positional red token");
+        assert!(html.contains("--primary: oklch(0.21 0.008 274.5)"), "Must define light --primary token");
+        assert!(html.contains("[data-theme=\"dark\"]"), "Must include dark theme token overrides");
+
+        // Essential utility classes
+        assert!(html.contains(".font-display"), "Must define .font-display utility");
+        assert!(html.contains(".font-sans"), "Must define .font-sans utility");
+        assert!(html.contains(".tabular"), "Must define .tabular utility");
+        assert!(html.contains(".leader"), "Must define .leader utility");
+        assert!(html.contains(".shadow-float"), "Must define .shadow-float utility");
+
+        // Theme switcher inline script & toggle function
+        assert!(html.contains("function toggleTheme()"), "Must define toggleTheme() function");
+        assert!(html.contains("data-theme"), "Must toggle data-theme attribute");
+        assert!(html.contains("localStorage"), "Must persist theme in localStorage");
+    }
+
+    #[test]
+    fn test_login_page_renders_dual_panel_swiss_brand() {
+        let template = LoginTemplate;
+        let html = template.render().expect("Failed to render LoginTemplate");
+
+        // Dual-panel Swiss layout
+        assert!(html.contains("grid-cols-1 md:grid-cols-2"), "Must use dual-panel grid layout");
+
+        // Left brand panel with rich Annuaire red background and Big Shoulders Display wordmark
+        assert!(
+            html.contains("bg-[var(--brand-surface)]") || html.contains("var(--brand-surface)"),
+            "Left panel must use Annuaire brand surface red"
+        );
+        assert!(
+            html.contains("font-display") && html.contains("MY NEWS"),
+            "Wordmark must use font-display and MY NEWS"
+        );
+
+        // Right login card with Pocket-ID ink pill
+        assert!(html.contains("Sign in with Pocket-ID"), "Must contain Sign in with Pocket-ID");
+        assert!(
+            html.contains("bg-primary text-primary-foreground") && html.contains("rounded-full"),
+            "Login button must be an ink pill"
         );
     }
 }

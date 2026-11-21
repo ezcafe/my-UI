@@ -71,6 +71,12 @@ pub struct EntryGql {
     pub feed: Option<FeedGql>,
 }
 
+#[derive(SimpleObject, Clone, Debug, Serialize, Deserialize)]
+pub struct EntryResultSetGql {
+    pub total: i64,
+    pub entries: Vec<EntryGql>,
+}
+
 #[derive(InputObject, Clone, Debug, Default)]
 pub struct EntryFilterInput {
     pub status: Option<EntryStatus>,

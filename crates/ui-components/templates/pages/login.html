@@ -1,20 +1,47 @@
 {% extends "base.html" %}
 
-{% block title %}Login | AR Spatial RSS{% endblock %}
+{% block title %}Sign In | My News{% endblock %}
 
 {% block content %}
-<div class="spatial-shell">
-  <main class="spatial-window ar-glass-panel flex flex-col justify-center items-center p-8 text-center max-w-md">
-    <div class="spatial-grab-handle mb-8 opacity-60"></div>
-    <div class="w-16 h-16 rounded-2xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center mb-6 shadow-lg shadow-indigo-500/10">
-      <i data-lucide="radio" class="w-8 h-8 text-indigo-400"></i>
+<div class="min-h-screen grid grid-cols-1 md:grid-cols-2 bg-background">
+  <!-- Left Brand Panel: Rich Annuaire Red with Big Shoulders Display Wordmark (Settled Decision Q3) -->
+  <div class="bg-[var(--brand-surface)] text-[var(--brand-surface-foreground)] p-8 md:p-16 flex flex-col justify-between">
+    <div>
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/20 bg-white/10 text-xs font-bold tracking-wider uppercase mb-8">
+        Editorial Directory
+      </div>
+      <h1 class="font-display text-5xl md:text-7xl font-extrabold uppercase tracking-tight leading-none mb-4">
+        MY NEWS
+      </h1>
+      <p class="font-sans text-base md:text-lg text-white/90 max-w-sm leading-relaxed">
+        High-density information index and curated reading environment built with Swiss typographic discipline.
+      </p>
     </div>
-    <h1 class="text-2xl font-bold tracking-tight mb-2">AR Spatial RSS</h1>
-    <p class="text-sm text-slate-400 mb-8 max-w-xs">Connect your Pocket-ID account to access your curated feeds in an immersive spatial interface.</p>
-    <a href="/auth/login" class="inline-flex items-center gap-2.5 px-6 py-3 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm transition-all shadow-lg shadow-indigo-600/30 hover:scale-[1.02]">
-      <span>Sign in with Pocket-ID</span>
-      <i data-lucide="arrow-right" class="w-4 h-4"></i>
-    </a>
-  </main>
+
+    <div class="pt-12 text-xs font-sans text-white/70 tabular">
+      <span>Edition 2026</span> • <span>Zero Page Shadows</span>
+    </div>
+  </div>
+
+  <!-- Right Login Card: Pocket-ID Ink Pill Button (Rule 2: Primary action is an Ink pill) -->
+  <div class="flex flex-col justify-center items-center p-8 md:p-16 bg-card text-foreground">
+    <div class="w-full max-w-sm space-y-8">
+      <div>
+        <h2 class="font-display text-2xl font-bold uppercase tracking-wide text-foreground">
+          Sign In
+        </h2>
+        <p class="font-sans text-sm text-muted-foreground mt-2">
+          Authenticate using your Pocket-ID identity provider to access your subscriptions.
+        </p>
+      </div>
+
+      <div>
+        <a href="/auth/login" class="w-full inline-flex items-center justify-center gap-2.5 px-6 py-3 rounded-full bg-primary text-primary-foreground font-bold font-sans text-sm hover:opacity-90 transition-opacity">
+          <span>Sign in with Pocket-ID</span>
+          <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </a>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}

@@ -1,49 +1,54 @@
 {% if entries.is_empty() %}
-<div class="flex flex-col items-center justify-center p-12 text-center text-slate-400">
-  <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-slate-500"></i>
-  <p class="text-sm font-medium">All caught up!</p>
-  <p class="text-xs text-slate-500 mt-1">No articles match your current filter.</p>
+<div class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+  <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
+  <p class="text-sm font-medium font-sans">All caught up!</p>
+  <p class="text-xs text-muted-foreground mt-1 font-sans">No articles match your current filter.</p>
 </div>
 {% else %}
 {% for entry in entries %}
-<div class="ar-list-item px-4 py-3 rounded-2xl flex items-center justify-between gap-4 cursor-pointer select-none group" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
-  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" onclick="openDetailWithSkeleton()">
+<div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
+  <!-- 3px vertical positional red bar (Rule 1: Red marks position, never action) -->
+  <div id="entry-{{ entry.id }}-bar" class="w-[3px] self-stretch rounded-full shrink-0 {% if !entry.is_read %}bg-brand{% else %}bg-transparent{% endif %}"></div>
+
+  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" hx-push-url="?entry={{ entry.id }}" onclick="openDetailWithSkeleton()">
     <span id="entry-{{ entry.id }}-dot">
     {% if !entry.is_read %}
-    <span class="w-2 h-2 rounded-full bg-indigo-400 ring-4 ring-indigo-500/20 shrink-0 shadow-sm shadow-indigo-400" title="Unread"></span>
+    <span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>
     {% endif %}
     </span>
-    <span class="article-title text-sm font-medium leading-snug line-clamp-2 text-slate-100 group-hover:text-indigo-200 transition-colors flex-1">
+    <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
       {{ entry.title }}
     </span>
   </div>
 
-  <div class="flex items-center gap-2 shrink-0">
+  <div class="flex items-center gap-1.5 shrink-0">
     <a 
       href="{{ entry.url }}" 
       target="_blank" 
       rel="noopener noreferrer" 
       onclick="event.stopPropagation()" 
-      class="p-1.5 rounded-full hover:bg-white/10 text-slate-400 hover:text-indigo-300 transition-colors"
+      class="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
       title="Open in browser">
-      <i data-lucide="external-link" class="w-4 h-4"></i>
+      <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
     </a>
-    <i data-lucide="chevron-right" class="w-4 h-4 text-slate-500 group-hover:text-slate-300 transition-colors"></i>
+    <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors"></i>
   </div>
 </div>
 {% endfor %}
 
 {% if total_pages > 1 %}
-<nav class="flex items-center justify-between pt-4 pb-2 border-t border-white/10 text-xs text-white/70" aria-label="Pagination">
+<nav class="flex items-center justify-between pt-4 pb-2 border-t border-border text-xs text-muted-foreground tabular font-sans" aria-label="Pagination">
   {% if has_prev %}
   <button hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ prev_offset }}&limit={{ limit }}"
           hx-target="#entries-list"
           hx-swap="innerHTML"
-          class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+          class="px-3 py-1.5 rounded-full border border-border bg-card hover:bg-muted text-foreground font-bold transition-colors">
     Previous
   </button>
   {% else %}
-  <span class="px-3 py-1.5 rounded-lg text-white/30 cursor-not-allowed">Previous</span>
+  <span class="px-3 py-1.5 rounded-full border border-border/40 text-muted-foreground/40 cursor-not-allowed">
+    Previous
+  </span>
   {% endif %}
 
   <span>Page {{ current_page }} of {{ total_pages }}</span>
@@ -52,17 +57,21 @@
   <button hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ next_offset }}&limit={{ limit }}"
           hx-target="#entries-list"
           hx-swap="innerHTML"
-          class="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+          class="px-3 py-1.5 rounded-full border border-border bg-card hover:bg-muted text-foreground font-bold transition-colors">
     Next
   </button>
   {% else %}
-  <span class="px-3 py-1.5 rounded-lg text-white/30 cursor-not-allowed">Next</span>
+  <span class="px-3 py-1.5 rounded-full border border-border/40 text-muted-foreground/40 cursor-not-allowed">
+    Next
+  </span>
   {% endif %}
 </nav>
 {% endif %}
 {% endif %}
+
 {% if let Some(unread) = unread_count %}
-<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-300 font-semibold text-[11px]">
+<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">
   {{ unread }} unread
 </span>
+<span id="filter-unread-count" hx-swap-oob="true" class="text-xs tabular">({{ unread }})</span>
 {% endif %}

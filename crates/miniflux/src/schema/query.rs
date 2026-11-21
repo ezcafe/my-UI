@@ -6,99 +6,108 @@ use async_graphql::{Context, Error, Object, Result, ID};
 
 pub struct Query;
 
+fn build_domain_filter(filter: Option<EntryFilterInput>) -> Result<EntriesFilter> {
+    let mut domain_filter = EntriesFilter::default();
+    if let Some(f) = filter {
+        if let Some(lim) = f.limit {
+            if lim < 0 {
+                return Err(Error::new("Limit cannot be negative"));
+            }
+            domain_filter.limit = Some(lim as i64);
+        }
+        if let Some(off) = f.offset {
+            if off < 0 {
+                return Err(Error::new("Offset cannot be negative"));
+            }
+            domain_filter.offset = Some(off as i64);
+        }
+        if let Some(st) = f.status {
+            domain_filter.status = Some(st.as_str().to_string());
+        }
+        if let Some(ref fid) = f.feed_id {
+            let id_val = fid.parse::<i64>().map_err(|e| Error::new(e.to_string()))?;
+            domain_filter.feed_id = Some(id_val);
+        }
+        if let Some(ref cid) = f.category_id {
+            let id_val = cid.parse::<i64>().map_err(|e| Error::new(e.to_string()))?;
+            domain_filter.category_id = Some(id_val);
+        }
+        if let Some(st) = f.starred {
+            domain_filter.starred = Some(st);
+        }
+        if let Some(s) = f.search {
+            domain_filter.search = Some(s);
+        }
+        if let Some(pa) = f.published_after {
+            domain_filter.published_after = Some(pa);
+        }
+        if let Some(o) = f.order {
+            domain_filter.order = Some(o);
+        }
+        if let Some(d) = f.direction {
+            domain_filter.direction = Some(d.as_str().to_string());
+        }
+    }
+    Ok(domain_filter)
+}
+
+fn map_entry(e: crate::models::Entry) -> EntryGql {
+    let summary = extract_summary(&e.content, 2);
+    let status = match e.status.as_str() {
+        "read" => EntryStatus::Read,
+        "removed" => EntryStatus::Removed,
+        _ => EntryStatus::Unread,
+    };
+    let feed = e.feed.map(|f| FeedGql {
+        id: ID(f.id.to_string()),
+        title: f.title,
+        site_url: f.site_url,
+        feed_url: f.feed_url,
+        checked_at: f.checked_at,
+        category: f.category.map(|c| CategoryGql {
+            id: ID(c.id.to_string()),
+            title: c.title,
+        }).unwrap_or(CategoryGql {
+            id: ID("0".to_string()),
+            title: "Default".to_string(),
+        }),
+        unread_count: f.unread_count,
+    });
+
+    EntryGql {
+        id: ID(e.id.to_string()),
+        feed_id: ID(e.feed_id.to_string()),
+        title: e.title,
+        url: e.url,
+        author: e.author,
+        summary,
+        content: e.content,
+        published_at: e.published_at,
+        status,
+        is_bookmarked: e.starred,
+        reading_time: e.reading_time,
+        feed,
+    }
+}
+
 #[Object]
 impl Query {
     pub async fn entries(&self, ctx: &Context<'_>, filter: Option<EntryFilterInput>) -> Result<Vec<EntryGql>> {
         let client = ctx.data::<MinifluxClient>()?;
-
-        let mut domain_filter = EntriesFilter::default();
-        if let Some(f) = filter {
-            if let Some(lim) = f.limit {
-                if lim < 0 {
-                    return Err(Error::new("Limit cannot be negative"));
-                }
-                domain_filter.limit = Some(lim as i64);
-            }
-            if let Some(off) = f.offset {
-                if off < 0 {
-                    return Err(Error::new("Offset cannot be negative"));
-                }
-                domain_filter.offset = Some(off as i64);
-            }
-            if let Some(st) = f.status {
-                domain_filter.status = Some(st.as_str().to_string());
-            }
-            if let Some(ref fid) = f.feed_id {
-                let id_val = fid.parse::<i64>().map_err(|e| Error::new(e.to_string()))?;
-                domain_filter.feed_id = Some(id_val);
-            }
-            if let Some(ref cid) = f.category_id {
-                let id_val = cid.parse::<i64>().map_err(|e| Error::new(e.to_string()))?;
-                domain_filter.category_id = Some(id_val);
-            }
-            if let Some(st) = f.starred {
-                domain_filter.starred = Some(st);
-            }
-            if let Some(s) = f.search {
-                domain_filter.search = Some(s);
-            }
-            if let Some(pa) = f.published_after {
-                domain_filter.published_after = Some(pa);
-            }
-            if let Some(o) = f.order {
-                domain_filter.order = Some(o);
-            }
-            if let Some(d) = f.direction {
-                domain_filter.direction = Some(d.as_str().to_string());
-            }
-        }
-
+        let domain_filter = build_domain_filter(filter)?;
         let result = client.get_entries(&domain_filter).await.map_err(|e| Error::new(e.to_string()))?;
+        Ok(result.entries.into_iter().map(map_entry).collect())
+    }
 
-        let gql_entries = result
-            .entries
-            .into_iter()
-            .map(|e| {
-                let summary = extract_summary(&e.content, 2);
-                let status = match e.status.as_str() {
-                    "read" => EntryStatus::Read,
-                    "removed" => EntryStatus::Removed,
-                    _ => EntryStatus::Unread,
-                };
-                let feed = e.feed.map(|f| FeedGql {
-                    id: ID(f.id.to_string()),
-                    title: f.title,
-                    site_url: f.site_url,
-                    feed_url: f.feed_url,
-                    checked_at: f.checked_at,
-                    category: f.category.map(|c| CategoryGql {
-                        id: ID(c.id.to_string()),
-                        title: c.title,
-                    }).unwrap_or(CategoryGql {
-                        id: ID("0".to_string()),
-                        title: "Default".to_string(),
-                    }),
-                    unread_count: f.unread_count,
-                });
-
-                EntryGql {
-                    id: ID(e.id.to_string()),
-                    feed_id: ID(e.feed_id.to_string()),
-                    title: e.title,
-                    url: e.url,
-                    author: e.author,
-                    summary,
-                    content: e.content,
-                    published_at: e.published_at,
-                    status,
-                    is_bookmarked: e.starred,
-                    reading_time: e.reading_time,
-                    feed,
-                }
-            })
-            .collect();
-
-        Ok(gql_entries)
+    pub async fn entries_result(&self, ctx: &Context<'_>, filter: Option<EntryFilterInput>) -> Result<EntryResultSetGql> {
+        let client = ctx.data::<MinifluxClient>()?;
+        let domain_filter = build_domain_filter(filter)?;
+        let result = client.get_entries(&domain_filter).await.map_err(|e| Error::new(e.to_string()))?;
+        let entries = result.entries.into_iter().map(map_entry).collect();
+        Ok(EntryResultSetGql {
+            total: result.total,
+            entries,
+        })
     }
 
     pub async fn entry(&self, ctx: &Context<'_>, id: ID) -> Result<Option<EntryGql>> {
@@ -189,5 +198,22 @@ impl Query {
         let client = ctx.data::<MinifluxClient>()?;
         let count = client.get_unread_counter().await.map_err(|e| Error::new(e.to_string()))?;
         Ok(count)
+    }
+
+    pub async fn today_counter(&self, ctx: &Context<'_>) -> Result<i64> {
+        let client = ctx.data::<MinifluxClient>()?;
+        let today_start = chrono::Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let domain_filter = EntriesFilter {
+            published_after: Some(today_start),
+            limit: Some(1),
+            ..Default::default()
+        };
+        let result = client.get_entries(&domain_filter).await.map_err(|e| Error::new(e.to_string()))?;
+        Ok(result.total)
     }
 }

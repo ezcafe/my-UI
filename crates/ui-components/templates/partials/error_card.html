@@ -1,14 +1,14 @@
-<div class="rounded-2xl p-6 bg-rose-500/10 border border-rose-500/20 backdrop-blur-xl text-center flex flex-col items-center justify-center m-4">
-  <div class="p-2.5 rounded-full bg-rose-500/20 text-rose-300 mb-3">
+<div class="rounded-lg p-6 bg-card border border-border text-center flex flex-col items-center justify-center m-4">
+  <div class="p-2.5 rounded-full bg-muted text-destructive mb-3">
     <i data-lucide="alert-triangle" class="w-6 h-6"></i>
   </div>
-  <h3 class="text-sm font-semibold text-rose-200 mb-1">Upstream Communication Issue</h3>
-  <p class="text-xs text-rose-300/80 mb-4 max-w-sm">{{ message }}</p>
+  <h3 class="text-sm font-bold font-sans text-foreground mb-1">Upstream Communication Issue</h3>
+  <p class="text-xs font-sans text-muted-foreground mb-4 max-w-sm">{{ message }}</p>
   <button 
     hx-get="{{ retry_url }}" 
     hx-target="{{ target }}" 
     hx-swap="innerHTML" 
-    class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-xs font-medium text-slate-200 transition-colors">
+    class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-primary-foreground text-xs font-bold font-sans hover:opacity-90 transition-opacity">
     <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
     <span>Retry Connection</span>
   </button>

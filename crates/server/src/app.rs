@@ -66,6 +66,7 @@ pub fn build_app_with_ai(
 
     Router::new()
         .route("/", get(index_page))
+        .route("/entries/{id}", get(index_page))
         .route("/health", get(|| async { axum::Json(serde_json::json!({"status": "ok"})) }))
         .route("/login", get(login_page))
         .route("/auth/login", get(login_handler))

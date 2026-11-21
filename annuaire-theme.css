@@ -1,0 +1,174 @@
+/**
+ * Annuaire Theme — CSS Tokens & Component Recipes
+ * Compatible with modern Tailwind CSS (v3 / v4) and standard CSS.
+ */
+
+:root {
+  --radius: 0.625rem;
+  color-scheme: light;
+
+  /* Colors (Light) */
+  --background: oklch(1 0 0); /* #FFFFFF */
+  --foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --card: oklch(1 0 0); /* #FFFFFF */
+  --card-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --popover: oklch(1 0 0); /* #FFFFFF */
+  --popover-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --primary: oklch(0.21 0.008 274.5); /* #17181C */
+  --primary-foreground: oklch(1 0 0); /* #FFFFFF */
+  --brand: oklch(0.569 0.213 29); /* #D8261D - Positional red */
+  --brand-foreground: oklch(1 0 0); /* #FFFFFF */
+  --brand-surface: oklch(0.569 0.213 29); /* #D8261D */
+  --brand-surface-foreground: oklch(1 0 0); /* #FFFFFF */
+  --secondary: oklch(0.946 0 0); /* #EDEDEC */
+  --secondary-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --muted: oklch(0.967 0 0); /* #F4F4F3 */
+  --muted-foreground: oklch(0.493 0.011 273.2); /* #5F6168 */
+  --accent: oklch(0.958 0 0); /* #F1F1F0 */
+  --accent-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --selection: oklch(0.954 0.02 25.2); /* #FDEBE9 */
+  --selection-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --destructive: oklch(0.501 0.178 28.7); /* #B3261E */
+  --destructive-foreground: oklch(1 0 0); /* #FFFFFF */
+  --border: oklch(0.918 0.003 106.5); /* #E4E4E2 */
+  --input: oklch(0.587 0.009 271.3); /* #7A7C82 */
+  --ring: oklch(0.21 0.008 274.5); /* #17181C */
+  --leader: oklch(0.789 0.006 274.9); /* #B9BABE */
+  --highlight: oklch(0.903 0.05 25.7); /* #FFD3CE */
+  --highlight-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --avatar: oklch(0.952 0.003 106.4); /* #EFEFED */
+  --avatar-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+
+  /* 6 Neutral Avatar Tints */
+  --avatar-tint-1: #e8d5b5;
+  --avatar-tint-2: #cfe0c8;
+  --avatar-tint-3: #c9dbee;
+  --avatar-tint-4: #dccfea;
+  --avatar-tint-5: #c4e2de;
+  --avatar-tint-6: #ebd9a6;
+
+  /* Shadows (Floating layers only) */
+  --elevation-float: 0 0 0 1px transparent, 0 1px 2px oklch(0.2 0.006 270 / 0.06), 0 8px 24px -6px oklch(0.2 0.006 270 / 0.16);
+  --elevation-overlay: 0 0 0 1px transparent, 0 2px 4px oklch(0.2 0.006 270 / 0.06), 0 24px 48px -12px oklch(0.2 0.006 270 / 0.28);
+
+  --header-h: 7rem;
+}
+
+[data-theme="dark"], :root.dark {
+  color-scheme: dark;
+
+  /* Colors (Dark) */
+  --background: oklch(0.187 0.006 271.1); /* #121316 */
+  --foreground: oklch(0.943 0 0); /* #ECECEC */
+  --card: oklch(0.257 0.009 276.7); /* #222328 */
+  --card-foreground: oklch(0.943 0 0); /* #ECECEC */
+  --popover: oklch(0.274 0.009 276.8); /* #26272C */
+  --popover-foreground: oklch(0.943 0 0); /* #ECECEC */
+  --primary: oklch(0.943 0 0); /* #ECECEC */
+  --primary-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+  --brand: oklch(0.644 0.204 27.8); /* #F04A40 */
+  --brand-foreground: oklch(0.154 0.04 31.1); /* #1A0503 */
+  --brand-surface: oklch(0.462 0.167 28.7); /* #A11F18 */
+  --brand-surface-foreground: oklch(1 0 0); /* #FFFFFF */
+  --secondary: oklch(0.274 0.009 276.8); /* #26272C */
+  --secondary-foreground: oklch(0.943 0 0); /* #ECECEC */
+  --muted: oklch(0.227 0.008 274.6); /* #1B1C20 */
+  --muted-foreground: oklch(0.719 0.01 273.3); /* #A2A4AB */
+  --accent: oklch(0.274 0.009 276.8); /* #26272C */
+  --accent-foreground: oklch(0.943 0 0); /* #ECECEC */
+  --selection: oklch(0.266 0.049 22.8); /* #3A1B1A */
+  --selection-foreground: oklch(0.925 0.022 24.4); /* #F5E1DF */
+  --destructive: oklch(0.71 0.183 26.6); /* #FF6B61 */
+  --destructive-foreground: oklch(0.154 0.04 31.1); /* #1A0503 */
+  --border: oklch(0.298 0.009 276.8); /* #2C2D32 */
+  --input: oklch(0.573 0.011 273.2); /* #76787F */
+  --ring: oklch(0.943 0 0); /* #ECECEC */
+  --leader: oklch(0.417 0.01 271.2); /* #4A4C52 */
+  --highlight: oklch(0.397 0.118 27.8); /* #7A2620 */
+  --highlight-foreground: oklch(0.951 0.024 26.9); /* #FFE9E6 */
+  --avatar: oklch(0.274 0.009 276.8); /* #26272C */
+  --avatar-foreground: oklch(0.888 0.004 271.4); /* #D9DADD */
+
+  --avatar-tint-1: #4a3f2c;
+  --avatar-tint-2: #34452f;
+  --avatar-tint-3: #2c3f55;
+  --avatar-tint-4: #43365a;
+  --avatar-tint-5: #2a4744;
+  --avatar-tint-6: #4a4228;
+
+  --elevation-float: 0 0 0 1px oklch(1 0 0 / 0.07), 0 1px 2px transparent, 0 8px 24px -6px oklch(0 0 0 / 0.55);
+  --elevation-overlay: 0 0 0 1px oklch(1 0 0 / 0.09), 0 2px 4px transparent, 0 24px 48px -12px oklch(0 0 0 / 0.65);
+}
+
+/* Font Families */
+.font-display {
+  font-family: "Big Shoulders Variable", "Big Shoulders", ui-sans-serif, sans-serif;
+}
+
+.font-sans {
+  font-family: "Work Sans Variable", "Work Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Tabular Numerals */
+.tabular,
+:where(a[href^="tel:"], time) {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Dotted Leader Utility */
+.leader {
+  flex: 1 1 1rem;
+  min-width: 1rem;
+  height: 0.25rem;
+  align-self: center;
+  transform: translateY(0.3em);
+  background-image: radial-gradient(circle, var(--leader) 1px, transparent 1.2px);
+  background-size: 6px 4px;
+  background-repeat: repeat-x;
+  background-position: left center;
+}
+
+/* Form Field Focus Ring Recipe */
+.field {
+  transition: border-color 120ms cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.field:focus {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+.field[aria-invalid="true"]:focus {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 1px var(--destructive);
+}
+
+/* In-field Button Touch Hit Area */
+.field-button-hit-area::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  bottom: -6px;
+}
+
+/* Shadows */
+.shadow-float {
+  box-shadow: var(--elevation-float);
+}
+
+.shadow-overlay {
+  box-shadow: var(--elevation-overlay);
+}
+
+/* Reduced Motion Override */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

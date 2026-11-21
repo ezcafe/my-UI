@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** test-lite
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** auto — gen:0
 - **Build armed:** none
@@ -33,3 +33,4 @@
 - **20:11** · code-review-phase · clean · Adv: clean, Quality: clean, verified static skeleton security & HTMX swap
 - **20:12** · test-lite · success · 06-test-log.md Result: success (Test path: lite), 83/83 tests passed
 - **20:17** · gate-c · approved: commit · user approved local commit on current branch
+- **20:18** · merge · success · committed 3f04922 to main (commit-only approved subset)

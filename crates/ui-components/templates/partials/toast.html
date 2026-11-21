@@ -1,9 +1,9 @@
 <div id="toast-container" hx-swap-oob="beforeend">
-  <div class="glass-toast pointer-events-auto flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-slate-900/90 border border-white/15 backdrop-blur-xl shadow-2xl text-xs text-slate-200 animate-slide-up">
+  <div class="pointer-events-auto shadow-float rounded-full bg-foreground text-background px-4 py-2.5 flex items-center gap-2.5 text-xs font-bold font-sans">
     {% if is_error %}
-    <i data-lucide="alert-circle" class="w-4 h-4 text-rose-400 shrink-0"></i>
+    <i data-lucide="alert-circle" class="w-4 h-4 text-destructive shrink-0"></i>
     {% else %}
-    <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+    <i data-lucide="check-circle-2" class="w-4 h-4 text-brand shrink-0"></i>
     {% endif %}
     <span>{{ message }}</span>
   </div>

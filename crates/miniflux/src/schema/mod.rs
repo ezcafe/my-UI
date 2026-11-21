@@ -382,4 +382,83 @@ mod tests {
         let data = res.data.into_json().expect("Valid json");
         assert_eq!(data["updateEntriesStatus"], true);
     }
+
+    #[tokio::test]
+    async fn test_entries_result_returns_total_and_entries() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 42,
+                "entries": [
+                    {
+                        "id": 1001,
+                        "feed_id": 50,
+                        "title": "Exploring Spatial Audio",
+                        "url": "https://example.com/audio",
+                        "author": "Audio Dev",
+                        "content": "<p>Content</p>",
+                        "published_at": "2026-11-19T10:00:00Z",
+                        "status": "unread",
+                        "starred": false,
+                        "reading_time": 3
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = MinifluxClient::new(server.uri(), "token".to_string());
+        let schema = build_schema(client);
+
+        let query = r#"
+            query {
+                entriesResult(filter: { limit: 10, offset: 0 }) {
+                    total
+                    entries {
+                        id
+                        title
+                    }
+                }
+            }
+        "#;
+
+        let res = schema.execute(query).await;
+        assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
+        let data = res.data.into_json().expect("Valid json");
+        assert_eq!(data["entriesResult"]["total"], 42);
+        let entries = data["entriesResult"]["entries"].as_array().expect("Array of entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["id"], "1001");
+        assert_eq!(entries[0]["title"], "Exploring Spatial Audio");
+    }
+
+    #[tokio::test]
+    async fn test_today_counter_returns_correct_count() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 7,
+                "entries": []
+            })))
+            .mount(&server)
+            .await;
+
+        let client = MinifluxClient::new(server.uri(), "token".to_string());
+        let schema = build_schema(client);
+
+        let query = r#"
+            query {
+                todayCounter
+            }
+        "#;
+
+        let res = schema.execute(query).await;
+        assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
+        let data = res.data.into_json().expect("Valid json");
+        assert_eq!(data["todayCounter"], 7);
+    }
 }

@@ -3,36 +3,241 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{% block title %}AR Spatial RSS{% endblock %}</title>
+  <title>{% block title %}My News{% endblock %}</title>
+
+  <!-- Google Fonts: Big Shoulders Display & Work Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Work+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: ['class', '[data-theme="dark"]'],
+      theme: {
+        extend: {
+          colors: {
+            background: 'var(--background)',
+            foreground: 'var(--foreground)',
+            card: {
+              DEFAULT: 'var(--card)',
+              foreground: 'var(--card-foreground)',
+            },
+            popover: {
+              DEFAULT: 'var(--popover)',
+              foreground: 'var(--popover-foreground)',
+            },
+            primary: {
+              DEFAULT: 'var(--primary)',
+              foreground: 'var(--primary-foreground)',
+            },
+            secondary: {
+              DEFAULT: 'var(--secondary)',
+              foreground: 'var(--secondary-foreground)',
+            },
+            muted: {
+              DEFAULT: 'var(--muted)',
+              foreground: 'var(--muted-foreground)',
+            },
+            accent: {
+              DEFAULT: 'var(--accent)',
+              foreground: 'var(--accent-foreground)',
+            },
+            brand: {
+              DEFAULT: 'var(--brand)',
+              foreground: 'var(--brand-foreground)',
+              surface: 'var(--brand-surface)',
+              'surface-foreground': 'var(--brand-surface-foreground)',
+            },
+            destructive: {
+              DEFAULT: 'var(--destructive)',
+              foreground: 'var(--destructive-foreground)',
+            },
+            border: 'var(--border)',
+            input: 'var(--input)',
+            ring: 'var(--ring)',
+            selection: 'var(--selection)',
+            leader: 'var(--leader)',
+            highlight: 'var(--highlight)',
+          },
+          fontFamily: {
+            display: ['"Big Shoulders Display"', '"Big Shoulders"', 'ui-sans-serif', 'sans-serif'],
+            sans: ['"Work Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          },
+          borderRadius: {
+            DEFAULT: 'var(--radius)',
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- HTMX & Lucide -->
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+
   <style>
+    /* Annuaire OKLCH Design Tokens */
     :root {
+      --radius: 0.625rem;
+      color-scheme: light;
+
+      /* Colors (Light) */
+      --background: oklch(1 0 0); /* #FFFFFF */
+      --foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --card: oklch(1 0 0); /* #FFFFFF */
+      --card-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --popover: oklch(1 0 0); /* #FFFFFF */
+      --popover-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --primary: oklch(0.21 0.008 274.5); /* #17181C */
+      --primary-foreground: oklch(1 0 0); /* #FFFFFF */
+      --brand: oklch(0.569 0.213 29); /* #D8261D - Positional red */
+      --brand-foreground: oklch(1 0 0); /* #FFFFFF */
+      --brand-surface: oklch(0.569 0.213 29); /* #D8261D */
+      --brand-surface-foreground: oklch(1 0 0); /* #FFFFFF */
+      --secondary: oklch(0.946 0 0); /* #EDEDEC */
+      --secondary-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --muted: oklch(0.967 0 0); /* #F4F4F3 */
+      --muted-foreground: oklch(0.493 0.011 273.2); /* #5F6168 */
+      --accent: oklch(0.958 0 0); /* #F1F1F0 */
+      --accent-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --selection: oklch(0.954 0.02 25.2); /* #FDEBE9 */
+      --selection-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --destructive: oklch(0.501 0.178 28.7); /* #B3261E */
+      --destructive-foreground: oklch(1 0 0); /* #FFFFFF */
+      --border: oklch(0.918 0.003 106.5); /* #E4E4E2 */
+      --input: oklch(0.587 0.009 271.3); /* #7A7C82 */
+      --ring: oklch(0.21 0.008 274.5); /* #17181C */
+      --leader: oklch(0.789 0.006 274.9); /* #B9BABE */
+      --highlight: oklch(0.903 0.05 25.7); /* #FFD3CE */
+      --highlight-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --avatar: oklch(0.952 0.003 106.4); /* #EFEFED */
+      --avatar-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+
+      /* 6 Neutral Avatar Tints */
+      --avatar-tint-1: #e8d5b5;
+      --avatar-tint-2: #cfe0c8;
+      --avatar-tint-3: #c9dbee;
+      --avatar-tint-4: #dccfea;
+      --avatar-tint-5: #c4e2de;
+      --avatar-tint-6: #ebd9a6;
+
+      /* Shadows (Floating layers only) */
+      --elevation-float: 0 0 0 1px transparent, 0 1px 2px oklch(0.2 0.006 270 / 0.06), 0 8px 24px -6px oklch(0.2 0.006 270 / 0.16);
+      --elevation-overlay: 0 0 0 1px transparent, 0 2px 4px oklch(0.2 0.006 270 / 0.06), 0 24px 48px -12px oklch(0.2 0.006 270 / 0.28);
+    }
+
+    [data-theme="dark"], :root.dark {
       color-scheme: dark;
+
+      /* Colors (Dark) */
+      --background: oklch(0.187 0.006 271.1); /* #121316 */
+      --foreground: oklch(0.943 0 0); /* #ECECEC */
+      --card: oklch(0.257 0.009 276.7); /* #222328 */
+      --card-foreground: oklch(0.943 0 0); /* #ECECEC */
+      --popover: oklch(0.274 0.009 276.8); /* #26272C */
+      --popover-foreground: oklch(0.943 0 0); /* #ECECEC */
+      --primary: oklch(0.943 0 0); /* #ECECEC */
+      --primary-foreground: oklch(0.21 0.008 274.5); /* #17181C */
+      --brand: oklch(0.644 0.204 27.8); /* #F04A40 */
+      --brand-foreground: oklch(0.154 0.04 31.1); /* #1A0503 */
+      --brand-surface: oklch(0.462 0.167 28.7); /* #A11F18 */
+      --brand-surface-foreground: oklch(1 0 0); /* #FFFFFF */
+      --secondary: oklch(0.274 0.009 276.8); /* #26272C */
+      --secondary-foreground: oklch(0.943 0 0); /* #ECECEC */
+      --muted: oklch(0.227 0.008 274.6); /* #1B1C20 */
+      --muted-foreground: oklch(0.719 0.01 273.3); /* #A2A4AB */
+      --accent: oklch(0.274 0.009 276.8); /* #26272C */
+      --accent-foreground: oklch(0.943 0 0); /* #ECECEC */
+      --selection: oklch(0.266 0.049 22.8); /* #3A1B1A */
+      --selection-foreground: oklch(0.925 0.022 24.4); /* #F5E1DF */
+      --destructive: oklch(0.71 0.183 26.6); /* #FF6B61 */
+      --destructive-foreground: oklch(0.154 0.04 31.1); /* #1A0503 */
+      --border: oklch(0.298 0.009 276.8); /* #2C2D32 */
+      --input: oklch(0.573 0.011 273.2); /* #76787F */
+      --ring: oklch(0.943 0 0); /* #ECECEC */
+      --leader: oklch(0.417 0.01 271.2); /* #4A4C52 */
+      --highlight: oklch(0.397 0.118 27.8); /* #7A2620 */
+      --highlight-foreground: oklch(0.951 0.024 26.9); /* #FFE9E6 */
+      --avatar: oklch(0.274 0.009 276.8); /* #26272C */
+      --avatar-foreground: oklch(0.888 0.004 271.4); /* #D9DADD */
+
+      --avatar-tint-1: #4a3f2c;
+      --avatar-tint-2: #34452f;
+      --avatar-tint-3: #2c3f55;
+      --avatar-tint-4: #43365a;
+      --avatar-tint-5: #2a4744;
+      --avatar-tint-6: #4a4228;
+
+      --elevation-float: 0 0 0 1px oklch(1 0 0 / 0.07), 0 1px 2px transparent, 0 8px 24px -6px oklch(0 0 0 / 0.55);
+      --elevation-overlay: 0 0 0 1px oklch(1 0 0 / 0.09), 0 2px 4px transparent, 0 24px 48px -12px oklch(0 0 0 / 0.65);
     }
-    .ar-glass-panel {
-      background: rgba(15, 23, 42, 0.72);
-      backdrop-filter: blur(32px) saturate(190%);
-      -webkit-backdrop-filter: blur(32px) saturate(190%);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      box-shadow: 
-        0 24px 60px rgba(0, 0, 0, 0.65),
-        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+
+    /* Font Utilities */
+    .font-display {
+      font-family: "Big Shoulders Display", "Big Shoulders", ui-sans-serif, sans-serif;
     }
-    .ar-list-item {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.07);
-      backdrop-filter: blur(16px);
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-      min-height: 56px;
+
+    .font-sans {
+      font-family: "Work Sans", ui-sans-serif, system-ui, sans-serif;
     }
-    .ar-list-item:hover, .ar-list-item:focus {
-      background: rgba(99, 102, 241, 0.16);
-      border-color: rgba(129, 140, 248, 0.45);
-      transform: translateY(-1px) scale(1.008);
+
+    /* Tabular Numerals */
+    .tabular,
+    :where(a[href^="tel:"], time) {
+      font-variant-numeric: tabular-nums lining-nums;
+    }
+
+    /* Annuaire Dotted Leader Utility */
+    .leader {
+      flex: 1 1 1rem;
+      min-width: 1rem;
+      height: 0.25rem;
+      align-self: center;
+      transform: translateY(0.3em);
+      background-image: radial-gradient(circle, var(--leader) 1px, transparent 1.2px);
+      background-size: 6px 4px;
+      background-repeat: repeat-x;
+      background-position: left center;
+    }
+
+    /* Form Field Focus Ring Recipe */
+    .field {
+      transition: border-color 120ms cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 120ms cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+
+    .field:focus {
       outline: none;
+      border-color: var(--ring);
+      box-shadow: 0 0 0 1px var(--ring);
     }
+
+    .field[aria-invalid="true"]:focus {
+      border-color: var(--destructive);
+      box-shadow: 0 0 0 1px var(--destructive);
+    }
+
+    /* In-field Button Touch Hit Area */
+    .field-button-hit-area::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -6px;
+      bottom: -6px;
+    }
+
+    /* Floating Layer Shadows */
+    .shadow-float {
+      box-shadow: var(--elevation-float);
+    }
+
+    .shadow-overlay {
+      box-shadow: var(--elevation-overlay);
+    }
+
+    /* Shell & Spatial Window */
     .spatial-shell {
       container-type: inline-size;
       min-height: 100vh;
@@ -40,38 +245,103 @@
       align-items: center;
       justify-content: center;
       padding: clamp(0.75rem, 3vw, 2.5rem);
+      background-color: var(--background);
+      color: var(--foreground);
     }
+
     .spatial-window {
       width: 100%;
-      max-width: 720px;
-      height: min(88vh, 780px);
+      max-width: min(100cqi, 1440px);
+      height: min(90vh, 840px);
       display: flex;
       flex-direction: column;
-      border-radius: 28px;
+      border-radius: var(--radius);
       overflow: hidden;
+      border: 1px solid var(--border);
+      background-color: var(--card);
     }
-    .spatial-grab-handle {
-      width: 48px;
-      height: 4px;
-      background: rgba(255, 255, 255, 0.3);
-      border-radius: 9999px;
-    }
-    .ar-passthrough {
-      background: 
-        radial-gradient(circle at 20% 25%, rgba(99, 102, 241, 0.20), transparent 45%),
-        radial-gradient(circle at 80% 75%, rgba(168, 85, 247, 0.18), transparent 50%),
-        linear-gradient(135deg, #020617 0%, #0a0e1a 50%, #020617 100%);
-    }
+
     ::-webkit-scrollbar {
       width: 4px;
     }
     ::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.18);
+      background: var(--border);
       border-radius: 9999px;
     }
+
+    /* Small Scrollbar for Details Content */
+    .detail-scrollbar {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .detail-scrollbar::-webkit-scrollbar {
+      width: 3px;
+    }
+    .detail-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .detail-scrollbar::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 9999px;
+    }
+
+    /* Reduced Motion Override */
+    @media (prefers-reduced-motion: reduce) {
+      *, ::before, ::after {
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 1ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
   </style>
+
+  <!-- Early Theme Detection Script (Prevents FOIT/FOUC) -->
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('annuaire-theme');
+      if (savedTheme) {
+        document.documentElement.setAttribute('data-theme', savedTheme);
+        if (savedTheme === 'dark') document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.setAttribute('data-theme', 'light');
+        document.documentElement.classList.remove('dark');
+      }
+    })();
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      if (next === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+      localStorage.setItem('annuaire-theme', next);
+      updateThemeIcons(next);
+    }
+
+    function updateThemeIcons(theme) {
+      const sun = document.getElementById('theme-icon-sun');
+      const moon = document.getElementById('theme-icon-moon');
+      if (sun && moon) {
+        if (theme === 'dark') {
+          sun.classList.remove('hidden');
+          moon.classList.add('hidden');
+        } else {
+          sun.classList.add('hidden');
+          moon.classList.remove('hidden');
+        }
+      }
+    }
+  </script>
 </head>
-<body class="ar-passthrough text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+<body class="bg-background text-foreground font-sans antialiased selection:bg-selection selection:text-selection-foreground">
   {% block content %}{% endblock %}
 
   <!-- Out-of-band Toast Container -->
@@ -80,6 +350,8 @@
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       lucide.createIcons();
+      const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+      updateThemeIcons(currentTheme);
     });
     document.body.addEventListener("htmx:afterSwap", () => {
       lucide.createIcons();

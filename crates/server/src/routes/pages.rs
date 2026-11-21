@@ -18,17 +18,58 @@ pub async fn index_page(
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
 ) -> Result<Html<String>, AppError> {
-    let unread_res = schema.execute("{ unreadCounter }").await;
-    let unread_count = unread_res.data.into_json()
-        .ok()
-        .and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64()))
+    let gql = r#"query {
+        unreadCounter
+        todayCounter
+        entriesResult(filter: { limit: 50, status: UNREAD }) {
+            total
+            entries {
+                id
+                title
+                summary
+                publishedAt
+                readingTime
+                isBookmarked
+                url
+                status
+            }
+        }
+    }"#;
+
+    let res = schema.execute(gql).await;
+    let data = res.data.into_json().unwrap_or_default();
+
+    let unread_count = data
+        .get("unreadCounter")
+        .and_then(|v| v.as_i64())
         .unwrap_or(0) as i32;
 
-    let entries_res = schema.execute("{ entries(filter: { limit: 50, status: UNREAD }) { id title summary publishedAt readingTime isBookmarked url status } }").await;
-    let entries_json = entries_res.data.into_json().unwrap_or_default();
+    let today_count = data
+        .get("todayCounter")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
-    let view_models: Vec<ui_components::templates::EntryViewModel> = entries_json
-        .get("entries")
+    let entries_result = data.get("entriesResult");
+    let total = entries_result
+        .and_then(|r| r.get("total"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    let limit: i64 = 50;
+    let offset: i64 = 0;
+    let total_pages = if total <= 0 {
+        1
+    } else {
+        (total + limit - 1) / limit
+    };
+    let current_page = (offset / limit) + 1;
+    let has_prev = offset > 0;
+    let has_next = offset + limit < total;
+    let prev_offset = (offset - limit).max(0);
+    let next_offset = offset + limit;
+
+    let view_models: Vec<ui_components::templates::EntryViewModel> = entries_result
+        .and_then(|r| r.get("entries"))
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
@@ -53,11 +94,21 @@ pub async fn index_page(
     let list_template = ui_components::templates::EntryListTemplate {
         entries: view_models,
         unread_count: None,
+        current_page,
+        total_pages,
+        has_prev,
+        has_next,
+        prev_offset,
+        next_offset,
+        status: "unread".to_string(),
+        search: "".to_string(),
+        limit,
     };
     let entries_list_html = list_template.render().unwrap_or_default();
 
     let template = IndexTemplate {
         unread_count,
+        today_count,
         entries_list_html,
         ai_enabled: config.ai_enabled,
     };

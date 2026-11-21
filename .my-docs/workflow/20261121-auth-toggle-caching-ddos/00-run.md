@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** full
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | no | yes
-- **Status:** running
-- **Last stage:** test-full
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 0
 - **Gate B approved:** gen:0
 - **Build armed:** none
@@ -36,3 +36,4 @@
 - **10:11** · lens-api · clean · next: test-full
 - **10:12** · test-full · success (full) · next: gate-c
 - **10:18** · Gate C approved (commit, merge) · next: merge
+- **10:19** · merge · success · commit 4c84cc4 · status: done

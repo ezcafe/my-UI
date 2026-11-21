@@ -31,8 +31,8 @@ pub async fn index_page(
     let data = if let Some(cached) = cache.get(cache_key).await {
         cached
     } else {
-        let gql = if config.auth_enabled {
-            r#"query {
+        let d = if config.auth_enabled {
+            let gql = r#"query {
                 unreadCounter
                 todayCounter
                 entriesResult(filter: { limit: 50, status: UNREAD }) {
@@ -48,14 +48,22 @@ pub async fn index_page(
                         status
                     }
                 }
-            }"#
+            }"#;
+            let res = schema.execute(gql).await;
+            res.data.into_json().unwrap_or_default()
         } else {
-            r#"query {
+            let start_of_today = chrono::Utc::now()
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp();
+            let gql = format!(r#"query {{
                 unreadCounter
                 todayCounter
-                entriesResult(filter: { limit: 50 }) {
+                entriesResult(filter: {{ limit: 50, publishedAfter: {start_of_today} }}) {{
                     total
-                    entries {
+                    entries {{
                         id
                         title
                         summary
@@ -64,21 +72,25 @@ pub async fn index_page(
                         isBookmarked
                         url
                         status
-                    }
-                }
-            }"#
+                    }}
+                }}
+            }}"#);
+            let res = schema.execute(&gql).await;
+            res.data.into_json().unwrap_or_default()
         };
-
-        let res = schema.execute(gql).await;
-        let d = res.data.into_json().unwrap_or_default();
         cache.insert_with_ttl(cache_key.to_string(), d.clone(), Duration::from_secs(30)).await;
         d
     };
 
-    let unread_count = data
-        .get("unreadCounter")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0) as i32;
+    let unread_count = if config.auth_enabled {
+        data.get("unreadCounter")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32
+    } else {
+        data.get("todayCounter")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32
+    };
 
     let today_count = data
         .get("todayCounter")

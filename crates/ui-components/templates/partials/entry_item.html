@@ -18,7 +18,7 @@
       href="{{ entry.url }}" 
       target="_blank" 
       rel="noopener noreferrer" 
-      onclick="event.stopPropagation()" 
+      onclick="event.stopPropagation(); markArticleRead({{ entry.id }})" 
       class="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
       title="Open in browser">
       <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
@@ -27,7 +27,7 @@
   </div>
 </div>
 {% if let Some(unread) = unread_count %}
-<span id="unread-pill" hx-swap-oob="true" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">
+<span id="unread-pill" hx-swap-oob="true" data-base-unread="{{ unread }}" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">
   {{ unread }} unread
 </span>
 {% endif %}

@@ -9,7 +9,7 @@
     <header class="h-14 px-6 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center shrink-0 select-none bg-card">
       <div class="flex items-center gap-3">
         <span class="font-display text-xl font-bold uppercase tracking-wider text-brand">My News</span>
-        <span id="unread-pill" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">
+        <span id="unread-pill" data-base-unread="{{ unread_count }}" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">
           {{ unread_count }} unread
         </span>
       </div>
@@ -92,7 +92,7 @@
           hx-include="[name='search']"
           onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-bold bg-primary text-primary-foreground border border-primary transition-colors">
-          Unread <span id="filter-unread-count" class="text-xs tabular">({{ unread_count }})</span>
+          Unread <span id="filter-unread-count" data-base-unread="{{ unread_count }}" class="text-xs tabular">({{ unread_count }})</span>
         </button>
         <button 
           id="filter-today"
@@ -107,6 +107,7 @@
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
           Today <span id="filter-today-count" class="text-xs tabular">({{ today_count }})</span>
         </button>
+        {% if auth_enabled %}
         <button 
           id="filter-starred"
           data-status="starred"
@@ -120,15 +121,18 @@
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
           Starred
         </button>
+        {% endif %}
         <button 
           id="filter-all"
           data-status="all"
           type="button"
+          {% if auth_enabled %}
           hx-get="/hx/entries?status=all" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
           hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
+          {% endif %}
           onclick="handleFilterClick(this, event)"
           class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
           All Titles
@@ -215,9 +219,25 @@
   }
 
   function handleFilterClick(btn, event) {
+    if (typeof closeDetailPanel === 'function') {
+      closeDetailPanel();
+    }
     const status = btn.getAttribute('data-status');
     const searchInput = document.getElementById('search-input');
     const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+
+    if (status === 'all' && typeof renderLocalAllArticles === 'function') {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation();
+        }
+      }
+      setActiveFilter(btn);
+      renderLocalAllArticles();
+      return false;
+    }
 
     if (!searchQuery && filterCache.has(status)) {
       const cached = filterCache.get(status);
@@ -243,6 +263,12 @@
     const trigger = evt.detail && evt.detail.elt;
     if (trigger && trigger.classList && trigger.classList.contains('filter-pill')) {
       const status = trigger.getAttribute('data-status');
+      if (status === 'all' && typeof renderLocalAllArticles === 'function') {
+        evt.preventDefault();
+        setActiveFilter(trigger);
+        renderLocalAllArticles();
+        return;
+      }
       const searchInput = document.getElementById('search-input');
       const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
       if (!searchQuery && filterCache.has(status)) {
@@ -257,6 +283,9 @@
   });
 
   function setActiveFilter(btn) {
+    if (typeof closeDetailPanel === 'function') {
+      closeDetailPanel();
+    }
     document.querySelectorAll('.filter-pill').forEach(el => {
       el.classList.remove('bg-primary', 'text-primary-foreground', 'font-bold', 'border-primary');
       el.classList.add('bg-muted', 'text-muted-foreground', 'border-border', 'font-medium');
@@ -297,6 +326,9 @@
   }
 
   function onSearchSubmit(event) {
+    if (typeof closeDetailPanel === 'function') {
+      closeDetailPanel();
+    }
     // Allows HTMX to proceed with GET /hx/entries?search=...&status=all
   }
 
@@ -369,6 +401,31 @@
       const tx = db.transaction(ARTICLE_STORE_NAME, 'readwrite');
       tx.objectStore(ARTICLE_STORE_NAME).delete(numId);
     } catch (e) {}
+  }
+
+  function markArticleRead(id) {
+    const numId = Number(id);
+    if (!numId) return;
+
+    // Optimistic visual update
+    const bar = document.getElementById('entry-' + numId + '-bar');
+    if (bar) {
+      bar.classList.remove('bg-brand');
+      bar.classList.add('bg-transparent');
+    }
+    const dot = document.getElementById('entry-' + numId + '-dot');
+    if (dot) {
+      dot.innerHTML = '';
+    }
+
+    if (typeof markLocallyRead === 'function') {
+      markLocallyRead(numId);
+    } else if (window.htmx) {
+      htmx.ajax('POST', '/hx/entries/' + encodeURIComponent(numId) + '/read', {
+        target: '#entry-' + numId,
+        swap: 'outerHTML'
+      });
+    }
   }
 
   async function openEntryDetail(id) {
@@ -623,12 +680,25 @@
   const STORE_NAME = 'read_entries';
   let readSet = new Set();
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   function initGuestDb() {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('all_articles')) {
+        db.createObjectStore('all_articles', { keyPath: 'id' });
       }
     };
     req.onsuccess = (e) => {
@@ -639,12 +709,95 @@
       getAllReq.onsuccess = (ev) => {
         readSet = new Set(ev.target.result);
         syncDomReadStates();
+        cacheLoadedArticlesFromDom();
+      };
+    };
+  }
+
+  function cacheLoadedArticlesFromDom() {
+    const rows = document.querySelectorAll('#entries-list .annuaire-row');
+    if (!rows || rows.length === 0) return;
+    const articlesToSave = [];
+    rows.forEach(row => {
+      const id = row.getAttribute('data-entry-id');
+      const numId = Number(id);
+      if (!numId) return;
+      const titleEl = row.querySelector('.article-title');
+      const title = titleEl ? titleEl.textContent.trim() : '';
+      const linkEl = row.querySelector('a[title="Open in browser"]');
+      const url = linkEl ? linkEl.getAttribute('href') : '';
+      articlesToSave.push({ id: numId, title, url, saved_at: Date.now() });
+    });
+
+    if (articlesToSave.length === 0) return;
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('all_articles')) return;
+      const tx = db.transaction('all_articles', 'readwrite');
+      const store = tx.objectStore('all_articles');
+      articlesToSave.forEach(art => {
+        store.put(art);
+      });
+    };
+  }
+
+  function renderLocalAllArticles() {
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onsuccess = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('all_articles')) return;
+      const tx = db.transaction('all_articles', 'readonly');
+      const store = tx.objectStore('all_articles');
+      const getAllReq = store.getAll();
+      getAllReq.onsuccess = (ev) => {
+        const articles = ev.target.result || [];
+        const list = document.getElementById('entries-list');
+        if (!list) return;
+        if (articles.length === 0) {
+          list.innerHTML = `
+            <div id="client-empty-state" class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+              <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
+              <p class="text-sm font-medium font-sans">No saved titles</p>
+              <p class="text-xs text-muted-foreground mt-1 font-sans">Articles you load will appear here.</p>
+            </div>
+          `;
+        } else {
+          articles.sort((a, b) => b.id - a.id);
+          list.innerHTML = articles.map(art => `
+            <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}">
+              <div id="entry-${art.id}-bar" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>
+              <div class="flex items-center gap-2.5 flex-1 min-w-0" onclick="openEntryDetail(${art.id})">
+                <span id="entry-${art.id}-dot"></span>
+                <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
+                  ${escapeHtml(art.title)}
+                </span>
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <a 
+                  href="${escapeHtml(art.url)}" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  onclick="event.stopPropagation(); markArticleRead(${art.id})" 
+                  class="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  title="Open in browser">
+                  <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                </a>
+                <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors"></i>
+              </div>
+            </div>
+          `).join('');
+        }
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+          lucide.createIcons();
+        }
+        syncDomReadStates();
       };
     };
   }
 
   function syncDomReadStates() {
-    let unreadCount = 0;
+    let visibleUnreadRowCount = 0;
     const activeStatusInput = document.getElementById('active-status');
     const isUnreadFilter = activeStatusInput && activeStatusInput.value === 'unread';
     const rows = document.querySelectorAll('#entries-list .annuaire-row');
@@ -682,21 +835,27 @@
             dot.innerHTML = '<span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>';
           }
           row.style.display = '';
-          unreadCount++;
+          visibleUnreadRowCount++;
         }
       }
     });
-    const pill = document.getElementById('unread-pill');
-    if (pill) {
-      pill.textContent = unreadCount + ' unread';
-    }
+
     const filterCount = document.getElementById('filter-unread-count');
+    const pill = document.getElementById('unread-pill');
+    const baseServerUnread = (filterCount && filterCount.dataset.baseUnread !== undefined)
+      ? parseInt(filterCount.dataset.baseUnread, 10)
+      : (pill && pill.dataset.baseUnread !== undefined ? parseInt(pill.dataset.baseUnread, 10) : 0);
+    const effectiveUnread = Math.max(0, baseServerUnread - readSet.size);
+
+    if (pill) {
+      pill.textContent = effectiveUnread + ' unread';
+    }
     if (filterCount) {
-      filterCount.textContent = '(' + unreadCount + ')';
+      filterCount.textContent = '(' + effectiveUnread + ')';
     }
 
     let emptyEl = document.getElementById('client-empty-state');
-    if (isUnreadFilter && unreadCount === 0 && rows.length > 0) {
+    if (isUnreadFilter && visibleUnreadRowCount === 0 && rows.length > 0) {
       if (!emptyEl) {
         emptyEl = document.createElement('div');
         emptyEl.id = 'client-empty-state';
@@ -725,7 +884,7 @@
     if (typeof invalidateFilterCache === 'function') {
       invalidateFilterCache();
     }
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onsuccess = (e) => {
       const db = e.target.result;
       const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -741,7 +900,7 @@
     if (typeof invalidateFilterCache === 'function') {
       invalidateFilterCache();
     }
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, 2);
     req.onsuccess = (e) => {
       const db = e.target.result;
       const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -810,11 +969,15 @@
   });
 
   document.addEventListener('htmx:afterSwap', (evt) => {
-    if (evt.detail && evt.detail.target && evt.detail.target.id === 'detail-panel') {
-      const detail = evt.detail.target.querySelector('[data-entry-id]');
-      if (detail) {
-        const id = detail.getAttribute('data-entry-id');
-        if (id) markLocallyRead(id);
+    if (evt.detail && evt.detail.target) {
+      if (evt.detail.target.id === 'entries-list') {
+        cacheLoadedArticlesFromDom();
+      } else if (evt.detail.target.id === 'detail-panel') {
+        const detail = evt.detail.target.querySelector('[data-entry-id]');
+        if (detail) {
+          const id = detail.getAttribute('data-entry-id');
+          if (id) markLocallyRead(id);
+        }
       }
     }
     syncDomReadStates();

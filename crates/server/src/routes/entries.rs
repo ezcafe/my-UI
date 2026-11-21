@@ -61,14 +61,30 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
         Some("unread") => {
             if auth_enabled {
                 filter_parts.push("status: UNREAD".to_string());
+            } else {
+                let start_of_today = chrono::Utc::now()
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp();
+                filter_parts.push(format!("publishedAfter: {}", start_of_today));
             }
         },
-        None if query.search.as_ref().map_or(false, |s| !s.trim().is_empty()) => {
+        None if query.search.as_ref().is_some_and(|s| !s.trim().is_empty()) => {
             // Default to all entries when search is provided without explicit status
         },
         _ => {
             if auth_enabled {
                 filter_parts.push("status: UNREAD".to_string());
+            } else {
+                let start_of_today = chrono::Utc::now()
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp();
+                filter_parts.push(format!("publishedAfter: {}", start_of_today));
             }
         }
     }
@@ -106,6 +122,11 @@ pub async fn render_entries_list(
     let offset_val = query.offset.unwrap_or(0);
     let filter_str = build_graphql_filter(query, limit_val, offset_val, auth_enabled);
     let cache_key = format!("entries:{}:auth:{}", filter_str, auth_enabled);
+    let counter_field = if auth_enabled {
+        "unreadCounter"
+    } else {
+        "todayCounter"
+    };
 
     let data = if let Some(cache) = cache {
         if let Some(cached_val) = cache.get(&cache_key).await {
@@ -126,7 +147,7 @@ pub async fn render_entries_list(
                             url
                         }}
                     }}
-                    unreadCounter
+                    {counter_field}
                 }}"#
             );
 
@@ -158,7 +179,7 @@ pub async fn render_entries_list(
                         url
                     }}
                 }}
-                unreadCounter
+                {counter_field}
             }}"#
         );
 
@@ -173,7 +194,11 @@ pub async fn render_entries_list(
         }
     };
 
-    let unread_count = data.get("unreadCounter").and_then(|v| v.as_i64()).map(|c| c as i32);
+    let unread_count = if auth_enabled {
+        data.get("unreadCounter").and_then(|v| v.as_i64()).map(|c| c as i32)
+    } else {
+        data.get("todayCounter").and_then(|v| v.as_i64()).map(|c| c as i32)
+    };
 
     let entries_result = data.get("entriesResult");
     let total = entries_result
@@ -181,8 +206,8 @@ pub async fn render_entries_list(
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
 
-    let limit = limit_val as i64;
-    let offset = offset_val as i64;
+    let limit = limit_val;
+    let offset = offset_val;
     let total_pages = if total <= 0 {
         1
     } else {
@@ -424,10 +449,8 @@ pub async fn mark_page_read_htmx(
                         .filter_map(|v| {
                             if let Some(s) = v.as_str() {
                                 Some(s.to_string())
-                            } else if let Some(n) = v.as_i64() {
-                                Some(n.to_string())
                             } else {
-                                None
+                                v.as_i64().map(|n| n.to_string())
                             }
                         })
                         .collect()
@@ -965,6 +988,61 @@ mod tests {
         assert!(
             !f.contains("status: UNREAD") && !f.contains("status:"),
             "Search with no status must default to all articles (no status filter)"
+        );
+    }
+
+    #[test]
+    fn test_build_graphql_filter_guest_unread_scopes_to_today() {
+        let start_of_today = chrono::Utc::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let expected_filter = format!("publishedAfter: {}", start_of_today);
+
+        // Guest mode with explicit unread status
+        let q_unread = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            ..Default::default()
+        };
+        let f_unread_guest = build_graphql_filter(&q_unread, 50, 0, false);
+        assert!(
+            f_unread_guest.contains(&expected_filter),
+            "Guest unread filter must include publishedAfter start_of_today: {}",
+            f_unread_guest
+        );
+        assert!(
+            !f_unread_guest.contains("status:"),
+            "Guest unread filter must not contain status constraint: {}",
+            f_unread_guest
+        );
+
+        // Guest mode with default status (None, no search)
+        let q_default = EntriesFilterQuery::default();
+        let f_default_guest = build_graphql_filter(&q_default, 50, 0, false);
+        assert!(
+            f_default_guest.contains(&expected_filter),
+            "Guest default filter must include publishedAfter start_of_today: {}",
+            f_default_guest
+        );
+        assert!(
+            !f_default_guest.contains("status:"),
+            "Guest default filter must not contain status constraint: {}",
+            f_default_guest
+        );
+
+        // Authenticated mode with unread status
+        let f_unread_auth = build_graphql_filter(&q_unread, 50, 0, true);
+        assert!(
+            f_unread_auth.contains("status: UNREAD"),
+            "Auth unread filter must contain status: UNREAD: {}",
+            f_unread_auth
+        );
+        assert!(
+            !f_unread_auth.contains("publishedAfter:"),
+            "Auth unread filter must not restrict publishedAfter: {}",
+            f_unread_auth
         );
     }
 }

@@ -133,7 +133,7 @@ mod tests {
         assert!(html_unread.contains("href=\"https://example.com/spatial\""));
         assert!(html_unread.contains("target=\"_blank\""));
         assert!(html_unread.contains("rel=\"noopener noreferrer\""));
-        assert!(html_unread.contains("onclick=\"event.stopPropagation()\""));
+        assert!(html_unread.contains("onclick=\"event.stopPropagation(); markArticleRead(42)\""));
         assert!(html_unread.contains("data-lucide=\"external-link\""));
         assert!(html_unread.contains("data-lucide=\"chevron-right\""));
 
@@ -987,6 +987,236 @@ mod tests {
             html.contains("onclick=\"handleFilterClick(this, event)\"")
                 || html.contains("handleFilterClick(this, event)"),
             "Filter pills must wire handleFilterClick"
+        );
+    }
+
+    #[test]
+    fn test_index_template_hides_starred_but_shows_all_titles_when_auth_disabled() {
+        let template_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html_guest = template_guest.render().expect("Failed to render IndexTemplate with auth_enabled: false");
+        assert!(
+            !html_guest.contains("id=\"filter-starred\""),
+            "Guest mode must not render filter-starred"
+        );
+        assert!(
+            html_guest.contains("id=\"filter-all\""),
+            "Guest mode must render filter-all (All Titles)"
+        );
+        assert!(
+            html_guest.contains("id=\"filter-unread\""),
+            "Guest mode must render filter-unread"
+        );
+        assert!(
+            html_guest.contains("id=\"filter-today\""),
+            "Guest mode must render filter-today"
+        );
+
+        let template_auth = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: true,
+        };
+        let html_auth = template_auth.render().expect("Failed to render IndexTemplate with auth_enabled: true");
+        assert!(
+            html_auth.contains("id=\"filter-starred\""),
+            "Authenticated mode must render filter-starred"
+        );
+        assert!(
+            html_auth.contains("id=\"filter-all\""),
+            "Authenticated mode must render filter-all"
+        );
+    }
+
+    #[test]
+    fn test_open_in_browser_link_wires_mark_article_read() {
+        let entry = EntryViewModel {
+            id: 42,
+            title: "Test Article".to_string(),
+            feed_title: "Test Feed".to_string(),
+            published_at: "1 hour ago".to_string(),
+            reading_time: 3,
+            summary: "Summary".to_string(),
+            url: "https://example.com/item".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+
+        // 1. EntryItemTemplate
+        let item_template = EntryItemTemplate {
+            entry: entry.clone(),
+            unread_count: None,
+        };
+        let item_html = item_template.render().expect("Failed to render EntryItemTemplate");
+        assert!(
+            item_html.contains("onclick=\"event.stopPropagation(); markArticleRead(42)\""),
+            "Entry item external link must call markArticleRead(42)"
+        );
+
+        // 2. EntryListTemplate
+        let list_template = EntryListTemplate {
+            entries: vec![entry.clone()],
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+        };
+        let list_html = list_template.render().expect("Failed to render EntryListTemplate");
+        assert!(
+            list_html.contains("onclick=\"event.stopPropagation(); markArticleRead(42)\""),
+            "Entry list external link must call markArticleRead(42)"
+        );
+
+        // 3. EntryDetailTemplate
+        let detail_template = EntryDetailTemplate {
+            entry,
+            summary: "Summary".to_string(),
+            sanitized_content: "<p>Content</p>".to_string(),
+            auth_enabled: false,
+        };
+        let detail_html = detail_template.render().expect("Failed to render EntryDetailTemplate");
+        assert!(
+            detail_html.contains("markArticleRead(42)"),
+            "Entry detail 'Original' link must call markArticleRead(42)"
+        );
+    }
+
+    #[test]
+    fn test_index_template_defines_all_articles_store_and_helpers() {
+        let template = IndexTemplate {
+            unread_count: 7,
+            today_count: 3,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        assert!(
+            html.contains("all_articles"),
+            "Index template must define all_articles IndexedDB object store"
+        );
+        assert!(
+            html.contains("function renderLocalAllArticles"),
+            "Index template must define renderLocalAllArticles helper"
+        );
+        assert!(
+            html.contains("function cacheLoadedArticlesFromDom"),
+            "Index template must define cacheLoadedArticlesFromDom helper"
+        );
+        assert!(
+            html.contains("id=\"unread-pill\"") && html.contains("data-base-unread=\"7\""),
+            "unread-pill must include data-base-unread attribute"
+        );
+        assert!(
+            html.contains("id=\"filter-unread-count\"") && html.contains("data-base-unread=\"7\""),
+            "filter-unread-count must include data-base-unread attribute"
+        );
+    }
+
+    #[test]
+    fn test_index_template_defines_mark_article_read_and_data_base_unread() {
+        let template = IndexTemplate {
+            unread_count: 7,
+            today_count: 3,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        assert!(
+            html.contains("function markArticleRead("),
+            "Index template must define markArticleRead function in script block"
+        );
+        assert!(
+            html.contains("id=\"unread-pill\"") && html.contains("data-base-unread=\"7\""),
+            "unread-pill must include data-base-unread attribute"
+        );
+        assert!(
+            html.contains("id=\"filter-unread-count\"") && html.contains("data-base-unread=\"7\""),
+            "filter-unread-count must include data-base-unread attribute"
+        );
+        assert!(
+            html.contains("baseServerUnread"),
+            "syncDomReadStates must reference baseServerUnread"
+        );
+        assert!(
+            html.contains("readSet.size"),
+            "syncDomReadStates must reference readSet.size"
+        );
+
+        let item_template = EntryItemTemplate {
+            entry: EntryViewModel {
+                id: 1,
+                title: "T".into(),
+                feed_title: "F".into(),
+                published_at: "now".into(),
+                reading_time: 1,
+                summary: "S".into(),
+                url: "https://example.com".into(),
+                author: None,
+                is_read: false,
+                is_bookmarked: false,
+            },
+            unread_count: Some(5),
+        };
+        let item_html = item_template.render().expect("render item");
+        assert!(
+            item_html.contains("data-base-unread=\"5\""),
+            "EntryItem unread pill must include data-base-unread"
+        );
+
+        let list_template = EntryListTemplate {
+            entries: vec![],
+            unread_count: Some(5),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+        };
+        let list_html = list_template.render().expect("render list");
+        assert!(
+            list_html.contains("data-base-unread=\"5\""),
+            "EntryList unread count must include data-base-unread"
+        );
+    }
+
+    #[test]
+    fn test_filter_click_closes_detail_panel() {
+        let template = IndexTemplate {
+            unread_count: 10,
+            today_count: 3,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        let pos_handle = html.find("function handleFilterClick").expect("handleFilterClick must exist");
+        let handle_fn_slice = &html[pos_handle..pos_handle + 300];
+        assert!(
+            handle_fn_slice.contains("closeDetailPanel()"),
+            "handleFilterClick must call closeDetailPanel() to return to list view"
         );
     }
 }

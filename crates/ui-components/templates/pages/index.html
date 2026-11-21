@@ -300,6 +300,136 @@
     // Allows HTMX to proceed with GET /hx/entries?search=...&status=all
   }
 
+  const ARTICLE_DB_NAME = 'my_news_article_cache_db';
+  const ARTICLE_STORE_NAME = 'cached_articles';
+  const ARTICLE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+  function openArticleCacheDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(ARTICLE_DB_NAME, 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(ARTICLE_STORE_NAME)) {
+          db.createObjectStore(ARTICLE_STORE_NAME, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = (e) => reject(e);
+    });
+  }
+
+  async function getCachedArticle(id) {
+    try {
+      const numId = Number(id);
+      if (!numId) return null;
+      const db = await openArticleCacheDb();
+      return new Promise((resolve) => {
+        const tx = db.transaction(ARTICLE_STORE_NAME, 'readonly');
+        const store = tx.objectStore(ARTICLE_STORE_NAME);
+        const req = store.get(numId);
+        req.onsuccess = (e) => {
+          const item = e.target.result;
+          if (item && item.cached_at && (Date.now() - item.cached_at < ARTICLE_CACHE_TTL_MS)) {
+            resolve(item);
+          } else {
+            if (item) {
+              deleteCachedArticle(numId);
+            }
+            resolve(null);
+          }
+        };
+        req.onerror = () => resolve(null);
+      });
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function saveCachedArticle(id, html) {
+    try {
+      const numId = Number(id);
+      if (!numId || !html) return;
+      const db = await openArticleCacheDb();
+      const tx = db.transaction(ARTICLE_STORE_NAME, 'readwrite');
+      tx.objectStore(ARTICLE_STORE_NAME).put({
+        id: numId,
+        html: html,
+        cached_at: Date.now()
+      });
+    } catch (e) {
+      console.warn('Could not cache article in IndexedDB', e);
+    }
+  }
+
+  async function deleteCachedArticle(id) {
+    try {
+      const numId = Number(id);
+      if (!numId) return;
+      const db = await openArticleCacheDb();
+      const tx = db.transaction(ARTICLE_STORE_NAME, 'readwrite');
+      tx.objectStore(ARTICLE_STORE_NAME).delete(numId);
+    } catch (e) {}
+  }
+
+  async function openEntryDetail(id) {
+    const numId = Number(id);
+    if (!numId) return;
+
+    // Check 30-day IndexedDB cache first
+    let cached = null;
+    try {
+      cached = await getCachedArticle(numId);
+    } catch (e) {
+      console.warn('Error reading article cache:', e);
+    }
+
+    const panel = document.getElementById('detail-panel');
+    if (!panel) return;
+
+    // Update URL query parameter without full reload
+    const currentUrl = new URL(window.location);
+    if (currentUrl.searchParams.get('entry') !== String(numId)) {
+      currentUrl.searchParams.set('entry', numId);
+      history.pushState(null, '', currentUrl.pathname + '?' + currentUrl.searchParams.toString());
+    }
+
+    if (cached && cached.html) {
+      // Instant render from cache - zero network request, zero skeleton flicker
+      panel.innerHTML = cached.html;
+      panel.classList.remove('hidden');
+
+      if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+      }
+      if (window.htmx && typeof htmx.process === 'function') {
+        htmx.process(panel);
+      }
+
+      // Mark locally read if guest mode
+      if (typeof markLocallyRead === 'function') {
+        markLocallyRead(numId);
+      }
+
+      // Visually update the unread accent bar and dot on the entry row
+      const bar = document.getElementById('entry-' + numId + '-bar');
+      if (bar) {
+        bar.classList.remove('bg-brand');
+        bar.classList.add('bg-transparent');
+      }
+      const dot = document.getElementById('entry-' + numId + '-dot');
+      if (dot) {
+        dot.innerHTML = '';
+      }
+    } else {
+      // Cache miss or expired: show skeleton and fetch via HTMX
+      openDetailWithSkeleton();
+      htmx.ajax('GET', '/hx/entries/' + encodeURIComponent(numId), {
+        target: '#detail-panel',
+        swap: 'innerHTML'
+      });
+    }
+  }
+
   function openDetailWithSkeleton() {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
@@ -386,11 +516,7 @@
       }
     }
     if (entryId) {
-      openDetailWithSkeleton();
-      htmx.ajax('GET', '/hx/entries/' + encodeURIComponent(entryId), {
-        target: '#detail-panel',
-        swap: 'innerHTML'
-      });
+      openEntryDetail(entryId);
     }
   }
 
@@ -408,11 +534,7 @@
       }
     }
     if (entryId) {
-      openDetailWithSkeleton();
-      htmx.ajax('GET', '/hx/entries/' + encodeURIComponent(entryId), {
-        target: '#detail-panel',
-        swap: 'innerHTML'
-      });
+      openEntryDetail(entryId);
     } else {
       closeDetailPanel();
     }
@@ -441,7 +563,20 @@
         if (typeof syncDomReadStates === 'function') {
           syncDomReadStates();
         }
-      } else if (targetId.startsWith('entry-') || evt.detail.target.closest('#detail-panel')) {
+      } else if (targetId === 'detail-panel' || evt.detail.target.closest('#detail-panel')) {
+        invalidateFilterCache();
+        const panel = document.getElementById('detail-panel');
+        if (panel) {
+          const detail = panel.querySelector('[data-entry-id]');
+          if (detail) {
+            const entryId = detail.getAttribute('data-entry-id');
+            // Do not cache error cards
+            if (entryId && !panel.querySelector('.stroke-destructive')) {
+              saveCachedArticle(entryId, panel.innerHTML);
+            }
+          }
+        }
+      } else if (targetId.startsWith('entry-')) {
         invalidateFilterCache();
       }
     }

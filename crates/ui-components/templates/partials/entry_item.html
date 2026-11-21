@@ -2,7 +2,7 @@
   <!-- 3px vertical positional red bar (Rule 1: Red marks position, never action) -->
   <div id="entry-{{ entry.id }}-bar" class="w-[3px] self-stretch rounded-full shrink-0 {% if !entry.is_read %}bg-brand{% else %}bg-transparent{% endif %}"></div>
 
-  <div class="flex items-center gap-2.5 flex-1 min-w-0" hx-get="/hx/entries/{{ entry.id }}" hx-target="#detail-panel" hx-push-url="?entry={{ entry.id }}" onclick="openDetailWithSkeleton()">
+  <div class="flex items-center gap-2.5 flex-1 min-w-0" onclick="openEntryDetail({{ entry.id }})">
     <span id="entry-{{ entry.id }}-dot">
     {% if !entry.is_read %}
     <span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>

@@ -666,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn test_entry_item_wires_open_detail_with_skeleton() {
+    fn test_entry_item_wires_open_entry_detail() {
         let entry = EntryViewModel {
             id: 42,
             title: "Test Entry".to_string(),
@@ -685,8 +685,8 @@ mod tests {
         };
         let html = template.render().expect("Failed to render EntryItemTemplate");
         assert!(
-            html.contains("onclick=\"openDetailWithSkeleton()\""),
-            "Entry item must trigger openDetailWithSkeleton()"
+            html.contains("onclick=\"openEntryDetail(42)\""),
+            "Entry item must trigger openEntryDetail(id)"
         );
         assert!(
             !html.contains("document.getElementById('detail-panel').classList.remove('hidden')"),
@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[test]
-    fn test_entry_list_wires_open_detail_with_skeleton() {
+    fn test_entry_list_wires_open_entry_detail() {
         let entry = EntryViewModel {
             id: 42,
             title: "Test Entry in List".to_string(),
@@ -723,8 +723,8 @@ mod tests {
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
         assert!(
-            html.contains("onclick=\"openDetailWithSkeleton()\""),
-            "Entry list items must trigger openDetailWithSkeleton()"
+            html.contains("onclick=\"openEntryDetail(42)\""),
+            "Entry list items must trigger openEntryDetail(id)"
         );
         assert!(
             !html.contains("document.getElementById('detail-panel').classList.remove('hidden')"),
@@ -774,12 +774,24 @@ mod tests {
         };
         let html = template.render().expect("Failed to render IndexTemplate");
         assert!(
+            html.contains("function openEntryDetail("),
+            "Index template must define openEntryDetail helper function"
+        );
+        assert!(
             html.contains("function openDetailWithSkeleton()"),
             "Index template must define openDetailWithSkeleton helper function"
         );
         assert!(
             html.contains("function closeDetailPanel()"),
             "Index template must define closeDetailPanel helper function"
+        );
+        assert!(
+            html.contains("cached_articles"),
+            "Index template must reference cached_articles store for 30-day detail cache"
+        );
+        assert!(
+            html.contains("ARTICLE_CACHE_TTL_MS"),
+            "Index template must define 30-day ARTICLE_CACHE_TTL_MS"
         );
     }
 

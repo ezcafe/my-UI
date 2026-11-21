@@ -229,8 +229,8 @@
             event.stopImmediatePropagation();
           }
         }
-        applyCachedList(cached.html);
         setActiveFilter(btn);
+        applyCachedList(cached.html);
         return false;
       }
     }
@@ -249,8 +249,8 @@
         const cached = filterCache.get(status);
         if (Date.now() - cached.timestamp < FILTER_CACHE_TTL_MS) {
           evt.preventDefault();
-          applyCachedList(cached.html);
           setActiveFilter(trigger);
+          applyCachedList(cached.html);
         }
       }
     }
@@ -645,24 +645,43 @@
 
   function syncDomReadStates() {
     let unreadCount = 0;
-    document.querySelectorAll('.annuaire-row').forEach(row => {
+    const activeStatusInput = document.getElementById('active-status');
+    const isUnreadFilter = activeStatusInput && activeStatusInput.value === 'unread';
+    const rows = document.querySelectorAll('#entries-list .annuaire-row');
+
+    rows.forEach(row => {
       const idStr = row.getAttribute('data-entry-id');
       if (idStr) {
         const isRead = readSet.has(Number(idStr));
+        const bar = document.getElementById('entry-' + idStr + '-bar');
+        const dot = document.getElementById('entry-' + idStr + '-dot');
+
         if (isRead) {
           row.classList.remove('unread');
           row.classList.add('read');
-          const bar = row.querySelector('.active-accent-bar');
-          if (bar) bar.style.display = 'none';
-          const dot = row.querySelector('.unread-dot');
-          if (dot) dot.style.display = 'none';
+          if (bar) {
+            bar.classList.remove('bg-brand');
+            bar.classList.add('bg-transparent');
+          }
+          if (dot) {
+            dot.innerHTML = '';
+          }
+          if (isUnreadFilter) {
+            row.style.display = 'none';
+          } else {
+            row.style.display = '';
+          }
         } else {
           row.classList.remove('read');
           row.classList.add('unread');
-          const bar = row.querySelector('.active-accent-bar');
-          if (bar) bar.style.display = '';
-          const dot = row.querySelector('.unread-dot');
-          if (dot) dot.style.display = '';
+          if (bar) {
+            bar.classList.remove('bg-transparent');
+            bar.classList.add('bg-brand');
+          }
+          if (dot && !dot.querySelector('span')) {
+            dot.innerHTML = '<span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>';
+          }
+          row.style.display = '';
           unreadCount++;
         }
       }
@@ -674,6 +693,27 @@
     const filterCount = document.getElementById('filter-unread-count');
     if (filterCount) {
       filterCount.textContent = '(' + unreadCount + ')';
+    }
+
+    let emptyEl = document.getElementById('client-empty-state');
+    if (isUnreadFilter && unreadCount === 0 && rows.length > 0) {
+      if (!emptyEl) {
+        emptyEl = document.createElement('div');
+        emptyEl.id = 'client-empty-state';
+        emptyEl.className = 'flex flex-col items-center justify-center p-12 text-center text-muted-foreground';
+        emptyEl.innerHTML = `
+          <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
+          <p class="text-sm font-medium font-sans">All caught up!</p>
+          <p class="text-xs text-muted-foreground mt-1 font-sans">No articles match your current filter.</p>
+        `;
+        const list = document.getElementById('entries-list');
+        if (list) list.appendChild(emptyEl);
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+          lucide.createIcons();
+        }
+      }
+    } else if (emptyEl) {
+      emptyEl.remove();
     }
   }
 

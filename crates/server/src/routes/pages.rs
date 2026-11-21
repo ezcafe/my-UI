@@ -23,27 +23,51 @@ pub async fn index_page(
     State(config): State<Arc<Config>>,
     State(cache): State<Arc<MinifluxCache>>,
 ) -> Result<Html<String>, AppError> {
-    let cache_key = "index_page_entries";
+    let cache_key = if config.auth_enabled {
+        "index_page_entries_auth"
+    } else {
+        "index_page_entries_guest"
+    };
     let data = if let Some(cached) = cache.get(cache_key).await {
         cached
     } else {
-        let gql = r#"query {
-            unreadCounter
-            todayCounter
-            entriesResult(filter: { limit: 50, status: UNREAD }) {
-                total
-                entries {
-                    id
-                    title
-                    summary
-                    publishedAt
-                    readingTime
-                    isBookmarked
-                    url
-                    status
+        let gql = if config.auth_enabled {
+            r#"query {
+                unreadCounter
+                todayCounter
+                entriesResult(filter: { limit: 50, status: UNREAD }) {
+                    total
+                    entries {
+                        id
+                        title
+                        summary
+                        publishedAt
+                        readingTime
+                        isBookmarked
+                        url
+                        status
+                    }
                 }
-            }
-        }"#;
+            }"#
+        } else {
+            r#"query {
+                unreadCounter
+                todayCounter
+                entriesResult(filter: { limit: 50 }) {
+                    total
+                    entries {
+                        id
+                        title
+                        summary
+                        publishedAt
+                        readingTime
+                        isBookmarked
+                        url
+                        status
+                    }
+                }
+            }"#
+        };
 
         let res = schema.execute(gql).await;
         let d = res.data.into_json().unwrap_or_default();
@@ -95,7 +119,11 @@ pub async fn index_page(
                         summary: item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         author: None,
-                        is_read: item.get("status").and_then(|v| v.as_str()) == Some("READ"),
+                        is_read: if config.auth_enabled {
+                            item.get("status").and_then(|v| v.as_str()) == Some("READ")
+                        } else {
+                            false
+                        },
                         is_bookmarked: item.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
                     })
                 })

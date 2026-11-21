@@ -36,13 +36,17 @@ pub struct MarkPageReadForm {
     pub category_id: Option<i64>,
 }
 
-pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_val: i64) -> String {
+pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_val: i64, auth_enabled: bool) -> String {
     let mut filter_parts = Vec::new();
 
     // Status & Filter mapping
     match query.status.as_deref() {
         Some("all") => {},
-        Some("read") => filter_parts.push("status: READ".to_string()),
+        Some("read") => {
+            if auth_enabled {
+                filter_parts.push("status: READ".to_string());
+            }
+        },
         Some("starred") => filter_parts.push("starred: true".to_string()),
         Some("today") => {
             let start_of_today = chrono::Utc::now()
@@ -54,11 +58,19 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
             // User decision 1B: show all published today (both read and unread)
             filter_parts.push(format!("publishedAfter: {}", start_of_today));
         },
-        Some("unread") => filter_parts.push("status: UNREAD".to_string()),
+        Some("unread") => {
+            if auth_enabled {
+                filter_parts.push("status: UNREAD".to_string());
+            }
+        },
         None if query.search.as_ref().map_or(false, |s| !s.trim().is_empty()) => {
             // Default to all entries when search is provided without explicit status
         },
-        _ => filter_parts.push("status: UNREAD".to_string()), // Default: unread
+        _ => {
+            if auth_enabled {
+                filter_parts.push("status: UNREAD".to_string());
+            }
+        }
     }
 
     if let Some(feed_id) = query.feed_id {
@@ -88,11 +100,12 @@ pub async fn render_entries_list(
     cache: Option<&MinifluxCache>,
     headers: &HeaderMap,
     query: &EntriesFilterQuery,
+    auth_enabled: bool,
 ) -> Response {
     let limit_val = query.limit.unwrap_or(50);
     let offset_val = query.offset.unwrap_or(0);
-    let filter_str = build_graphql_filter(query, limit_val, offset_val);
-    let cache_key = format!("entries:{}", filter_str);
+    let filter_str = build_graphql_filter(query, limit_val, offset_val, auth_enabled);
+    let cache_key = format!("entries:{}:auth:{}", filter_str, auth_enabled);
 
     let data = if let Some(cache) = cache {
         if let Some(cached_val) = cache.get(&cache_key).await {
@@ -196,7 +209,11 @@ pub async fn render_entries_list(
                         summary: item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         author: None,
-                        is_read: item.get("status").and_then(|v| v.as_str()) == Some("READ") || query.status.as_deref() == Some("read"),
+                        is_read: if auth_enabled {
+                            item.get("status").and_then(|v| v.as_str()) == Some("READ") || query.status.as_deref() == Some("read")
+                        } else {
+                            false
+                        },
                         is_bookmarked: item.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
                     })
                 })
@@ -335,7 +352,7 @@ pub async fn list_entries_htmx(
         }
         return render_ai_entries_list(&schema, &headers, &query).await;
     }
-    render_entries_list(&schema, Some(&cache), &headers, &query).await
+    render_entries_list(&schema, Some(&cache), &headers, &query, config.auth_enabled).await
 }
 
 pub async fn get_entry_ai_summary_htmx(
@@ -452,7 +469,7 @@ pub async fn mark_page_read_htmx(
         offset: Some(0),
     };
 
-    render_entries_list(&schema, None, &headers, &filter_query).await
+    render_entries_list(&schema, None, &headers, &filter_query, config.auth_enabled).await
 }
 
 pub async fn get_entry_detail_htmx(
@@ -858,27 +875,35 @@ mod tests {
 
     #[test]
     fn test_entries_filter_query_mapping() {
-        // Default / unread
+        // Default / unread (auth_enabled = true)
         let q_default = EntriesFilterQuery::default();
-        let f_default = build_graphql_filter(&q_default, 50, 0);
+        let f_default = build_graphql_filter(&q_default, 50, 0, true);
         assert!(f_default.contains("status: UNREAD"));
         assert!(!f_default.contains("starred:"));
         assert!(!f_default.contains("publishedAfter:"));
 
-        // status=unread
+        // Default / unread (auth_enabled = false -> guest mode: no status filter sent to Miniflux)
+        let f_default_guest = build_graphql_filter(&q_default, 50, 0, false);
+        assert!(!f_default_guest.contains("status:"));
+
+        // status=unread (auth_enabled = true)
         let q_unread = EntriesFilterQuery {
             status: Some("unread".to_string()),
             ..Default::default()
         };
-        let f_unread = build_graphql_filter(&q_unread, 50, 0);
+        let f_unread = build_graphql_filter(&q_unread, 50, 0, true);
         assert!(f_unread.contains("status: UNREAD"));
+
+        // status=unread (auth_enabled = false -> guest mode)
+        let f_unread_guest = build_graphql_filter(&q_unread, 50, 0, false);
+        assert!(!f_unread_guest.contains("status:"));
 
         // status=read
         let q_read = EntriesFilterQuery {
             status: Some("read".to_string()),
             ..Default::default()
         };
-        let f_read = build_graphql_filter(&q_read, 50, 0);
+        let f_read = build_graphql_filter(&q_read, 50, 0, true);
         assert!(f_read.contains("status: READ"));
 
         // status=starred
@@ -886,7 +911,7 @@ mod tests {
             status: Some("starred".to_string()),
             ..Default::default()
         };
-        let f_starred = build_graphql_filter(&q_starred, 50, 0);
+        let f_starred = build_graphql_filter(&q_starred, 50, 0, true);
         assert!(f_starred.contains("starred: true"));
         assert!(!f_starred.contains("status:"));
 
@@ -895,7 +920,7 @@ mod tests {
             status: Some("all".to_string()),
             ..Default::default()
         };
-        let f_all = build_graphql_filter(&q_all, 50, 0);
+        let f_all = build_graphql_filter(&q_all, 50, 0, true);
         assert!(!f_all.contains("status:"));
         assert!(!f_all.contains("starred:"));
         assert!(!f_all.contains("publishedAfter:"));
@@ -905,7 +930,7 @@ mod tests {
             status: Some("today".to_string()),
             ..Default::default()
         };
-        let f_today = build_graphql_filter(&q_today, 50, 0);
+        let f_today = build_graphql_filter(&q_today, 50, 0, true);
         assert!(f_today.contains("publishedAfter: "));
         assert!(!f_today.contains("status:"));
 
@@ -914,7 +939,7 @@ mod tests {
             search: Some("Rust \"async\" \\ test\nnewline".to_string()),
             ..Default::default()
         };
-        let f_search = build_graphql_filter(&q_search, 20, 10);
+        let f_search = build_graphql_filter(&q_search, 20, 10, true);
         assert!(f_search.contains(r#"search: "Rust \"async\" \\ test\nnewline""#));
         assert!(f_search.contains("limit: 20"));
         assert!(f_search.contains("offset: 10"));
@@ -924,7 +949,7 @@ mod tests {
             search: Some("   ".to_string()),
             ..Default::default()
         };
-        let f_empty_search = build_graphql_filter(&q_empty_search, 50, 0);
+        let f_empty_search = build_graphql_filter(&q_empty_search, 50, 0, true);
         assert!(!f_empty_search.contains("search:"));
     }
 
@@ -935,7 +960,7 @@ mod tests {
             status: None,
             ..Default::default()
         };
-        let f = build_graphql_filter(&q, 50, 0);
+        let f = build_graphql_filter(&q, 50, 0, true);
         assert!(f.contains(r#"search: "rust""#));
         assert!(
             !f.contains("status: UNREAD") && !f.contains("status:"),

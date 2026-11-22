@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** no | yes | no | yes
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** done
 - **Gate B settle gen:** 0
 - **Gate B approved:** yes
 - **Build armed:** none
@@ -33,3 +33,4 @@
 - **10:38** · code-review-phase · review · Adv & Quality clean; lens-api clean
 - **10:41** · test-lite · test · 126 tests passed, dockerfile checked, test bar met
 - **10:42** · gate-c · hitl · Gate C approved: commit, push
+- **10:43** · merge · git · committed 66bda6c and pushed to main · status: done

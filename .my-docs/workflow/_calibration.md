@@ -6,3 +6,4 @@
 - **20261121-client-only-read-bookmark**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (clean separation between server rejection and client-only actions).
 - **20261121-ui-filter-read-status-fixes**: Mode OK (simple) · Profile OK (lite) · Biggest friction: mid-run requirement addition handled cleanly via design-backloop.
 - **20261122-docker-compose-local-prod**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (clear user decision choices and clean multi-stage container validation).
+- **20261122-ai-auth-gate-docker-fix**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (smooth TDD cycle covering config matrix and route guards).

@@ -139,6 +139,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: ":memory:".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         });
 
         let client = MinifluxClient::new("http://127.0.0.1:8080".to_string(), "api-key".to_string());

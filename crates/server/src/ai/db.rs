@@ -305,6 +305,10 @@ impl AiDb {
         Ok(())
     }
 
+    pub async fn save_page_brief_with_key(&self, page_key: &str, brief: &str) -> Result<(), AiDbError> {
+        self.save_page_brief_by_key(page_key, brief).await
+    }
+
     pub async fn get_unprocessed_entry_ids(&self, entry_ids: &[i64]) -> Vec<i64> {
         if entry_ids.is_empty() {
             return Vec::new();

@@ -31,6 +31,9 @@ async fn test_app_starts_and_responds_to_health_check() {
         llm_model: "gpt-4o-mini".to_string(),
         llm_extra_args: vec![],
         ai_db_path: "data/summaries.db".to_string(),
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
     });
 
     let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
@@ -109,6 +112,9 @@ async fn test_e2e_authenticated_session_flow() {
         llm_model: "gpt-4o-mini".to_string(),
         llm_extra_args: vec![],
         ai_db_path: "data/summaries.db".to_string(),
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
     });
 
     let client = MinifluxClient::new(mock_upstream.uri(), "api-key".to_string());
@@ -222,6 +228,9 @@ async fn test_e2e_guest_mode_flow() {
         llm_model: "gpt-4o-mini".to_string(),
         llm_extra_args: vec![],
         ai_db_path: "data/summaries.db".to_string(),
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
     });
 
     let client = MinifluxClient::new(mock_upstream.uri(), "api-key".to_string());
@@ -305,6 +314,9 @@ async fn test_mutation_endpoints_reject_with_403_when_auth_disabled() {
         llm_model: "gpt-4o-mini".to_string(),
         llm_extra_args: vec![],
         ai_db_path: "data/summaries.db".to_string(),
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
     });
 
     let client = MinifluxClient::new(mock_upstream.uri(), "api-key".to_string());
@@ -387,6 +399,9 @@ async fn test_executive_brief_ineligible_views_and_empty_guard() {
         llm_model: "gpt-4o-mini".to_string(),
         llm_extra_args: vec![],
         ai_db_path: db_path,
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
     });
 
     let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
@@ -460,6 +475,9 @@ async fn test_executive_brief_cache_hit_and_oob_swaps() {
         llm_model: "gpt-4o-mini".to_string(),
         llm_extra_args: vec![],
         ai_db_path: db_path.clone(),
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
     });
 
     let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());

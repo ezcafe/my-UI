@@ -38,8 +38,8 @@ impl AiPrefetchService {
             .filter(|(id, ..)| unprocessed_set.contains(id))
             .collect();
 
-        // 2. Prefetch threshold: only trigger when uncached items >= 5
-        const PREFETCH_THRESHOLD: usize = 5;
+        // 2. Prefetch threshold: trigger when uncached items >= 1
+        const PREFETCH_THRESHOLD: usize = 1;
         if uncached.len() < PREFETCH_THRESHOLD {
             return;
         }
@@ -72,7 +72,7 @@ impl AiPrefetchService {
         }
         let _guard = InFlightGuard {
             in_flight: ai.in_flight.clone(),
-            key: batch_key,
+            key: batch_key.clone(),
         };
 
         // 4. Single-call batch prefetch: process all candidate page entries in exactly 1 LLM call
@@ -104,8 +104,9 @@ impl AiPrefetchService {
 
         let (batch_res, model) = ai.llm.summarize_batch(&articles_for_llm).await;
 
-        // Save page executive brief if top is provided
+        // Save page executive brief if top is provided (both with page_key and legacy)
         if !batch_res.top.is_empty() {
+            let _ = ai.db.save_page_brief_with_key(&batch_key, &batch_res.top).await;
             let _ = ai.db.save_page_brief(&batch_res.top).await;
         }
 
@@ -159,7 +160,7 @@ mod tests {
         let ai = Arc::new(AiService {
             db: db.clone(),
             extractor,
-            llm,
+            llm: llm.into(),
             in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         });
 
@@ -177,6 +178,86 @@ mod tests {
 
         let page_brief = db.get_latest_page_brief().await;
         assert_eq!(page_brief.as_deref(), Some("Daily Brief"));
+    }
+
+    #[tokio::test]
+    async fn test_prefetch_saves_brief_with_page_key() {
+        let db_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        let extractor = ArticleExtractor::new();
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        let script_content = "#!/bin/sh\nprintf '%s' '{\"top\":\"Keyed Prefetch Brief\",\"items\":[]}'\n";
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let llm = LlmCliRunner::new(
+            script_file.path().to_str().unwrap().to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        let ai = Arc::new(AiService {
+            db: db.clone(),
+            extractor,
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+
+        let candidates = vec![
+            (501, "T1".to_string(), "http://example.com/1".to_string(), "Teaser 1".to_string()),
+        ];
+        let expected_key = crate::ai::compute_page_key("prefetch", &[501]);
+
+        AiPrefetchService::run_prefetch(ai.clone(), candidates).await;
+
+        let keyed_brief = db.get_page_brief_by_key(&expected_key).await;
+        assert_eq!(keyed_brief.as_deref(), Some("Keyed Prefetch Brief"));
+    }
+
+    #[tokio::test]
+    async fn test_prefetch_triggers_with_single_uncached_item() {
+        let db_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        let extractor = ArticleExtractor::new();
+
+        let count_file = tempfile::NamedTempFile::new().unwrap();
+        let count_path = count_file.path().to_str().unwrap().to_string();
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        let script_content = format!(
+            "#!/bin/sh\nprintf 'call\\n' >> \"{}\"\nprintf '%s' '{{\"top\":\"Single Item Brief\",\"items\":[]}}'\n",
+            count_path
+        );
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let llm = LlmCliRunner::new(
+            script_file.path().to_str().unwrap().to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        let ai = Arc::new(AiService {
+            db: db.clone(),
+            extractor,
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+
+        // Exactly 1 uncached candidate item
+        let single_candidate = vec![
+            (999, "Title 999".to_string(), "http://example.com/999".to_string(), "Teaser 999".to_string()),
+        ];
+
+        AiPrefetchService::run_prefetch(ai.clone(), single_candidate).await;
+
+        let calls = std::fs::read_to_string(&count_path).unwrap_or_default();
+        assert_eq!(calls.lines().count(), 1, "Lowered threshold (1) must trigger prefetch for 1 uncached item");
     }
 
     #[tokio::test]
@@ -207,38 +288,36 @@ mod tests {
         let ai = Arc::new(AiService {
             db: db.clone(),
             extractor,
-            llm,
+            llm: llm.into(),
             in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         });
 
-        // Case 1: Uncached count < 5 (e.g. 3 entries) -> should NOT trigger LLM call
-        let below_threshold_candidates: Vec<(i64, String, String, String)> = (1..=3)
-            .map(|i| (i, format!("Title {i}"), format!("http://example.com/{i}"), format!("Teaser {i}")))
-            .collect();
+        // Case 1: 0 candidates -> should NOT trigger LLM call
+        let empty_candidates: Vec<(i64, String, String, String)> = vec![];
 
-        AiPrefetchService::run_prefetch(ai.clone(), below_threshold_candidates).await;
+        AiPrefetchService::run_prefetch(ai.clone(), empty_candidates).await;
         let calls = std::fs::read_to_string(&count_path).unwrap_or_default();
-        assert_eq!(calls.lines().count(), 0, "Uncached count below 5 must not trigger prefetch");
+        assert_eq!(calls.lines().count(), 0, "Empty candidates must not trigger prefetch");
 
-        // Case 2: Pre-populate 4 out of 6 items so only 2 remain uncached -> should NOT trigger
+        // Case 2: Pre-populate all items so 0 remain uncached -> should NOT trigger
         for i in 101..=104 {
             db.save_summary(i, "Summary", "gpt-4o-mini").await.unwrap();
         }
-        let six_candidates: Vec<(i64, String, String, String)> = (101..=106)
+        let all_cached_candidates: Vec<(i64, String, String, String)> = (101..=104)
             .map(|i| (i, format!("Title {i}"), format!("http://example.com/{i}"), format!("Teaser {i}")))
             .collect();
 
-        AiPrefetchService::run_prefetch(ai.clone(), six_candidates).await;
+        AiPrefetchService::run_prefetch(ai.clone(), all_cached_candidates).await;
         let calls = std::fs::read_to_string(&count_path).unwrap_or_default();
-        assert_eq!(calls.lines().count(), 0, "Only 2 uncached items remaining must not trigger prefetch");
+        assert_eq!(calls.lines().count(), 0, "All cached items must not trigger prefetch");
 
-        // Case 3: 5 uncached items (>= 5 threshold) -> triggers LLM call
-        let threshold_candidates: Vec<(i64, String, String, String)> = (201..=205)
-            .map(|i| (i, format!("Title {i}"), format!("http://example.com/{i}"), format!("Teaser {i}")))
-            .collect();
+        // Case 3: 1 uncached item (>= 1 threshold) -> triggers LLM call
+        let threshold_candidates: Vec<(i64, String, String, String)> = vec![
+            (201, "Title 201".to_string(), "http://example.com/201".to_string(), "Teaser 201".to_string()),
+        ];
 
         AiPrefetchService::run_prefetch(ai.clone(), threshold_candidates).await;
         let calls = std::fs::read_to_string(&count_path).unwrap();
-        assert_eq!(calls.lines().count(), 1, "5 uncached items must trigger prefetch call exactly once");
+        assert_eq!(calls.lines().count(), 1, "1 uncached item must trigger prefetch call exactly once");
     }
 }

@@ -37,6 +37,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: "data/summaries.db".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         });
 
         let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());
@@ -109,6 +112,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: db_path.clone(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         });
 
         // Seed DB with suggested title and page executive brief
@@ -206,6 +212,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: db_path.clone(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         });
 
         let db = crate::ai::AiDb::new(&db_path).unwrap();
@@ -809,6 +818,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: tmp.path().to_str().unwrap().to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         });
 
         let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());
@@ -1029,6 +1041,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: "data/summaries.db".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         });
 
         let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());

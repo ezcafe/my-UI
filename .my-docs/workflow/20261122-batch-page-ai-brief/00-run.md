@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** full
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | yes | yes
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** gen:0
 - **Build armed:** none
@@ -29,3 +29,4 @@
 - **17:25** · merge-findings · clean · all review axes & lenses clean
 - **17:27** · test-full · success · 161 tests passing, path full
 - **17:28** · gate-c · approved · commit
+- **17:30** · merge · commit-only `ab251f3` · status paused

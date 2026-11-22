@@ -42,6 +42,9 @@ mod tests {
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
             ai_db_path: "data/summaries.db".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
         })
     }
 

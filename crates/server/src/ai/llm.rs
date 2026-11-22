@@ -76,20 +76,30 @@ impl LlmCliRunner {
              Articles:\n",
         );
         for (id, title, content) in articles {
+            let trimmed_title = title.trim();
+            let mut clean_content = content.trim();
+            if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}\n\n", trimmed_title)) {
+                clean_content = stripped.trim();
+            } else if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}", trimmed_title)) {
+                clean_content = stripped.trim();
+            } else if let Some(stripped) = clean_content.strip_prefix("Title:") {
+                if let Some((_, rest)) = stripped.split_once("\n\n") {
+                    clean_content = rest.trim();
+                }
+            }
             prompt.push_str(&format!(
                 "[ID {}] Title: {}\nContent:\n{}\n\n",
                 id,
-                title.trim(),
-                content.trim()
+                trimmed_title,
+                clean_content
             ));
         }
         prompt
     }
 
-    pub fn build_args(&self, prompt: &str) -> Vec<String> {
+    pub fn build_args(&self) -> Vec<String> {
         let mut args = vec!["-m".to_string(), self.model.clone()];
         args.extend(self.extra_args.clone());
-        args.push(prompt.to_string());
         args
     }
 
@@ -224,7 +234,7 @@ impl LlmCliRunner {
 
         let _permit = self.semaphore.acquire().await.ok();
         let prompt = Self::format_batch_prompt(articles);
-        let args = self.build_args(&prompt);
+        let args = self.build_args();
 
         let dispatch_msg = Self::format_dispatch_log(&self.model, articles.len(), &prompt);
         println!("{}", dispatch_msg);
@@ -236,15 +246,23 @@ impl LlmCliRunner {
 
         let start = std::time::Instant::now();
         const TIMEOUT_SECS: u64 = 90;
+        let prompt_bytes = prompt.into_bytes();
         let result = tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), async {
             let mut cmd = Command::new(&self.cli_cmd);
             cmd.args(&args)
-                .stdin(Stdio::null())
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
 
-            cmd.output().await
+            let mut child = cmd.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(&prompt_bytes).await;
+                drop(stdin);
+            }
+
+            child.wait_with_output().await
         })
         .await;
 
@@ -342,7 +360,7 @@ impl LlmCliRunner {
         let _permit = self.semaphore.acquire().await.ok();
 
         let prompt = Self::format_prompt(title, content);
-        let args = self.build_args(&prompt);
+        let args = self.build_args();
 
         let dispatch_msg = format!(
             "[AI_DISPATCH_SINGLE] model={} title=\"{}\" prompt_preview=\"{}\"",
@@ -355,15 +373,23 @@ impl LlmCliRunner {
 
         let start = std::time::Instant::now();
         const TIMEOUT_SECS: u64 = 30;
+        let prompt_bytes = prompt.into_bytes();
         let result = tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), async {
             let mut cmd = Command::new(&self.cli_cmd);
             cmd.args(&args)
-                .stdin(Stdio::null())
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
 
-            cmd.output().await
+            let mut child = cmd.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(&prompt_bytes).await;
+                drop(stdin);
+            }
+
+            child.wait_with_output().await
         })
         .await;
 
@@ -424,9 +450,398 @@ impl LlmCliRunner {
     }
 }
 
+#[derive(Clone)]
+pub struct LlmHttpClient {
+    client: reqwest::Client,
+    pub provider: String,
+    pub api_key: String,
+    pub base_url: Option<String>,
+    pub model: String,
+}
+
+impl LlmHttpClient {
+    pub fn new(
+        provider: &str,
+        api_key: &str,
+        base_url: Option<&str>,
+        model: &str,
+    ) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default();
+
+        Self {
+            client,
+            provider: provider.to_lowercase(),
+            api_key: api_key.to_string(),
+            base_url: base_url.map(|s| s.to_string()),
+            model: model.to_string(),
+        }
+    }
+
+    pub async fn request_chat_completion(&self, prompt: &str) -> Result<String, String> {
+        let is_gemini = self.provider == "gemini";
+        if is_gemini {
+            let base = self
+                .base_url
+                .as_deref()
+                .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
+            let url = format!("{}/models/{}:generateContent?key={}", base.trim_end_matches('/'), self.model, self.api_key);
+            let payload = serde_json::json!({
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt}
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "responseMimeType": "application/json"
+                }
+            });
+
+            let resp = self
+                .client
+                .post(&url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_text = resp.text().await.unwrap_or_default();
+                return Err(format!("Gemini API error ({}): {}", status, err_text));
+            }
+
+            let resp_json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            let text = resp_json
+                .get("candidates")
+                .and_then(|c| c.get(0))
+                .and_then(|cand| cand.get("content"))
+                .and_then(|content| content.get("parts"))
+                .and_then(|parts| parts.get(0))
+                .and_then(|part| part.get("text"))
+                .and_then(|t| t.as_str())
+                .ok_or_else(|| "Missing candidates[0].content.parts[0].text in Gemini response".to_string())?;
+
+            Ok(text.to_string())
+        } else {
+            // OpenAI format
+            let base = self
+                .base_url
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1");
+            let url = format!("{}/chat/completions", base.trim_end_matches('/'));
+            let payload = serde_json::json!({
+                "model": self.model,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": {"type": "json_object"}
+            });
+
+            let resp = self
+                .client
+                .post(&url)
+                .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", self.api_key))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let err_text = resp.text().await.unwrap_or_default();
+                return Err(format!("OpenAI API error ({}): {}", status, err_text));
+            }
+
+            let resp_json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+            let text = resp_json
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|choice| choice.get("message"))
+                .and_then(|msg| msg.get("content"))
+                .and_then(|content| content.as_str())
+                .ok_or_else(|| "Missing choices[0].message.content in OpenAI response".to_string())?;
+
+            Ok(text.to_string())
+        }
+    }
+
+    pub async fn summarize_batch(
+        &self,
+        articles: &[(i64, &str, &str)],
+    ) -> Result<(BatchAiResponse, String), String> {
+        if articles.is_empty() {
+            return Ok((BatchAiResponse::default(), self.model.clone()));
+        }
+
+        let prompt = LlmCliRunner::format_batch_prompt(articles);
+        let raw_output = self.request_chat_completion(&prompt).await?;
+        let parsed = LlmCliRunner::parse_batch_response(&raw_output);
+        Ok((parsed, self.model.clone()))
+    }
+
+    pub async fn summarize(&self, title: &str, content: &str) -> Result<(String, String), String> {
+        let prompt = LlmCliRunner::format_prompt(title, content);
+        let raw_output = self.request_chat_completion(&prompt).await?;
+        Ok((raw_output.trim().to_string(), self.model.clone()))
+    }
+}
+
+#[derive(Clone)]
+pub enum LlmBackend {
+    Cli(LlmCliRunner),
+    Http {
+        client: LlmHttpClient,
+        fallback: LlmCliRunner,
+    },
+}
+
+impl From<LlmCliRunner> for LlmBackend {
+    fn from(cli: LlmCliRunner) -> Self {
+        LlmBackend::Cli(cli)
+    }
+}
+
+impl LlmBackend {
+    pub async fn summarize_batch(
+        &self,
+        articles: &[(i64, &str, &str)],
+    ) -> (BatchAiResponse, String) {
+        match self {
+            Self::Cli(cli) => cli.summarize_batch(articles).await,
+            Self::Http { client, fallback } => {
+                match client.summarize_batch(articles).await {
+                    Ok((res, model)) => (res, model),
+                    Err(err) => {
+                        tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
+                        fallback.summarize_batch(articles).await
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn summarize(&self, title: &str, content: &str) -> (String, String) {
+        match self {
+            Self::Cli(cli) => cli.summarize(title, content).await,
+            Self::Http { client, fallback } => {
+                match client.summarize(title, content).await {
+                    Ok((res, model)) => (res, model),
+                    Err(err) => {
+                        tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
+                        fallback.summarize(title, content).await
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn synthesize_page_brief(
+        &self,
+        articles: &[(i64, &str, &str)],
+    ) -> (String, String) {
+        let (batch_res, model) = self.summarize_batch(articles).await;
+        (batch_res.top, model)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_batch_prompt_no_duplicate_titles() {
+        let articles = [
+            (101, "Article Title One", "Title: Article Title One\n\nBody content of article one."),
+            (102, "Article Title Two", "Body content of article two without title prefix."),
+        ];
+        let prompt = LlmCliRunner::format_batch_prompt(&articles);
+
+        // For article 101, Content should NOT repeat "Title: Article Title One"
+        assert!(prompt.contains("[ID 101] Title: Article Title One\nContent:\nBody content of article one."));
+        assert!(!prompt.contains("Content:\nTitle: Article Title One"));
+
+        // For article 102, Content is preserved cleanly
+        assert!(prompt.contains("[ID 102] Title: Article Title Two\nContent:\nBody content of article two without title prefix."));
+    }
+
+    #[tokio::test]
+    async fn test_llm_http_client_openai_request_and_response() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let fake_response = r#"{
+            "choices": [
+                {
+                    "message": {
+                        "content": "{\"top\":\"Global Tech Summit Brief\",\"items\":[{\"i\":42,\"t\":\"AI Breakthrough\",\"b\":\"New reasoning models unveiled.\"}]}"
+                    }
+                }
+            ]
+        }"#;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("Authorization", "Bearer test-openai-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(fake_response))
+            .mount(&mock_server)
+            .await;
+
+        let client = LlmHttpClient::new(
+            "openai",
+            "test-openai-key",
+            Some(&format!("{}/v1", mock_server.uri())),
+            "gpt-4o-mini",
+        );
+
+        let articles = [(42, "AI Breakthrough", "New models announced at summit.")];
+        let (res, model) = client.summarize_batch(&articles).await.expect("successful http call");
+
+        assert_eq!(model, "gpt-4o-mini");
+        assert_eq!(res.top, "Global Tech Summit Brief");
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].id, 42);
+        assert_eq!(res.items[0].suggested_title, "AI Breakthrough");
+        assert_eq!(res.items[0].brief, "New reasoning models unveiled.");
+    }
+
+    #[tokio::test]
+    async fn test_llm_http_client_gemini_request_and_response() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        let fake_response = r#"{
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "{\"top\":\"Gemini Fast Digest\",\"items\":[{\"i\":99,\"t\":\"Speed Increase\",\"b\":\"Inference latency dropped by 80%.\"}]}"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }"#;
+
+        Mock::given(method("POST"))
+            .and(path("/models/gemini-2.5-flash:generateContent"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(fake_response))
+            .mount(&mock_server)
+            .await;
+
+        let client = LlmHttpClient::new(
+            "gemini",
+            "test-gemini-key",
+            Some(&mock_server.uri()),
+            "gemini-2.5-flash",
+        );
+
+        let articles = [(99, "Speed Increase", "Latency dropped drastically today.")];
+        let (res, model) = client.summarize_batch(&articles).await.expect("successful gemini call");
+
+        assert_eq!(model, "gemini-2.5-flash");
+        assert_eq!(res.top, "Gemini Fast Digest");
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].id, 99);
+        assert_eq!(res.items[0].suggested_title, "Speed Increase");
+        assert_eq!(res.items[0].brief, "Inference latency dropped by 80%.");
+    }
+
+    #[tokio::test]
+    async fn test_llm_dispatcher_fallback_to_cli_on_http_failure() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        // Mock server returns 500 error
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let http_client = LlmHttpClient::new(
+            "openai",
+            "test-key",
+            Some(&format!("{}/v1", mock_server.uri())),
+            "gpt-4o-mini",
+        );
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        let script_content = "#!/bin/sh\nprintf '%s' '{\"top\":\"CLI Fallback Top\",\"items\":[{\"i\":77,\"t\":\"CLI Title\",\"b\":\"CLI Brief\"}]}'\n";
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let cli_runner = LlmCliRunner::new(
+            script_file.path().to_str().unwrap().to_string(),
+            "fallback-cli-model".to_string(),
+            vec![],
+        );
+
+        let backend = LlmBackend::Http {
+            client: http_client,
+            fallback: cli_runner,
+        };
+
+        let articles = [(77, "Test", "Content")];
+        let (res, model) = backend.summarize_batch(&articles).await;
+
+        assert_eq!(model, "fallback-cli-model");
+        assert_eq!(res.top, "CLI Fallback Top");
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].id, 77);
+        assert_eq!(res.items[0].suggested_title, "CLI Title");
+    }
+
+    #[tokio::test]
+    async fn test_llm_cli_pipes_prompt_via_stdin() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let prompt_dump_file = tempfile::NamedTempFile::new().unwrap();
+        let prompt_dump_path = prompt_dump_file.path().to_str().unwrap().to_string();
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        // The script reads stdin into the dump file and prints valid JSON response
+        let script_content = format!(
+            "#!/bin/sh\ncat > \"{}\"\nprintf '%s' '{{\"top\":\"OK\",\"items\":[]}}'\n",
+            prompt_dump_path
+        );
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let runner = LlmCliRunner::new(
+            script_file.path().to_str().unwrap().to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        // Verify build_args does NOT contain prompt
+        let args = runner.build_args();
+        assert!(!args.iter().any(|arg| arg.contains("Articles:") || arg.contains("executive news editor")));
+
+        let articles = [(42, "Unique Stdin Title", "Content piped via stdin strictly")];
+        let (res, _model) = runner.summarize_batch(&articles).await;
+        assert_eq!(res.top, "OK");
+
+        let piped_stdin = std::fs::read_to_string(&prompt_dump_path).unwrap();
+        assert!(piped_stdin.contains("Unique Stdin Title"));
+        assert!(piped_stdin.contains("Content piped via stdin strictly"));
+    }
 
     #[test]
     fn test_batch_prompt_formatting_and_args() {
@@ -447,9 +862,12 @@ mod tests {
         assert!(prompt.contains("Content of first article"));
         assert!(prompt.contains("Content of second article"));
 
-        let args = runner.build_args(&prompt);
+        let args = runner.build_args();
+        assert_eq!(args[0], "-m");
+        assert_eq!(args[1], "gemini-2.5-flash");
         assert!(args.contains(&"--thinking-budget".to_string()));
         assert!(args.contains(&"0".to_string()));
+        assert_eq!(args.len(), 4);
     }
 
     #[test]
@@ -553,12 +971,12 @@ Some outro text
         assert!(prompt.contains("Article Title: Rust 2026 Released"));
         assert!(prompt.contains("Article Content:\nExciting new features landed."));
 
-        let args = runner.build_args(&prompt);
+        let args = runner.build_args();
         assert_eq!(args[0], "-m");
         assert_eq!(args[1], "gpt-4o-mini");
         assert_eq!(args[2], "--thinking-budget");
         assert_eq!(args[3], "0");
-        assert_eq!(args[4], prompt);
+        assert_eq!(args.len(), 4);
     }
 
     #[tokio::test]

@@ -24,7 +24,7 @@ impl ArticleExtractor {
         Self { client }
     }
 
-    pub fn parse_html(&self, html_str: &str, title: &str, teaser: &str) -> String {
+    pub fn parse_html(&self, html_str: &str, _title: &str, teaser: &str) -> String {
         let document = Html::parse_document(html_str);
 
         // 1. Try finding <article> tag
@@ -48,28 +48,34 @@ impl ArticleExtractor {
             }
         }
 
-        let truncated = Self::truncate_words(&extracted_text, 250);
-        format!("Title: {}\n\n{}", title.trim(), truncated)
+        Self::truncate_words(&extracted_text, 100)
     }
 
-    pub async fn extract_content(&self, url: &str, title: &str, teaser: &str) -> String {
+    pub async fn extract_content(&self, url: &str, _title: &str, teaser: &str) -> String {
+        // Fast-path: If teaser has >= 50 words, return immediately without network fetch
+        let clean_teaser = miniflux_client::summary::extract_summary(teaser, 2);
+        let teaser_text = if clean_teaser.is_empty() {
+            teaser.trim()
+        } else {
+            &clean_teaser
+        };
+        let word_count = teaser_text.split_whitespace().count();
+        if word_count >= 50 {
+            return Self::truncate_words(teaser_text, 100);
+        }
+
         if url.trim().is_empty() || !url.starts_with("http") {
-            let fallback = miniflux_client::summary::extract_summary(teaser, 2);
-            return format!("Title: {}\n\n{}", title.trim(), fallback);
+            return Self::truncate_words(teaser_text, 100);
         }
 
         match self.client.get(url).send().await {
             Ok(resp) if resp.status().is_success() => match resp.text().await {
-                Ok(html) => self.parse_html(&html, title, teaser),
-                Err(_) => {
-                    let fallback = miniflux_client::summary::extract_summary(teaser, 2);
-                    format!("Title: {}\n\n{}", title.trim(), fallback)
-                }
+                Ok(html) => self.parse_html(&html, _title, teaser),
+                Err(_) => Self::truncate_words(teaser_text, 100),
             },
             _ => {
                 // HTTP 403, 429, Cloudflare challenge, paywall, timeout, or network error
-                let fallback = miniflux_client::summary::extract_summary(teaser, 2);
-                format!("Title: {}\n\n{}", title.trim(), fallback)
+                Self::truncate_words(teaser_text, 100)
             }
         }
     }
@@ -153,9 +159,9 @@ mod tests {
         let extractor = ArticleExtractor::new();
         let content = extractor.parse_html(html, "Breaking Discovery", "Default teaser");
 
-        assert!(content.contains("Title: Breaking Discovery"));
         assert!(content.contains("Scientists have discovered a new high-temperature superconductor"));
         assert!(content.contains("The material functions at ambient pressure"));
+        assert!(!content.contains("Title:"));
         assert!(!content.contains("ad script"));
         assert!(!content.contains("Site Footer"));
         assert!(!content.contains("Comments and copyright"));
@@ -179,8 +185,8 @@ mod tests {
         let extractor = ArticleExtractor::new();
         let content = extractor.parse_html(html, "No Article Tag", "Default teaser");
 
-        assert!(content.contains("Title: No Article Tag"));
         assert!(content.contains("This page has no article tag whatsoever."));
+        assert!(!content.contains("Title:"));
         assert!(!content.contains("Navigation"));
     }
 
@@ -198,25 +204,9 @@ mod tests {
         let teaser = "Teaser sentence 1. Teaser sentence 2. Extra sentence 3 that gets truncated.";
         let content = extractor.extract_content(&blocked_url, "Blocked News", teaser).await;
 
-        assert!(content.contains("Title: Blocked News"));
         assert!(content.contains("Teaser sentence 1. Teaser sentence 2."));
+        assert!(!content.contains("Title:"));
         assert!(!content.contains("Extra sentence 3"));
-    }
-
-    #[test]
-    fn test_word_truncation_250() {
-        let words = (0..500).map(|i| format!("word{}", i)).collect::<Vec<_>>().join(" ");
-        let html = format!(
-            "<html><body><article><p>{}</p></article></body></html>",
-            words
-        );
-        let extractor = ArticleExtractor::new();
-        let content = extractor.parse_html(&html, "250 Test Title", "teaser");
-
-        assert!(content.starts_with("Title: 250 Test Title\n\n"));
-        let body_after_title = content.split("\n\n").nth(1).expect("body content after title");
-        let word_count = body_after_title.split_whitespace().count();
-        assert_eq!(word_count, 250);
     }
 
     #[test]
@@ -224,7 +214,48 @@ mod tests {
         let html = "<article><p>Hello world from lazy selector article extraction!</p></article>";
         let extractor = ArticleExtractor::new();
         let content = extractor.parse_html(html, "Lazy Test", "teaser");
-        assert!(content.contains("Title: Lazy Test"));
+        assert!(!content.contains("Title:"));
         assert!(content.contains("Hello world from lazy selector article extraction!"));
+    }
+
+    #[tokio::test]
+    async fn test_extractor_teaser_fast_path_skips_http() {
+        // Mock server expecting 0 requests
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        // Build a teaser with >= 50 words
+        let teaser_words: Vec<String> = (1..=55).map(|i| format!("word{}", i)).collect();
+        let teaser = teaser_words.join(" ");
+
+        let extractor = ArticleExtractor::new();
+        let fast_path_url = format!("{}/articles/fast", mock_server.uri());
+        let content = extractor.extract_content(&fast_path_url, "Fast Path Title", &teaser).await;
+
+        // Must return teaser content without triggering HTTP fetch
+        assert!(!content.is_empty());
+        assert!(content.contains("word1"));
+        assert!(content.contains("word55"));
+        assert!(!content.contains("Title:"));
+        // Mock server verifies that 0 requests were received
+    }
+
+    #[test]
+    fn test_extractor_word_truncation_100() {
+        let words = (0..300).map(|i| format!("word{}", i)).collect::<Vec<_>>().join(" ");
+        let html = format!(
+            "<html><body><article><p>{}</p></article></body></html>",
+            words
+        );
+        let extractor = ArticleExtractor::new();
+        let content = extractor.parse_html(&html, "100 Test Title", "teaser");
+
+        let word_count = content.split_whitespace().count();
+        assert_eq!(word_count, 100, "Must be truncated to strictly 100 words");
+        assert!(!content.starts_with("Title:"));
     }
 }

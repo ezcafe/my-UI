@@ -10,7 +10,7 @@ pub enum ConfigError {
     InvalidValue(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     pub host: String,
     pub port: u16,
@@ -28,6 +28,38 @@ pub struct Config {
     pub llm_model: String,
     pub llm_extra_args: Vec<String>,
     pub ai_db_path: String,
+    pub llm_provider: String,
+    pub llm_api_key: Option<String>,
+    pub llm_api_base_url: Option<String>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("app_base_url", &self.app_base_url)
+            .field("auth_enabled", &self.auth_enabled)
+            .field("session_secret", &"[REDACTED]")
+            .field("oidc_issuer_url", &self.oidc_issuer_url)
+            .field("oidc_client_id", &self.oidc_client_id)
+            .field("oidc_client_secret", &"[REDACTED]")
+            .field("oidc_redirect_url", &self.oidc_redirect_url)
+            .field("miniflux_base_url", &self.miniflux_base_url)
+            .field("miniflux_api_key", &"[REDACTED]")
+            .field("ai_enabled", &self.ai_enabled)
+            .field("llm_cli_cmd", &self.llm_cli_cmd)
+            .field("llm_model", &self.llm_model)
+            .field("llm_extra_args", &self.llm_extra_args)
+            .field("ai_db_path", &self.ai_db_path)
+            .field("llm_provider", &self.llm_provider)
+            .field(
+                "llm_api_key",
+                &self.llm_api_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("llm_api_base_url", &self.llm_api_base_url)
+            .finish()
+    }
 }
 
 impl Config {
@@ -154,6 +186,22 @@ impl Config {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "data/summaries.db".to_string());
 
+        let llm_provider = map
+            .get("LLM_PROVIDER")
+            .cloned()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "openai".to_string());
+
+        let llm_api_key = map
+            .get("LLM_API_KEY")
+            .cloned()
+            .filter(|s| !s.trim().is_empty());
+
+        let llm_api_base_url = map
+            .get("LLM_API_BASE_URL")
+            .cloned()
+            .filter(|s| !s.trim().is_empty());
+
         Ok(Config {
             host,
             port,
@@ -171,6 +219,9 @@ impl Config {
             llm_model,
             llm_extra_args,
             ai_db_path,
+            llm_provider,
+            llm_api_key,
+            llm_api_base_url,
         })
     }
 
@@ -367,5 +418,40 @@ mod tests {
                 auth_val, ai_val, expected_ai
             );
         }
+    }
+
+    #[test]
+    fn test_config_llm_provider_and_credentials() {
+        let base_vars = [
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            ("OIDC_ISSUER_URL", "https://id.example.com"),
+            ("OIDC_CLIENT_ID", "client-123"),
+            ("OIDC_CLIENT_SECRET", "secret-456"),
+            ("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback"),
+        ];
+
+        // 1. Defaults when LLM provider & credentials not specified
+        let def_config = Config::from_map(&make_test_env(&base_vars)).expect("defaults");
+        assert_eq!(def_config.llm_provider, "openai");
+        assert_eq!(def_config.llm_api_key, None);
+        assert_eq!(def_config.llm_api_base_url, None);
+
+        // 2. Custom credentials and provider
+        let mut custom_vars = make_test_env(&base_vars);
+        custom_vars.insert("LLM_PROVIDER".to_string(), "gemini".to_string());
+        custom_vars.insert("LLM_API_KEY".to_string(), "secret-gemini-key-123".to_string());
+        custom_vars.insert("LLM_API_BASE_URL".to_string(), "https://custom.gemini.endpoint".to_string());
+
+        let custom_config = Config::from_map(&custom_vars).expect("custom");
+        assert_eq!(custom_config.llm_provider, "gemini");
+        assert_eq!(custom_config.llm_api_key.as_deref(), Some("secret-gemini-key-123"));
+        assert_eq!(custom_config.llm_api_base_url.as_deref(), Some("https://custom.gemini.endpoint"));
+
+        // 3. Sensitive masking in Debug representation
+        let debug_str = format!("{:?}", custom_config);
+        assert!(!debug_str.contains("secret-gemini-key-123"), "LLM_API_KEY must be masked in Debug output");
+        assert!(debug_str.contains("[REDACTED]"));
     }
 }

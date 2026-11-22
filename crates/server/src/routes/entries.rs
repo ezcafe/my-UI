@@ -589,6 +589,39 @@ pub async fn executive_brief_htmx(
     let uncached_ids = ai_service.db.get_unprocessed_entry_ids(&entry_ids).await;
     let uncached_set: std::collections::HashSet<i64> = uncached_ids.into_iter().collect();
 
+    if uncached_set.is_empty() {
+        // All entries are already cached in SQLite, but page executive brief is missing for this page_key.
+        // Synthesize the page brief directly from the cached item summaries.
+        let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
+        let mut cached_articles = Vec::new();
+        for (id, title, ..) in &entries {
+            if let Some(rec) = cached_map.get(id) {
+                cached_articles.push((*id, title.as_str(), rec.summary.as_str()));
+            }
+        }
+
+        let (synth_top, _model) = ai_service.llm.synthesize_page_brief(&cached_articles).await;
+        if synth_top.is_empty() {
+            return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+        }
+
+        let _ = ai_service.db.save_page_brief_with_key(&page_key, &synth_top).await;
+
+        let card_html = ExecutiveBriefCardTemplate { brief: &synth_top }
+            .render()
+            .unwrap_or_default();
+
+        let mut full_html = card_html;
+        for (id, title, ..) in &entries {
+            if let Some(rec) = cached_map.get(id) {
+                if let Some(suggested) = &rec.suggested_title {
+                    full_html.push_str(&render_title_oob_span(*id, title, suggested));
+                }
+            }
+        }
+        return (StatusCode::OK, headers, Html(full_html)).into_response();
+    }
+
     let mut join_set = tokio::task::JoinSet::new();
     for (id, title, summary, url) in &entries {
         if uncached_set.contains(id) {
@@ -1420,5 +1453,130 @@ mod tests {
         let hidden_div = r#"<div id="page-executive-brief" class="hidden"></div>"#;
         assert!(hidden_div.contains("id=\"page-executive-brief\""));
         assert!(hidden_div.contains("class=\"hidden\""));
+    }
+
+    #[tokio::test]
+    async fn test_executive_brief_synthesizes_from_cached_summaries_when_uncached_empty() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use http_body_util::BodyExt;
+
+        let mock_server = MockServer::start().await;
+        // Mock entries endpoint returning entry 888
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 1,
+                "entries": [{
+                    "id": 888,
+                    "user_id": 1,
+                    "feed_id": 10,
+                    "title": "Cached Item Headline",
+                    "url": "http://example.com/888",
+                    "comments_url": "",
+                    "author": "Author",
+                    "content": "Full article content",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 2,
+                    "created_at": "2026-11-22T08:00:00Z",
+                    "published_at": "2026-11-22T08:00:00Z",
+                    "feed": {
+                        "id": 10,
+                        "user_id": 1,
+                        "title": "Tech Feed",
+                        "checked_at": "2026-11-22T08:00:00Z",
+                        "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(crate::ai::AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        // Save summary in DB for entry 888 beforehand so uncached_set will be empty!
+        db.save_summary_and_title(888, Some("Punchy 888 Title"), "Cached item summary of 888", "test-model")
+            .await
+            .unwrap();
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        let script_content = "#!/bin/sh\nprintf '%s' '{\"top\":\"Synthesized From Cached Brief\",\"items\":[]}'\n";
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let llm = crate::ai::llm::LlmCliRunner::new(
+            script_file.path().to_str().unwrap().to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        let ai_service = Arc::new(crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            ai_db_path: db_file.path().to_str().unwrap().to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            limit: Some(15),
+            offset: Some(0),
+            feed_id: None,
+            category_id: None,
+            search: None,
+        };
+
+        let response = executive_brief_htmx(
+            Query(query),
+            State(schema),
+            State(config),
+            State(ai_service.clone()),
+        ).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        // Must NOT be the empty hidden div
+        assert!(!html.contains("class=\"hidden\""), "Must not return hidden div when entries exist: {}", html);
+        assert!(html.contains("Synthesized From Cached Brief"));
+        assert!(html.contains("id=\"entry-title-888\""));
+
+        // Verify saved in DB with page_key
+        let page_key = crate::ai::compute_page_key("unread", &[888]);
+        let saved_brief = db.get_page_brief_by_key(&page_key).await;
+        assert_eq!(saved_brief.as_deref(), Some("Synthesized From Cached Brief"));
     }
 }

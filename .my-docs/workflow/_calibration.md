@@ -5,3 +5,4 @@
 - **20261121-auth-toggle-caching-ddos**: Mode OK (full) · Profile OK (full) · Biggest friction: none (TDD insulated upstream Miniflux mutations cleanly while preserving HTMX swaps).
 - **20261121-client-only-read-bookmark**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (clean separation between server rejection and client-only actions).
 - **20261121-ui-filter-read-status-fixes**: Mode OK (simple) · Profile OK (lite) · Biggest friction: mid-run requirement addition handled cleanly via design-backloop.
+- **20261122-docker-compose-local-prod**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (clear user decision choices and clean multi-stage container validation).

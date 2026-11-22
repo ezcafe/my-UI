@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** no | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** done
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -34,3 +34,4 @@
 - **09:03** · test-lite · test · 62 tests passed, compose configs validated, test bar met
 - **09:08** · gate-c · hitl · added AI setup guide to README.md per user request
 - **09:12** · gate-c · approved: commit
+- **09:13** · merge · committed cebc115 · status: done

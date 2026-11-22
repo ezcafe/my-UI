@@ -61,7 +61,7 @@
     <!-- Filter Bar & Search -->
     <div class="px-6 py-3 border-b border-border flex items-center justify-between gap-4 bg-muted/40">
       <input type="hidden" id="active-status" name="status" value="unread">
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 overflow-x-auto min-w-0 shrink no-scrollbar py-0.5">
         {% if ai_enabled %}
         <button 
           id="filter-ai"
@@ -73,7 +73,7 @@
           hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
           onclick="handleFilterClick(this, event)"
-          class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors flex items-center gap-1.5">
+          class="filter-pill whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors flex items-center gap-1.5 shrink-0">
           <i data-lucide="sparkles" class="w-3.5 h-3.5 text-foreground"></i>
           AI
         </button>
@@ -88,7 +88,7 @@
           hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
           onclick="handleFilterClick(this, event)"
-          class="filter-pill px-3 py-1 rounded-full text-xs font-bold bg-primary text-primary-foreground border border-primary transition-colors">
+          class="filter-pill whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold bg-primary text-primary-foreground border border-primary transition-colors shrink-0">
           Unread <span id="filter-unread-count" data-base-unread="{{ unread_count }}" class="text-xs tabular">({{ unread_count }})</span>
         </button>
         <button 
@@ -101,7 +101,7 @@
           hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
           onclick="handleFilterClick(this, event)"
-          class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
+          class="filter-pill whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors shrink-0">
           Today <span id="filter-today-count" class="text-xs tabular">({{ today_count }})</span>
         </button>
         {% if auth_enabled %}
@@ -115,7 +115,7 @@
           hx-indicator="#entries-loading-bar"
           hx-include="[name='search']"
           onclick="handleFilterClick(this, event)"
-          class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
+          class="filter-pill whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors shrink-0">
           Starred
         </button>
         {% endif %}
@@ -131,8 +131,8 @@
           hx-include="[name='search']"
           {% endif %}
           onclick="handleFilterClick(this, event)"
-          class="filter-pill px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors">
-          All Titles
+          class="filter-pill whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors shrink-0">
+          All
         </button>
       </div>
 
@@ -143,7 +143,7 @@
         hx-target="#entries-list" 
         hx-swap="innerHTML"
         hx-indicator="#entries-loading-bar"
-        class="relative flex items-center"
+        class="relative flex items-center shrink-0"
         onsubmit="onSearchSubmit(event)"
       >
         <input 
@@ -652,7 +652,7 @@
       const status = evt.detail.xhr ? evt.detail.xhr.status : 500;
       const msg = status === 429 
         ? 'Too many requests. Please wait a moment and try again.'
-        : 'Failed to load article (Server returned status ' + status + ').';
+        : 'Failed to load article. Please try again later.';
       evt.detail.target.innerHTML = `
         <div class="rounded-lg p-6 bg-card border border-border text-center flex flex-col items-center justify-center m-4">
           <div class="p-2.5 rounded-full bg-muted text-destructive mb-3">

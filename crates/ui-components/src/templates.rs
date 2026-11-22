@@ -236,15 +236,15 @@ mod tests {
         };
         let html = template.render().expect("Failed to render IndexTemplate");
 
-        // Filter button sequence in order: Unread < Today < Starred < All Titles
+        // Filter button sequence in order: Unread < Today < Starred < All
         let pos_unread = html.find("Unread").expect("Must contain 'Unread'");
         let pos_today = html.find("Today").expect("Must contain 'Today'");
         let pos_starred = html.find("Starred").expect("Must contain 'Starred'");
-        let pos_all = html.find("All Titles").expect("Must contain 'All Titles'");
+        let pos_all = html.find("All").expect("Must contain 'All'");
 
         assert!(pos_unread < pos_today, "Unread must precede Today");
         assert!(pos_today < pos_starred, "Today must precede Starred");
-        assert!(pos_starred < pos_all, "Starred must precede All Titles");
+        assert!(pos_starred < pos_all, "Starred must precede All");
 
         // Unread is active by default with Annuaire ink pill styling
         assert!(
@@ -1006,7 +1006,7 @@ mod tests {
         );
         assert!(
             html_guest.contains("id=\"filter-all\""),
-            "Guest mode must render filter-all (All Titles)"
+            "Guest mode must render filter-all (All)"
         );
         assert!(
             html_guest.contains("id=\"filter-unread\""),
@@ -1259,5 +1259,146 @@ mod tests {
         let html = template.render().expect("Failed to render IndexTemplate");
         assert!(html.contains(".htmx-indicator {\n      display: none;"));
         assert!(html.contains(".htmx-request.htmx-indicator,\n    .htmx-request .htmx-indicator {\n      display: block;"));
+    }
+
+    #[test]
+    fn test_spatial_shell_and_window_mobile_container_queries() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+            auth_enabled: true,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        // Body must define container-type: inline-size
+        assert!(
+            html.contains("body {\n      container-type: inline-size;")
+                || html.contains("body { container-type: inline-size; }"),
+            "body must establish container-type: inline-size"
+        );
+
+        // Container query block for mobile
+        assert!(
+            html.contains("@container (max-width: 768px)"),
+            "Must define @container (max-width: 768px) query"
+        );
+
+        // Mobile overrides within container query
+        let cq_index = html
+            .find("@container (max-width: 768px)")
+            .expect("Missing mobile container query");
+        let cq_slice = &html[cq_index..];
+
+        // spatial-shell mobile overrides
+        assert!(
+            cq_slice.contains("padding: 0;"),
+            "Mobile spatial-shell must have padding: 0"
+        );
+        assert!(
+            cq_slice.contains("min-height: 100vh;") && cq_slice.contains("min-height: 100dvh;"),
+            "Mobile spatial-shell must declare min-height: 100vh with 100dvh fallback"
+        );
+
+        // spatial-window mobile overrides
+        assert!(
+            cq_slice.contains("width: 100%;"),
+            "Mobile spatial-window must have width: 100%"
+        );
+        assert!(
+            cq_slice.contains("max-width: 100%;"),
+            "Mobile spatial-window must have max-width: 100%"
+        );
+        assert!(
+            cq_slice.contains("height: 100vh;") && cq_slice.contains("height: 100dvh;"),
+            "Mobile spatial-window must declare height: 100vh with 100dvh fallback"
+        );
+        assert!(
+            cq_slice.contains("border-radius: 0;"),
+            "Mobile spatial-window must have border-radius: 0"
+        );
+        assert!(
+            cq_slice.contains("border: none;"),
+            "Mobile spatial-window must have border: none"
+        );
+    }
+
+    #[test]
+    fn test_spatial_window_desktop_card_preserved() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+            auth_enabled: true,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        assert!(
+            html.contains("padding: clamp(0.75rem, 3vw, 2.5rem);"),
+            "Desktop spatial-shell must preserve clamp padding"
+        );
+        assert!(
+            html.contains("max-width: min(100cqi, 1440px);"),
+            "Desktop spatial-window must preserve fluid max-width"
+        );
+        assert!(
+            html.contains("height: min(90vh, 840px);"),
+            "Desktop spatial-window must preserve bounded height"
+        );
+        assert!(
+            html.contains("border-radius: var(--radius);"),
+            "Desktop spatial-window must preserve rounded borders"
+        );
+        assert!(
+            html.contains("border: 1px solid var(--border);"),
+            "Desktop spatial-window must preserve border styling"
+        );
+    }
+
+    #[test]
+    fn test_mobile_searchbox_compact_and_expand_container_query() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        // Verify mobile searchbox CSS inside container query
+        let cq_index = html
+            .find("@container (max-width: 768px)")
+            .expect("Missing mobile container query");
+        let cq_slice = &html[cq_index..];
+
+        assert!(
+            cq_slice.contains("#search-input"),
+            "Must define mobile styling for #search-input inside container query"
+        );
+        assert!(
+            cq_slice.contains("width: 5.5rem;") || cq_slice.contains("width: 5rem;"),
+            "Mobile #search-input must have compact resting width"
+        );
+        assert!(
+            cq_slice.contains("#search-input:focus"),
+            "Must define #search-input:focus expansion"
+        );
+        assert!(
+            cq_slice.contains("width: 11rem;") || cq_slice.contains("width: 10rem;"),
+            "Mobile #search-input:focus must expand on focus"
+        );
+
+        // Verify HTML filter bar layout prevents cut off
+        assert!(
+            html.contains("overflow-x-auto") && html.contains("shrink"),
+            "Filter pills container must be scrollable and shrinkable on mobile"
+        );
+        assert!(
+            html.contains("id=\"search-form\"") && html.contains("shrink-0"),
+            "Search form must have shrink-0 to prevent being squished"
+        );
     }
 }

@@ -535,8 +535,9 @@ pub async fn get_entry_detail_htmx(
 
         let res = schema.execute(&gql).await;
         if !res.errors.is_empty() {
+            eprintln!("Upstream GraphQL error for entry {}: {:?}", id, res.errors);
             let error_card = ErrorCardTemplate {
-                message: format!("Could not load article: {:?}", res.errors),
+                message: "Could not load article. Please try again later.".to_string(),
                 retry_url: format!("/hx/entries/{}", id),
                 target: "#detail-panel".to_string(),
             };
@@ -546,8 +547,9 @@ pub async fn get_entry_detail_htmx(
         let d = match res.data.into_json() {
             Ok(d) => d,
             Err(e) => {
+                eprintln!("Internal parsing error for entry {}: {}", id, e);
                 let error_card = ErrorCardTemplate {
-                    message: format!("Internal parsing error: {}", e),
+                    message: "Failed to parse article data. Please try again.".to_string(),
                     retry_url: format!("/hx/entries/{}", id),
                     target: "#detail-panel".to_string(),
                 };
@@ -570,7 +572,7 @@ pub async fn get_entry_detail_htmx(
         Some(i) => i,
         None => {
             let error_card = ErrorCardTemplate {
-                message: format!("Article {} could not be found or has been removed upstream.", id),
+                message: "Article could not be found or has been removed.".to_string(),
                 retry_url: format!("/hx/entries/{}", id),
                 target: "#detail-panel".to_string(),
             };
@@ -629,8 +631,9 @@ pub async fn get_entry_detail_htmx(
     let mut html = match template.render() {
         Ok(h) => h,
         Err(e) => {
+            eprintln!("Template rendering error for entry {}: {}", id, e);
             let error_card = ErrorCardTemplate {
-                message: format!("Template rendering error: {}", e),
+                message: "Failed to display article. Please try again.".to_string(),
                 retry_url: format!("/hx/entries/{}", id),
                 target: "#detail-panel".to_string(),
             };

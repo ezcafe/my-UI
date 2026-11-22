@@ -1,3 +1,4 @@
+use crate::ai::AiService;
 use crate::auth::AuthenticatedUser;
 use crate::cache::MinifluxCache;
 use crate::config::Config;
@@ -22,6 +23,7 @@ pub async fn index_page(
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
     State(cache): State<Arc<MinifluxCache>>,
+    State(ai_service): State<Arc<AiService>>,
 ) -> Result<Html<String>, AppError> {
     let cache_key = if config.auth_enabled {
         "index_page_entries_auth"
@@ -116,7 +118,7 @@ pub async fn index_page(
     let prev_offset = (offset - limit).max(0);
     let next_offset = offset + limit;
 
-    let view_models: Vec<ui_components::templates::EntryViewModel> = entries_result
+    let mut view_models: Vec<ui_components::templates::EntryViewModel> = entries_result
         .and_then(|r| r.get("entries"))
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -125,6 +127,7 @@ pub async fn index_page(
                     Some(ui_components::templates::EntryViewModel {
                         id: item.get("id")?.as_str()?.parse().ok()?,
                         title: item.get("title")?.as_str()?.to_string(),
+                        suggested_title: None,
                         feed_title: "Feed".to_string(),
                         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
@@ -143,8 +146,34 @@ pub async fn index_page(
         })
         .unwrap_or_default();
 
+    let (ai_summaries, _top_executive_brief) = if config.ai_enabled {
+        let ids: Vec<i64> = view_models.iter().map(|e| e.id).collect();
+        let map = ai_service.db.get_batch_summaries(&ids).await;
+        let brief = ai_service.db.get_latest_page_brief().await;
+        (map, brief)
+    } else {
+        (std::collections::HashMap::new(), None)
+    };
+
+    for entry in &mut view_models {
+        if let Some(record) = ai_summaries.get(&entry.id) {
+            entry.suggested_title = record.suggested_title.clone();
+        }
+    }
+
+    if config.ai_enabled {
+        let candidates: Vec<(i64, String, String, String)> = view_models
+            .iter()
+            .filter(|e| !e.is_read)
+            .map(|e| (e.id, e.title.clone(), e.url.clone(), e.summary.clone()))
+            .collect();
+        crate::ai::prefetch::AiPrefetchService::new(ai_service.clone())
+            .spawn_prefetch_job(candidates);
+    }
+
     let list_template = ui_components::templates::EntryListTemplate {
         entries: view_models,
+        top_executive_brief: None,
         unread_count: None,
         current_page,
         total_pages,
@@ -155,6 +184,10 @@ pub async fn index_page(
         status: "unread".to_string(),
         search: "".to_string(),
         limit,
+        is_brief_eligible: config.ai_enabled,
+        offset: 0,
+        feed_id: None,
+        category_id: None,
     };
     let entries_list_html = list_template.render().unwrap_or_default();
 

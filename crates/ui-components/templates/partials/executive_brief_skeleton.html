@@ -1,0 +1,14 @@
+<div id="page-executive-brief"
+     hx-get="/hx/executive-brief?offset={{ offset }}&limit={{ limit }}&status={{ status }}{% if let Some(fid) = feed_id %}&feed_id={{ fid }}{% endif %}{% if let Some(cid) = category_id %}&category_id={{ cid }}{% endif %}"
+     hx-trigger="load"
+     hx-swap="outerHTML"
+     class="rounded-lg p-3.5 bg-muted/40 border border-border mb-4 animate-pulse">
+  <div class="flex items-center gap-2 mb-2">
+    <i data-lucide="sparkles" class="w-4 h-4 text-brand/60"></i>
+    <span class="text-xs font-bold uppercase text-muted-foreground font-sans">Generating Executive Brief...</span>
+  </div>
+  <div class="space-y-1.5">
+    <div class="h-2.5 bg-muted rounded w-5/6"></div>
+    <div class="h-2.5 bg-muted rounded w-4/6"></div>
+  </div>
+</div>

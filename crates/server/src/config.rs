@@ -126,11 +126,10 @@ impl Config {
         let miniflux_base_url = get_req("MINIFLUX_BASE_URL")?;
         let miniflux_api_key = get_req("MINIFLUX_API_KEY")?;
 
-        let ai_enabled = auth_enabled
-            && map
-                .get("AI_ENABLED")
-                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-                .unwrap_or(false);
+        let ai_enabled = map
+            .get("AI_ENABLED")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false);
 
         let llm_cli_cmd = map
             .get("LLM_CLI_CMD")
@@ -322,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_ai_disabled_when_auth_disabled() {
+    fn test_config_ai_enabled_when_auth_disabled() {
         let vars = [
             ("AUTH_ENABLED", "false"),
             ("AI_ENABLED", "true"),
@@ -332,8 +331,8 @@ mod tests {
         let config = Config::from_map(&make_test_env(&vars)).expect("should succeed");
         assert!(!config.auth_enabled);
         assert!(
-            !config.ai_enabled,
-            "ai_enabled must be false when auth_enabled is false even if AI_ENABLED=true"
+            config.ai_enabled,
+            "ai_enabled must be true when AI_ENABLED=true regardless of AUTH_ENABLED"
         );
     }
 
@@ -351,7 +350,7 @@ mod tests {
 
         let test_matrix = [
             ("false", "false", false),
-            ("false", "true", false),
+            ("false", "true", true),
             ("true", "false", false),
             ("true", "true", true),
         ];

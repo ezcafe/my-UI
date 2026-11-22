@@ -57,6 +57,250 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_entries_loads_suggested_titles_and_page_brief_from_db() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 1 }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 1,
+                "entries": [{
+                    "id": 555,
+                    "feed_id": 1,
+                    "title": "Raw Unoptimized Title",
+                    "status": "unread",
+                    "url": "https://example.com/555",
+                    "content": "Content of 555",
+                    "published_at": "2026-11-22T10:00:00Z",
+                    "reading_time": 2,
+                    "starred": false
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp_db = tempfile::NamedTempFile::new().unwrap();
+        let db_path = tmp_db.path().to_str().unwrap().to_string();
+
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            ai_db_path: db_path.clone(),
+        });
+
+        // Seed DB with suggested title and page executive brief
+        let db = crate::ai::AiDb::new(&db_path).unwrap();
+        db.save_summary_and_title(555, Some("Punchy AI Title 555"), "Summary 555", "model-a")
+            .await
+            .unwrap();
+        db.save_page_brief("Top Page Executive Brief Today").await.unwrap();
+
+        let client = MinifluxClient::new(server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = build_app(config, schema);
+
+        let session = SessionData {
+            user_id: "u_1".to_string(),
+            username: "tester".to_string(),
+            access_token: "tok_123".to_string(),
+            refresh_token: None,
+            expires_at: 1800000000,
+        };
+        let enc = create_session_cookie_value(&session, secret).unwrap();
+
+        let req = Request::builder()
+            .uri("/hx/entries")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        // Must show AI suggested title
+        assert!(html.contains("Punchy AI Title 555"));
+        // Must show original title in tooltip
+        assert!(html.contains(r#"title="Raw Unoptimized Title""#));
+        // Must show Annuaire pulsing skeleton card for lazy executive brief load
+        assert!(html.contains("id=\"page-executive-brief\""));
+        assert!(html.contains("animate-pulse"));
+        assert!(html.contains("Generating Executive Brief..."));
+    }
+
+    #[tokio::test]
+    async fn test_filter_specific_brief_route_integration() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 1 }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 1,
+                "entries": [{
+                    "id": 777,
+                    "feed_id": 1,
+                    "title": "Filter Specific Title",
+                    "status": "unread",
+                    "url": "https://example.com/777",
+                    "content": "Content of 777",
+                    "published_at": "2026-11-22T10:00:00Z",
+                    "reading_time": 2,
+                    "starred": false
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp_db = tempfile::NamedTempFile::new().unwrap();
+        let db_path = tmp_db.path().to_str().unwrap().to_string();
+
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            ai_db_path: db_path.clone(),
+        });
+
+        let db = crate::ai::AiDb::new(&db_path).unwrap();
+        db.save_page_brief("Exclusive Top Executive Brief Content").await.unwrap();
+
+        let client = MinifluxClient::new(server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = build_app(config, schema);
+
+        let session = SessionData {
+            user_id: "u_1".to_string(),
+            username: "tester".to_string(),
+            access_token: "tok_123".to_string(),
+            refresh_token: None,
+            expires_at: 1800000000,
+        };
+        let enc = create_session_cookie_value(&session, secret).unwrap();
+
+        // 1. status=unread -> skeleton present
+        let req_unread = Request::builder()
+            .uri("/hx/entries?status=unread")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+        let resp_unread = app.clone().oneshot(req_unread).await.unwrap();
+        assert_eq!(resp_unread.status(), StatusCode::OK);
+        let body_unread = resp_unread.into_body().collect().await.unwrap().to_bytes();
+        let html_unread = String::from_utf8(body_unread.to_vec()).unwrap();
+        assert!(html_unread.contains("id=\"page-executive-brief\""));
+        assert!(html_unread.contains("animate-pulse"));
+
+        // 2. status=today -> prohibited (no skeleton, no brief)
+        let req_today = Request::builder()
+            .uri("/hx/entries?status=today")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+        let resp_today = app.clone().oneshot(req_today).await.unwrap();
+        assert_eq!(resp_today.status(), StatusCode::OK);
+        let body_today = resp_today.into_body().collect().await.unwrap().to_bytes();
+        let html_today = String::from_utf8(body_today.to_vec()).unwrap();
+        assert!(!html_today.contains("id=\"page-executive-brief\""));
+
+        // 3. status=read -> prohibited
+        let req_read = Request::builder()
+            .uri("/hx/entries?status=read")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+        let resp_read = app.clone().oneshot(req_read).await.unwrap();
+        assert_eq!(resp_read.status(), StatusCode::OK);
+        let body_read = resp_read.into_body().collect().await.unwrap().to_bytes();
+        let html_read = String::from_utf8(body_read.to_vec()).unwrap();
+        assert!(!html_read.contains("id=\"page-executive-brief\""));
+
+        // 4. status=starred -> prohibited
+        let req_starred = Request::builder()
+            .uri("/hx/entries?status=starred")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+        let resp_starred = app.clone().oneshot(req_starred).await.unwrap();
+        assert_eq!(resp_starred.status(), StatusCode::OK);
+        let body_starred = resp_starred.into_body().collect().await.unwrap().to_bytes();
+        let html_starred = String::from_utf8(body_starred.to_vec()).unwrap();
+        assert!(!html_starred.contains("id=\"page-executive-brief\""));
+
+        // 5. status=all -> prohibited
+        let req_all = Request::builder()
+            .uri("/hx/entries?status=all")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+        let resp_all = app.clone().oneshot(req_all).await.unwrap();
+        assert_eq!(resp_all.status(), StatusCode::OK);
+        let body_all = resp_all.into_body().collect().await.unwrap().to_bytes();
+        let html_all = String::from_utf8(body_all.to_vec()).unwrap();
+        assert!(!html_all.contains("id=\"page-executive-brief\""));
+
+        // 6. search query without status (defaults to all) -> prohibited
+        let req_search = Request::builder()
+            .uri("/hx/entries?search=Filter")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .body(Body::empty())
+            .unwrap();
+        let resp_search = app.oneshot(req_search).await.unwrap();
+        assert_eq!(resp_search.status(), StatusCode::OK);
+        let body_search = resp_search.into_body().collect().await.unwrap().to_bytes();
+        let html_search = String::from_utf8(body_search.to_vec()).unwrap();
+        assert!(!html_search.contains("id=\"page-executive-brief\""));
+        let html_search = String::from_utf8(body_search.to_vec()).unwrap();
+        assert!(!html_search.contains("Exclusive Top Executive Brief Content"));
+    }
+
+    #[tokio::test]
     async fn test_get_root_page_serves_html_shell() {
         let server = MockServer::start().await;
 

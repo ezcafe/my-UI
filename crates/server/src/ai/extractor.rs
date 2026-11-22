@@ -48,7 +48,7 @@ impl ArticleExtractor {
             }
         }
 
-        let truncated = Self::truncate_words(&extracted_text, 500);
+        let truncated = Self::truncate_words(&extracted_text, 250);
         format!("Title: {}\n\n{}", title.trim(), truncated)
     }
 
@@ -204,18 +204,19 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_article_content_word_truncation() {
-        let words = (0..800).map(|i| format!("word{}", i)).collect::<Vec<_>>().join(" ");
+    fn test_word_truncation_250() {
+        let words = (0..500).map(|i| format!("word{}", i)).collect::<Vec<_>>().join(" ");
         let html = format!(
             "<html><body><article><p>{}</p></article></body></html>",
             words
         );
         let extractor = ArticleExtractor::new();
-        let content = extractor.parse_html(&html, "Long Article", "teaser");
+        let content = extractor.parse_html(&html, "250 Test Title", "teaser");
 
+        assert!(content.starts_with("Title: 250 Test Title\n\n"));
         let body_after_title = content.split("\n\n").nth(1).expect("body content after title");
         let word_count = body_after_title.split_whitespace().count();
-        assert_eq!(word_count, 500);
+        assert_eq!(word_count, 250);
     }
 
     #[test]

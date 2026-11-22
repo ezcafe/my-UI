@@ -62,22 +62,6 @@
     <div class="px-6 py-3 border-b border-border flex items-center justify-between gap-4 bg-muted/40">
       <input type="hidden" id="active-status" name="status" value="unread">
       <div class="flex items-center gap-2 overflow-x-auto min-w-0 shrink no-scrollbar py-0.5">
-        {% if ai_enabled %}
-        <button 
-          id="filter-ai"
-          data-status="ai"
-          type="button"
-          hx-get="/hx/entries?status=ai" 
-          hx-target="#entries-list" 
-          hx-swap="innerHTML" 
-          hx-indicator="#entries-loading-bar"
-          hx-include="[name='search']"
-          onclick="handleFilterClick(this, event)"
-          class="filter-pill whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-border border border-border transition-colors flex items-center gap-1.5 shrink-0">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-foreground"></i>
-          AI
-        </button>
-        {% endif %}
         <button 
           id="filter-unread"
           data-status="unread"
@@ -458,7 +442,10 @@
       history.pushState(null, '', currentUrl.pathname + '?' + currentUrl.searchParams.toString());
     }
 
-    if (cached && cached.html) {
+    const hasAiEnabled = {% if ai_enabled %}true{% else %}false{% endif %};
+    const isCacheValid = cached && cached.html && (!hasAiEnabled || cached.html.includes('Executive Brief'));
+
+    if (isCacheValid) {
       // Instant render from cache - zero network request, zero skeleton flicker
       panel.innerHTML = cached.html;
       panel.classList.remove('hidden');
@@ -520,7 +507,7 @@
         </div>
 
         <!-- Skeleton Body: centered and capped at max-w-[44rem] -->
-        <div class="detail-scrollbar flex-1 overflow-y-auto pr-2 space-y-4 w-full max-w-[44rem] mx-auto">
+        <div class="detail-scrollbar detail-body flex-1 overflow-y-auto pr-2 space-y-4 w-full max-w-[44rem] mx-auto">
           <!-- Feed info & date -->
           <div class="flex items-center gap-2 mb-2">
             <div class="h-3.5 bg-muted rounded w-28"></div>
@@ -773,10 +760,10 @@
         } else {
           articles.sort((a, b) => b.id - a.id);
           list.innerHTML = articles.map(art => `
-            <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}">
+            <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}">
               <div id="entry-${art.id}-bar" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>
-              <div class="flex items-center gap-2.5 flex-1 min-w-0" onclick="openEntryDetail(${art.id})">
-                <span id="entry-${art.id}-dot"></span>
+              <div class="flex items-center gap-1.5 flex-1 min-w-0" onclick="openEntryDetail(${art.id})">
+                <span id="entry-${art.id}-dot" class="inline-flex shrink-0 empty:hidden"></span>
                 <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
                   ${escapeHtml(art.title)}
                 </span>
@@ -948,8 +935,8 @@
     const container = document.getElementById('toast-container');
     if (!container) return;
     const toast = document.createElement('div');
-    toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background px-4 py-2.5 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
-    toast.innerHTML = '<i data-lucide="bookmark" class="w-4 h-4 text-brand shrink-0"></i><span>' + message + '</span>';
+    toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
+    toast.innerHTML = '<i data-lucide="bookmark" class="w-4 h-4 text-brand shrink-0"></i><span>' + message + '</span><button type="button" onclick="dismissToast(this)" class="p-1 rounded-full text-background/60 hover:text-background hover:bg-background/20 transition-colors shrink-0" title="Close notification" aria-label="Close notification"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>';
     container.appendChild(toast);
     if (window.lucide && typeof lucide.createIcons === 'function') {
       lucide.createIcons({ root: toast });
@@ -957,7 +944,7 @@
     setTimeout(() => {
       toast.style.opacity = '0';
       setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, 4000);
   }
 
   function triggerNativeBookmark(title, url) {

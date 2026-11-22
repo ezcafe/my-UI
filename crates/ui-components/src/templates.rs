@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct EntryViewModel {
     pub id: i64,
     pub title: String,
+    pub suggested_title: Option<String>,
     pub feed_title: String,
     pub published_at: String,
     pub reading_time: i32,
@@ -58,6 +59,7 @@ pub struct EntryItemTemplate {
 #[template(path = "partials/entry_list.html")]
 pub struct EntryListTemplate {
     pub entries: Vec<EntryViewModel>,
+    pub top_executive_brief: Option<String>,
     pub unread_count: Option<i32>,
     pub current_page: i64,
     pub total_pages: i64,
@@ -68,6 +70,32 @@ pub struct EntryListTemplate {
     pub status: String,
     pub search: String,
     pub limit: i64,
+    pub is_brief_eligible: bool,
+    pub offset: i64,
+    pub feed_id: Option<i64>,
+    pub category_id: Option<i64>,
+}
+
+#[derive(Template)]
+#[template(path = "partials/executive_brief_skeleton.html")]
+pub struct ExecutiveBriefSkeletonTemplate {
+    pub offset: i64,
+    pub limit: i64,
+    pub status: String,
+    pub feed_id: Option<i64>,
+    pub category_id: Option<i64>,
+}
+
+#[derive(Template)]
+#[template(path = "partials/executive_brief_card.html")]
+pub struct ExecutiveBriefCardTemplate<'a> {
+    pub brief: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "partials/brief_card.html")]
+pub struct BriefCardTemplate {
+    pub summary: String,
 }
 
 #[derive(Template)]
@@ -99,10 +127,108 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_view_models() {
+        let entry = EntryViewModel {
+            id: 10,
+            title: "Original Title".to_string(),
+            suggested_title: Some("AI Punchy Title".to_string()),
+            feed_title: "Tech Feed".to_string(),
+            published_at: "Just now".to_string(),
+            reading_time: 2,
+            summary: "Extractive snippet".to_string(),
+            url: "https://example.com/10".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        assert_eq!(entry.suggested_title.as_deref(), Some("AI Punchy Title"));
+
+        let list_tmpl = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: Some("Today's key themes: AI optimization and Rust speed.".to_string()),
+            unread_count: Some(1),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 20,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 20,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+        assert_eq!(
+            list_tmpl.top_executive_brief.as_deref(),
+            Some("Today's key themes: AI optimization and Rust speed.")
+        );
+    }
+
+    #[test]
+    fn test_entry_list_and_item_render_suggested_title_and_brief() {
+        let entry_with_ai = EntryViewModel {
+            id: 101,
+            title: "Original Long Headline Goes Here".to_string(),
+            suggested_title: Some("AI Suggested Headline".to_string()),
+            feed_title: "Feed".to_string(),
+            published_at: "10m ago".to_string(),
+            reading_time: 1,
+            summary: "Summary".to_string(),
+            url: "https://example.com/101".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+
+        let item_tmpl = EntryItemTemplate {
+            entry: entry_with_ai.clone(),
+            unread_count: None,
+        };
+        let item_html = item_tmpl.render().expect("render item");
+        assert!(item_html.contains("AI Suggested Headline"));
+        assert!(item_html.contains(r#"title="Original Long Headline Goes Here""#));
+
+        let list_tmpl = EntryListTemplate {
+            entries: vec![entry_with_ai],
+            top_executive_brief: Some("Big shifts in AI chip market announced today.".to_string()),
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 20,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 20,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+        let list_html = list_tmpl.render().expect("render list");
+        assert!(list_html.contains("Executive Brief"));
+        assert!(list_html.contains("Big shifts in AI chip market announced today."));
+        assert!(list_html.contains("AI Suggested Headline"));
+        assert!(list_html.contains(r#"title="Original Long Headline Goes Here""#));
+
+        let brief_tmpl = BriefCardTemplate {
+            summary: "Nvidia unveiled Blackwell Ultra, boosting memory bandwidth by 40%.".to_string(),
+        };
+        let brief_html = brief_tmpl.render().expect("render brief card");
+        assert!(brief_html.contains("Executive Brief"));
+        assert!(brief_html.contains("Nvidia unveiled Blackwell Ultra"));
+    }
+
+    #[test]
     fn test_render_title_only_entry_item() {
         let entry_unread = EntryViewModel {
             id: 42,
             title: "Spatial Computing in Rust".to_string(),
+            suggested_title: None,
             feed_title: "Rust Optics".to_string(),
             published_at: "2 hours ago".to_string(),
             reading_time: 4,
@@ -150,6 +276,7 @@ mod tests {
         let entry_read = EntryViewModel {
             id: 43,
             title: "Spatial Computing in Rust - Read".to_string(),
+            suggested_title: None,
             feed_title: "Rust Optics".to_string(),
             published_at: "2 hours ago".to_string(),
             reading_time: 4,
@@ -177,6 +304,7 @@ mod tests {
             EntryViewModel {
                 id: 1,
                 title: "First Title".to_string(),
+                suggested_title: None,
                 feed_title: "Feed A".to_string(),
                 published_at: "1 hour ago".to_string(),
                 reading_time: 2,
@@ -189,6 +317,7 @@ mod tests {
             EntryViewModel {
                 id: 2,
                 title: "Second Title".to_string(),
+                suggested_title: None,
                 feed_title: "Feed B".to_string(),
                 published_at: "2 hours ago".to_string(),
                 reading_time: 5,
@@ -202,6 +331,7 @@ mod tests {
 
         let template = EntryListTemplate {
             entries,
+            top_executive_brief: None,
             unread_count: Some(1),
             current_page: 1,
             total_pages: 1,
@@ -212,6 +342,10 @@ mod tests {
             status: "all".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
 
@@ -259,17 +393,7 @@ mod tests {
     }
 
     #[test]
-    fn test_index_template_renders_ai_button_when_enabled() {
-        let index_disabled = IndexTemplate {
-            unread_count: 5,
-            today_count: 0,
-            entries_list_html: "<div>entries</div>".to_string(),
-            ai_enabled: false,
-            auth_enabled: true,
-        };
-        let html_disabled = index_disabled.render().expect("Failed to render IndexTemplate disabled");
-        assert!(!html_disabled.contains("id=\"filter-ai\""));
-
+    fn test_index_template_no_ai_filter() {
         let index_enabled = IndexTemplate {
             unread_count: 5,
             today_count: 0,
@@ -278,12 +402,14 @@ mod tests {
             auth_enabled: true,
         };
         let html_enabled = index_enabled.render().expect("Failed to render IndexTemplate enabled");
-        assert!(html_enabled.contains("id=\"filter-ai\""));
-        assert!(html_enabled.contains("hx-get=\"/hx/entries?status=ai\""));
-
-        let pos_ai = html_enabled.find("id=\"filter-ai\"").expect("filter-ai not found");
-        let pos_unread = html_enabled.find("id=\"filter-unread\"").expect("filter-unread not found");
-        assert!(pos_ai < pos_unread, "AI button must render before Unread button");
+        assert!(
+            !html_enabled.contains("id=\"filter-ai\""),
+            "filter-ai button must be completely removed from index.html"
+        );
+        assert!(
+            !html_enabled.contains("status=ai"),
+            "status=ai must not be present in index.html"
+        );
     }
 
     #[test]
@@ -329,6 +455,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 99,
             title: "Autonomous Agent Flow".to_string(),
+            suggested_title: None,
             feed_title: "AI Daily".to_string(),
             published_at: "10 mins ago".to_string(),
             reading_time: 2,
@@ -359,6 +486,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 101,
             title: "Exploring Spatial Audio".to_string(),
+            suggested_title: None,
             feed_title: "Audio Weekly".to_string(),
             published_at: "2 hours ago".to_string(),
             reading_time: 3,
@@ -392,6 +520,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 102,
             title: "Micro-gestures in WebXR".to_string(),
+            suggested_title: None,
             feed_title: "XR Trends".to_string(),
             published_at: "1 hour ago".to_string(),
             reading_time: 4,
@@ -439,6 +568,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 102,
             title: "Micro-gestures in WebXR".to_string(),
+            suggested_title: None,
             feed_title: "XR Trends".to_string(),
             published_at: "1 hour ago".to_string(),
             reading_time: 4,
@@ -481,6 +611,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 102,
             title: "Micro-gestures in WebXR".to_string(),
+            suggested_title: None,
             feed_title: "XR Trends".to_string(),
             published_at: "1 hour ago".to_string(),
             reading_time: 4,
@@ -534,6 +665,14 @@ mod tests {
             html.contains("rounded-full") && html.contains("bg-foreground text-background"),
             "Must use Annuaire ink pill floating toast style"
         );
+        assert!(
+            html.contains("onclick=\"dismissToast(this)\""),
+            "Toast must have a dismiss/close button"
+        );
+        assert!(
+            html.contains("data-lucide=\"x\""),
+            "Toast close button must have x icon"
+        );
     }
 
     #[test]
@@ -569,6 +708,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 1,
             title: "Test Entry".to_string(),
+            suggested_title: None,
             feed_title: "Feed".to_string(),
             published_at: "1 hour ago".to_string(),
             reading_time: 1,
@@ -580,6 +720,7 @@ mod tests {
         };
         let template = EntryListTemplate {
             entries: vec![entry],
+            top_executive_brief: None,
             unread_count: None,
             current_page: 1,
             total_pages: 3,
@@ -590,6 +731,10 @@ mod tests {
             status: "unread".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
         assert!(
@@ -619,6 +764,7 @@ mod tests {
     fn test_entry_list_hides_pagination_when_single_page() {
         let template = EntryListTemplate {
             entries: vec![],
+            top_executive_brief: None,
             unread_count: None,
             current_page: 1,
             total_pages: 1,
@@ -629,6 +775,10 @@ mod tests {
             status: "unread".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
         assert!(
@@ -670,6 +820,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 42,
             title: "Test Entry".to_string(),
+            suggested_title: None,
             feed_title: "Test Feed".to_string(),
             published_at: "Just now".to_string(),
             reading_time: 1,
@@ -699,6 +850,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 42,
             title: "Test Entry in List".to_string(),
+            suggested_title: None,
             feed_title: "Test Feed".to_string(),
             published_at: "Just now".to_string(),
             reading_time: 1,
@@ -710,6 +862,7 @@ mod tests {
         };
         let template = EntryListTemplate {
             entries: vec![entry],
+            top_executive_brief: None,
             unread_count: None,
             current_page: 1,
             total_pages: 1,
@@ -720,6 +873,10 @@ mod tests {
             status: "unread".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
         assert!(
@@ -737,6 +894,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 105,
             title: "Test Entry Detail".to_string(),
+            suggested_title: None,
             feed_title: "Test Feed".to_string(),
             published_at: "1 hour ago".to_string(),
             reading_time: 3,
@@ -1040,6 +1198,7 @@ mod tests {
         let entry = EntryViewModel {
             id: 42,
             title: "Test Article".to_string(),
+            suggested_title: None,
             feed_title: "Test Feed".to_string(),
             published_at: "1 hour ago".to_string(),
             reading_time: 3,
@@ -1064,6 +1223,7 @@ mod tests {
         // 2. EntryListTemplate
         let list_template = EntryListTemplate {
             entries: vec![entry.clone()],
+            top_executive_brief: None,
             unread_count: None,
             current_page: 1,
             total_pages: 1,
@@ -1074,6 +1234,10 @@ mod tests {
             status: "unread".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let list_html = list_template.render().expect("Failed to render EntryListTemplate");
         assert!(
@@ -1156,6 +1320,7 @@ mod tests {
             entry: EntryViewModel {
                 id: 1,
                 title: "T".into(),
+                suggested_title: None,
                 feed_title: "F".into(),
                 published_at: "now".into(),
                 reading_time: 1,
@@ -1175,6 +1340,7 @@ mod tests {
 
         let list_template = EntryListTemplate {
             entries: vec![],
+            top_executive_brief: None,
             unread_count: Some(5),
             current_page: 1,
             total_pages: 1,
@@ -1185,6 +1351,10 @@ mod tests {
             status: "unread".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let list_html = list_template.render().expect("render list");
         assert!(
@@ -1216,6 +1386,7 @@ mod tests {
     fn test_entry_list_hides_pagination_when_no_news() {
         let template = EntryListTemplate {
             entries: vec![],
+            top_executive_brief: None,
             unread_count: Some(0),
             current_page: 1,
             total_pages: 5,
@@ -1226,6 +1397,10 @@ mod tests {
             status: "unread".to_string(),
             search: "".to_string(),
             limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
         assert!(!html.contains("aria-label=\"Pagination\""));
@@ -1400,5 +1575,216 @@ mod tests {
             html.contains("id=\"search-form\"") && html.contains("shrink-0"),
             "Search form must have shrink-0 to prevent being squished"
         );
+    }
+
+    #[test]
+    fn test_mobile_detail_body_removes_padding_right_container_query() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        let cq_index = html
+            .find("@container (max-width: 768px)")
+            .expect("Missing mobile container query");
+        let cq_slice = &html[cq_index..];
+
+        assert!(
+            cq_slice.contains("#detail-panel .detail-scrollbar")
+                || cq_slice.contains(".detail-body"),
+            "Must define mobile override removing padding-right for detail body inside container query"
+        );
+        assert!(
+            cq_slice.contains("padding-right: 0;"),
+            "Must set padding-right: 0 on mobile detail body"
+        );
+    }
+
+    #[test]
+    fn test_mobile_entries_list_and_items_reduce_horizontal_padding_container_query() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        let cq_index = html
+            .find("@container (max-width: 768px)")
+            .expect("Missing mobile container query");
+        let cq_slice = &html[cq_index..];
+
+        assert!(
+            cq_slice.contains("#entries-list"),
+            "Must define mobile padding override for #entries-list inside container query"
+        );
+        assert!(
+            cq_slice.contains(".annuaire-row") || cq_slice.contains(".ar-list-item"),
+            "Must define mobile padding override for list items inside container query"
+        );
+        assert!(
+            cq_slice.contains("#detail-panel"),
+            "Must define mobile padding override for #detail-panel inside container query"
+        );
+        assert!(
+            cq_slice.contains("padding-left: 0.5rem;") && cq_slice.contains("padding-right: 0.5rem;"),
+            "Must reduce left/right padding on mobile entries-list to maximize content area"
+        );
+    }
+
+    #[test]
+    fn test_entry_item_and_list_tight_spacing_between_bar_and_title() {
+        let entry = EntryViewModel {
+            id: 99,
+            title: "Compact Spacing Article".to_string(),
+            suggested_title: None,
+            feed_title: "Tech".to_string(),
+            published_at: "5m ago".to_string(),
+            reading_time: 1,
+            summary: "Summary".to_string(),
+            url: "https://example.com/99".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+
+        let item_template = EntryItemTemplate {
+            entry: entry.clone(),
+            unread_count: None,
+        };
+        let item_html = item_template.render().expect("Failed to render EntryItemTemplate");
+
+        // The outer row and inner title wrapper both use compact gap-1.5 (6px)
+        assert!(
+            item_html.contains("annuaire-row") && item_html.contains("gap-1.5"),
+            "Entry item row must use gap-1.5 to reduce space between red bar and title"
+        );
+        assert!(
+            item_html.contains("entry-99-dot") && item_html.contains("empty:hidden"),
+            "Dot container must have empty:hidden so read articles collapse phantom space"
+        );
+
+        let list_template = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: None,
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 20,
+            status: "all".to_string(),
+            search: "".to_string(),
+            limit: 20,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+        let list_html = list_template.render().expect("Failed to render EntryListTemplate");
+        assert!(
+            list_html.contains("gap-1.5"),
+            "Entry list rows must use gap-1.5 to tighten spacing between red bar and title"
+        );
+    }
+
+    #[test]
+    fn test_executive_brief_skeleton_and_card_templates() {
+        let skeleton = ExecutiveBriefSkeletonTemplate {
+            offset: 0,
+            limit: 15,
+            status: "unread".to_string(),
+            feed_id: Some(12),
+            category_id: Some(3),
+        };
+        let sk_html = skeleton.render().expect("render skeleton");
+        assert!(sk_html.contains("id=\"page-executive-brief\""));
+        assert!(sk_html.contains("animate-pulse"));
+        assert!(sk_html.contains("hx-get=\"/hx/executive-brief?offset=0&amp;limit=15&amp;status=unread&amp;feed_id=12&amp;category_id=3\"")
+            || sk_html.contains("hx-get=\"/hx/executive-brief?offset=0&limit=15&status=unread&feed_id=12&category_id=3\""));
+        assert!(sk_html.contains("hx-trigger=\"load\""));
+        assert!(sk_html.contains("hx-swap=\"outerHTML\""));
+        assert!(sk_html.contains("Generating Executive Brief..."));
+
+        let card = ExecutiveBriefCardTemplate {
+            brief: "Synthesis of page content.",
+        };
+        let card_html = card.render().expect("render card");
+        assert!(card_html.contains("id=\"page-executive-brief\""));
+        assert!(card_html.contains("Synthesis of page content."));
+        assert!(card_html.contains("Executive Brief"));
+    }
+
+    #[test]
+    fn test_entry_list_renders_skeleton_when_eligible_and_not_empty() {
+        let entry = EntryViewModel {
+            id: 1,
+            title: "Test".into(),
+            suggested_title: None,
+            feed_title: "Feed".into(),
+            published_at: "now".into(),
+            reading_time: 1,
+            summary: "S".into(),
+            url: "https://example.com".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let template = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: None,
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 15,
+            is_brief_eligible: true,
+            offset: 0,
+            feed_id: Some(42),
+            category_id: None,
+        };
+        let html = template.render().expect("render");
+        assert!(html.contains("id=\"page-executive-brief\""));
+        assert!(html.contains("animate-pulse"));
+        assert!(html.contains("Generating Executive Brief..."));
+        assert!(html.contains("id=\"entry-title-1\""), "Must include entry-title span");
+    }
+
+    #[test]
+    fn test_entry_list_guards_skeleton_when_empty() {
+        let template = EntryListTemplate {
+            entries: vec![],
+            top_executive_brief: None,
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 15,
+            is_brief_eligible: true,
+            offset: 0,
+            feed_id: Some(42),
+            category_id: None,
+        };
+        let html = template.render().expect("render");
+        assert!(!html.contains("id=\"page-executive-brief\""), "Empty entries list must not render skeleton");
+        assert!(!html.contains("animate-pulse"));
+        assert!(html.contains("All caught up!"));
     }
 }

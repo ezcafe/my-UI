@@ -1,10 +1,18 @@
 <div id="toast-container" hx-swap-oob="beforeend">
-  <div class="pointer-events-auto shadow-float rounded-full bg-foreground text-background px-4 py-2.5 flex items-center gap-2.5 text-xs font-bold font-sans">
+  <div class="pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300">
     {% if is_error %}
     <i data-lucide="alert-circle" class="w-4 h-4 text-destructive shrink-0"></i>
     {% else %}
     <i data-lucide="check-circle-2" class="w-4 h-4 text-brand shrink-0"></i>
     {% endif %}
     <span>{{ message }}</span>
+    <button 
+      type="button" 
+      onclick="dismissToast(this)" 
+      class="p-1 rounded-full text-background/60 hover:text-background hover:bg-background/20 transition-colors shrink-0" 
+      title="Close notification"
+      aria-label="Close notification">
+      <i data-lucide="x" class="w-3.5 h-3.5"></i>
+    </button>
   </div>
 </div>

@@ -4,8 +4,9 @@ use crate::cache::MinifluxCache;
 use crate::config::Config;
 use crate::rate_limit::{rate_limit_middleware, RateLimiter};
 use crate::routes::entries::{
-    get_entry_ai_summary_htmx, get_entry_detail_htmx, list_entries_htmx, mark_all_read_htmx,
-    mark_entry_read_htmx, mark_feed_read_htmx, mark_page_read_htmx, toggle_bookmark_htmx,
+    executive_brief_htmx, get_entry_ai_summary_htmx, get_entry_detail_htmx, list_entries_htmx,
+    mark_all_read_htmx, mark_entry_read_htmx, mark_feed_read_htmx, mark_page_read_htmx,
+    toggle_bookmark_htmx,
 };
 use crate::routes::graphql::graphql_handler;
 use crate::routes::pages::{index_page, login_page};
@@ -98,6 +99,7 @@ pub fn build_app_with_ai(
         .route("/hx/entries/{id}/bookmark", post(toggle_bookmark_htmx))
         .route("/hx/entries/{id}/read", post(mark_entry_read_htmx))
         .route("/hx/entries/{id}/ai-summary", get(get_entry_ai_summary_htmx))
+        .route("/hx/executive-brief", get(executive_brief_htmx))
         .route("/hx/feeds/{id}/mark-all-read", post(mark_feed_read_htmx))
         .route("/hx/mark-all-read", post(mark_all_read_htmx))
         .route("/hx/mark-page-read", post(mark_page_read_htmx))

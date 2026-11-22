@@ -362,3 +362,182 @@ async fn test_mutation_endpoints_reject_with_403_when_auth_disabled() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn test_executive_brief_ineligible_views_and_empty_guard() {
+    let mock_upstream = MockServer::start().await;
+
+    let db_file = tempfile::NamedTempFile::new().unwrap();
+    let db_path = db_file.path().to_str().unwrap().to_string();
+
+    let config = Arc::new(Config {
+        host: "127.0.0.1".to_string(),
+        port: 3000,
+        app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: false,
+        session_secret: "guest-mode-session-secret-at-least-32-chars-long!".to_string(),
+        oidc_issuer_url: "https://auth-disabled.local".to_string(),
+        oidc_client_id: "guest".to_string(),
+        oidc_client_secret: "guest".to_string(),
+        oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+        miniflux_base_url: mock_upstream.uri(),
+        miniflux_api_key: "api-key".to_string(),
+        ai_enabled: true,
+        llm_cli_cmd: "echo".to_string(),
+        llm_model: "gpt-4o-mini".to_string(),
+        llm_extra_args: vec![],
+        ai_db_path: db_path,
+    });
+
+    let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+    let schema = build_schema(client);
+    let app = build_app(config, schema);
+
+    // 1. status=today view is prohibited: returns 200 OK with empty body
+    let req = Request::builder()
+        .uri("/hx/executive-brief?status=today")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty(), "today view must return empty response");
+
+    // 2. Active search query is prohibited: returns 200 OK with empty body
+    let req = Request::builder()
+        .uri("/hx/executive-brief?status=unread&search=rust")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty(), "search query must return empty response");
+
+    // 3. Empty entries guard: returns 200 OK with empty body when upstream has 0 entries
+    Mock::given(method("GET"))
+        .and(path("/v1/entries"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total": 0,
+            "entries": []
+        })))
+        .mount(&mock_upstream)
+        .await;
+
+    let req = Request::builder()
+        .uri("/hx/executive-brief?status=unread")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty(), "empty entries must return empty response");
+}
+
+#[tokio::test]
+async fn test_executive_brief_cache_hit_and_oob_swaps() {
+    let mock_upstream = MockServer::start().await;
+
+    let db_file = tempfile::NamedTempFile::new().unwrap();
+    let db_path = db_file.path().to_str().unwrap().to_string();
+
+    let config = Arc::new(Config {
+        host: "127.0.0.1".to_string(),
+        port: 3000,
+        app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: false,
+        session_secret: "guest-mode-session-secret-at-least-32-chars-long!".to_string(),
+        oidc_issuer_url: "https://auth-disabled.local".to_string(),
+        oidc_client_id: "guest".to_string(),
+        oidc_client_secret: "guest".to_string(),
+        oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+        miniflux_base_url: mock_upstream.uri(),
+        miniflux_api_key: "api-key".to_string(),
+        ai_enabled: true,
+        llm_cli_cmd: "echo".to_string(),
+        llm_model: "gpt-4o-mini".to_string(),
+        llm_extra_args: vec![],
+        ai_db_path: db_path.clone(),
+    });
+
+    let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+    let schema = build_schema(client);
+    let ai_service = Arc::new(server::ai::AiService::new(&config).unwrap());
+
+    // Pre-populate DB with cached page brief and entry summary
+    let entry_id = 999_i64;
+    let page_key = server::ai::compute_page_key("unread", &[entry_id]);
+    ai_service.db.save_page_brief_by_key(&page_key, "Cached Executive Synthesis").await.unwrap();
+    ai_service.db.save_summary_and_title(
+        entry_id,
+        Some("Punchy AI Headline"),
+        "Summary of article 999",
+        "gpt-4o-mini",
+    ).await.unwrap();
+
+    let app = server::app::build_app_with_ai(config, schema, ai_service);
+
+    Mock::given(method("GET"))
+        .and(path("/v1/entries"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total": 1,
+            "entries": [{
+                "id": entry_id,
+                "user_id": 1,
+                "feed_id": 10,
+                "status": "unread",
+                "hash": "hash-999",
+                "title": "Original Long Headline",
+                "url": "https://example.com/999",
+                "comments_url": "",
+                "published_at": "2026-11-22T08:00:00Z",
+                "created_at": "2026-11-22T08:00:00Z",
+                "content": "<p>Content</p>",
+                "author": "Author",
+                "share_code": "",
+                "starred": false,
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "feed_url": "https://example.com/rss",
+                    "site_url": "https://example.com",
+                    "title": "Tech News",
+                    "checked_at": "2026-11-22T08:00:00Z",
+                    "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                }
+            }]
+        })))
+        .mount(&mock_upstream)
+        .await;
+
+    let req = Request::builder()
+        .uri("/hx/executive-brief?status=unread")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify Cache-Control header
+    let cache_control = resp.headers().get(header::CACHE_CONTROL).unwrap().to_str().unwrap();
+    assert_eq!(cache_control, "no-cache, no-store, must-revalidate");
+
+    let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+    // Verify Executive Brief Card
+    assert!(body_str.contains("id=\"page-executive-brief\""));
+    assert!(body_str.contains("Executive Brief"));
+    assert!(body_str.contains("Cached Executive Synthesis"));
+
+    // Verify OOB Title Swap with Annuaire typography
+    assert!(body_str.contains("id=\"entry-title-999\""));
+    assert!(body_str.contains("hx-swap-oob=\"outerHTML\""));
+    assert!(body_str.contains("class=\"article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors\""));
+    assert!(body_str.contains(r#"title="Original Long Headline""#));
+    assert!(body_str.contains("Punchy AI Headline"));
+}

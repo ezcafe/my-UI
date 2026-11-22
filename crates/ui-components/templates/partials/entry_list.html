@@ -1,3 +1,32 @@
+{% if !entries.is_empty() && is_brief_eligible %}
+<div id="page-executive-brief"
+     hx-get="/hx/executive-brief?offset={{ offset }}&limit={{ limit }}&status={{ status }}{% if let Some(fid) = feed_id %}&feed_id={{ fid }}{% endif %}{% if let Some(cid) = category_id %}&category_id={{ cid }}{% endif %}"
+     hx-trigger="load"
+     hx-swap="outerHTML"
+     class="rounded-lg p-3.5 bg-muted/40 border border-border mb-4 animate-pulse">
+  <div class="flex items-center gap-2 mb-2">
+    <i data-lucide="sparkles" class="w-4 h-4 text-brand/60"></i>
+    <span class="text-xs font-bold uppercase text-muted-foreground font-sans">Generating Executive Brief...</span>
+  </div>
+  <div class="space-y-1.5">
+    <div class="h-2.5 bg-muted rounded w-5/6"></div>
+    <div class="h-2.5 bg-muted rounded w-4/6"></div>
+  </div>
+</div>
+{% else if let Some(brief) = top_executive_brief %}
+<div id="page-executive-brief" class="rounded-lg p-3.5 bg-muted/40 border border-border mb-4">
+  <div class="flex items-center gap-2 mb-1.5">
+    <div class="p-1 rounded bg-muted text-foreground">
+      <i data-lucide="sparkles" class="w-4 h-4 text-brand"></i>
+    </div>
+    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Executive Brief</span>
+  </div>
+  <p class="text-xs text-foreground/90 leading-relaxed font-sans">
+    {{ brief }}
+  </p>
+</div>
+{% endif %}
+
 {% if entries.is_empty() %}
 <div class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
   <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
@@ -6,18 +35,14 @@
 </div>
 {% else %}
 {% for entry in entries %}
-<div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
+<div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}">
   <!-- 3px vertical positional red bar (Rule 1: Red marks position, never action) -->
   <div id="entry-{{ entry.id }}-bar" class="w-[3px] self-stretch rounded-full shrink-0 {% if !entry.is_read %}bg-brand{% else %}bg-transparent{% endif %}"></div>
 
-  <div class="flex items-center gap-2.5 flex-1 min-w-0" onclick="openEntryDetail({{ entry.id }})">
-    <span id="entry-{{ entry.id }}-dot">
-    {% if !entry.is_read %}
-    <span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>
-    {% endif %}
-    </span>
-    <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
-      {{ entry.title }}
+  <div class="flex items-center gap-1.5 flex-1 min-w-0" onclick="openEntryDetail({{ entry.id }})">
+    <span id="entry-{{ entry.id }}-dot" class="inline-flex shrink-0 empty:hidden">{% if !entry.is_read %}<span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>{% endif %}</span>
+    <span id="entry-title-{{ entry.id }}" class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors" {% if let Some(suggested) = entry.suggested_title %}title="{{ entry.title }}"{% endif %}>
+      {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
     </span>
   </div>
 

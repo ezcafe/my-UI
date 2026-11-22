@@ -237,6 +237,11 @@
       box-shadow: var(--elevation-overlay);
     }
 
+    /* Unread dot empty state: collapse to avoid phantom flex gap */
+    [id$="-dot"]:empty {
+      display: none;
+    }
+
     /* Body establishes root inline container */
     body {
       container-type: inline-size;
@@ -295,6 +300,30 @@
 
       #search-input:focus {
         width: 11rem;
+      }
+
+      /* Mobile List Page: Reduce left/right padding to give more content space */
+      #entries-list {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+      }
+
+      .annuaire-row,
+      .ar-list-item {
+        padding-left: 0.625rem;
+        padding-right: 0.625rem;
+      }
+
+      /* Mobile Details Page: Reduce left/right padding to give more content space */
+      #detail-panel {
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+      }
+
+      /* Mobile Detail Body: Remove padding-right 0.5rem to keep body centered */
+      #detail-panel .detail-scrollbar,
+      .detail-body {
+        padding-right: 0;
       }
     }
 
@@ -403,10 +432,18 @@
 <body class="bg-background text-foreground font-sans antialiased selection:bg-selection selection:text-selection-foreground">
   {% block content %}{% endblock %}
 
-  <!-- Out-of-band Toast Container -->
-  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+  <!-- Out-of-band Toast Container (Centered) -->
+  <div id="toast-container" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none w-max max-w-[calc(100vw-2rem)]"></div>
 
   <script>
+    function dismissToast(btn) {
+      const toast = btn.closest('.pointer-events-auto') || btn.parentElement;
+      if (toast) {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
       lucide.createIcons();
       const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';

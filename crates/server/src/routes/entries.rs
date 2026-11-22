@@ -1,4 +1,4 @@
-use crate::ai::AiService;
+use crate::ai::{compute_page_key, AiService};
 use crate::auth::AuthenticatedUser;
 use crate::cache::MinifluxCache;
 use crate::config::Config;
@@ -14,7 +14,8 @@ use std::time::Duration;
 use ui_components::sanitizer::sanitize_html;
 use ui_components::templates::{
     AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate, EntryItemTemplate,
-    EntryListTemplate, EntryViewModel, ErrorCardTemplate, FeedSummaryGroupViewModel,
+    EntryListTemplate, EntryViewModel, ErrorCardTemplate, ExecutiveBriefCardTemplate,
+    FeedSummaryGroupViewModel,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -34,6 +35,15 @@ pub struct MarkPageReadForm {
     pub search: Option<String>,
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
+}
+
+pub fn is_brief_eligible_filter(status: Option<&str>, search: Option<&str>) -> bool {
+    let has_search = search.is_some_and(|s| !s.trim().is_empty());
+    match status {
+        Some("unread") if !has_search => true,
+        None if !has_search => true,
+        _ => false,
+    }
 }
 
 pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_val: i64, auth_enabled: bool) -> String {
@@ -114,6 +124,7 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
 pub async fn render_entries_list(
     schema: &AppSchema,
     cache: Option<&MinifluxCache>,
+    ai_service: Option<&AiService>,
     headers: &HeaderMap,
     query: &EntriesFilterQuery,
     auth_enabled: bool,
@@ -219,7 +230,7 @@ pub async fn render_entries_list(
     let prev_offset = (offset - limit).max(0);
     let next_offset = offset + limit;
 
-    let entries: Vec<EntryViewModel> = entries_result
+    let mut entries: Vec<EntryViewModel> = entries_result
         .and_then(|r| r.get("entries"))
         .and_then(|v| v.as_array())
         .map(|arr| {
@@ -228,6 +239,7 @@ pub async fn render_entries_list(
                     Some(EntryViewModel {
                         id: item.get("id")?.as_str()?.parse().ok()?,
                         title: item.get("title")?.as_str()?.to_string(),
+                        suggested_title: None,
                         feed_title: "Feed".to_string(),
                         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
@@ -246,8 +258,42 @@ pub async fn render_entries_list(
         })
         .unwrap_or_default();
 
+    let is_eligible = is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref());
+
+    let (ai_summaries, _top_executive_brief) = if let Some(ai) = ai_service {
+        let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+        let summaries = ai.db.get_batch_summaries(&entry_ids).await;
+        let page_brief = if is_eligible {
+            ai.db.get_latest_page_brief().await
+        } else {
+            None
+        };
+        (summaries, page_brief)
+    } else {
+        (std::collections::HashMap::new(), None)
+    };
+
+    for entry in &mut entries {
+        if let Some(record) = ai_summaries.get(&entry.id) {
+            entry.suggested_title = record.suggested_title.clone();
+        }
+    }
+
+    if let Some(ai) = ai_service {
+        if is_eligible {
+            let candidates: Vec<(i64, String, String, String)> = entries
+                .iter()
+                .filter(|e| !e.is_read)
+                .map(|e| (e.id, e.title.clone(), e.url.clone(), e.summary.clone()))
+                .collect();
+            crate::ai::prefetch::AiPrefetchService::new(Arc::new(ai.clone()))
+                .spawn_prefetch_job(candidates);
+        }
+    }
+
     let template = EntryListTemplate {
         entries,
+        top_executive_brief: None,
         unread_count,
         current_page,
         total_pages,
@@ -258,6 +304,10 @@ pub async fn render_entries_list(
         status: query.status.clone().unwrap_or_else(|| "unread".to_string()),
         search: query.search.clone().unwrap_or_default(),
         limit,
+        is_brief_eligible: ai_service.is_some() && is_eligible,
+        offset,
+        feed_id: query.feed_id,
+        category_id: query.category_id,
     };
     match template.render() {
         Ok(html) => Html(html).into_response(),
@@ -330,6 +380,7 @@ pub async fn render_ai_entries_list(
                     Some(EntryViewModel {
                         id: item.get("id")?.as_str()?.parse().ok()?,
                         title: item.get("title")?.as_str()?.to_string(),
+                        suggested_title: None,
                         feed_title,
                         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
@@ -368,6 +419,7 @@ pub async fn list_entries_htmx(
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
     State(cache): State<Arc<MinifluxCache>>,
+    State(ai_service): State<Arc<AiService>>,
     headers: HeaderMap,
     Query(query): Query<EntriesFilterQuery>,
 ) -> Response {
@@ -377,7 +429,238 @@ pub async fn list_entries_htmx(
         }
         return render_ai_entries_list(&schema, &headers, &query).await;
     }
-    render_entries_list(&schema, Some(&cache), &headers, &query, config.auth_enabled).await
+    let ai_ref = if config.ai_enabled { Some(ai_service.as_ref()) } else { None };
+    render_entries_list(&schema, Some(&cache), ai_ref, &headers, &query, config.auth_enabled).await
+}
+
+pub fn escape_html(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#x27;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+pub fn render_title_oob_span(id: i64, original_title: &str, suggested_title: &str) -> String {
+    format!(
+        r#"<span id="entry-title-{}" hx-swap-oob="outerHTML" class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors" title="{}">{}</span>"#,
+        id,
+        escape_html(original_title),
+        escape_html(suggested_title)
+    )
+}
+
+pub async fn executive_brief_htmx(
+    Query(query): Query<EntriesFilterQuery>,
+    State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
+    State(ai_service): State<Arc<AiService>>,
+) -> Response {
+    let headers = [
+        (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+        (axum::http::header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+    ];
+
+    // 1. Guard: Check is_brief_eligible_filter and config.ai_enabled
+    if !config.ai_enabled || !is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref()) {
+        return (StatusCode::OK, headers, Html("")).into_response();
+    }
+
+    let limit_val = query.limit.unwrap_or(15).clamp(1, 100);
+    let offset_val = query.offset.unwrap_or(0).max(0);
+    let filter = build_graphql_filter(&query, limit_val, offset_val, config.auth_enabled);
+
+    let gql = format!(
+        "query {{
+            entriesResult(filter: {{ {} }}) {{
+                entries {{
+                    id
+                    title
+                    summary
+                    url
+                }}
+            }}
+        }}",
+        filter
+    );
+    let res = schema.execute(&gql).await;
+    let data = match res.data.into_json() {
+        Ok(d) => d,
+        Err(_) => return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response(),
+    };
+
+    let entries: Vec<(i64, String, String, String)> = data
+        .get("entriesResult")
+        .and_then(|r| r.get("entries"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let id: i64 = item.get("id")?.as_str()?.parse().ok()?;
+                    let title = item.get("title")?.as_str()?.to_string();
+                    let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    Some((id, title, summary, url))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 2. Empty Entries Guard
+    if entries.is_empty() {
+        return (StatusCode::OK, headers, Html("")).into_response();
+    }
+
+    let entry_ids: Vec<i64> = entries.iter().map(|(id, ..)| *id).collect();
+    let status_str = query.status.as_deref().unwrap_or("unread");
+    let page_key = compute_page_key(status_str, &entry_ids);
+
+    // 3. Fast-path: Check page brief cache
+    if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
+        let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
+        let card_html = ExecutiveBriefCardTemplate { brief: &brief }
+            .render()
+            .unwrap_or_default();
+        let mut full_html = card_html;
+        for (id, title, ..) in &entries {
+            if let Some(rec) = cached_map.get(id) {
+                if let Some(suggested) = &rec.suggested_title {
+                    full_html.push_str(&render_title_oob_span(*id, title, suggested));
+                }
+            }
+        }
+        return (StatusCode::OK, headers, Html(full_html)).into_response();
+    }
+
+    // 4. In-flight deduplication
+    {
+        let mut in_flight = ai_service.in_flight.lock().await;
+        if in_flight.contains(&page_key) {
+            drop(in_flight);
+            for _ in 0..40 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
+                    let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
+                    let card_html = ExecutiveBriefCardTemplate { brief: &brief }
+                        .render()
+                        .unwrap_or_default();
+                    let mut full_html = card_html;
+                    for (id, title, ..) in &entries {
+                        if let Some(rec) = cached_map.get(id) {
+                            if let Some(suggested) = &rec.suggested_title {
+                                full_html.push_str(&render_title_oob_span(*id, title, suggested));
+                            }
+                        }
+                    }
+                    return (StatusCode::OK, headers, Html(full_html)).into_response();
+                }
+            }
+            return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+        }
+        in_flight.insert(page_key.clone());
+    }
+
+    struct InFlightGuard {
+        in_flight: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+        key: String,
+    }
+    impl Drop for InFlightGuard {
+        fn drop(&mut self) {
+            let in_flight = self.in_flight.clone();
+            let key = self.key.clone();
+            tokio::spawn(async move {
+                in_flight.lock().await.remove(&key);
+            });
+        }
+    }
+    let _guard = InFlightGuard {
+        in_flight: ai_service.in_flight.clone(),
+        key: page_key.clone(),
+    };
+
+    // 5. Uncached extraction and batch synthesis
+    let uncached_ids = ai_service.db.get_unprocessed_entry_ids(&entry_ids).await;
+    let uncached_set: std::collections::HashSet<i64> = uncached_ids.into_iter().collect();
+
+    let mut join_set = tokio::task::JoinSet::new();
+    for (id, title, summary, url) in &entries {
+        if uncached_set.contains(id) {
+            let extractor = ai_service.extractor.clone();
+            let id = *id;
+            let title = title.clone();
+            let url = url.clone();
+            let summary = summary.clone();
+            join_set.spawn(async move {
+                let content = extractor.extract_content(&url, &title, &summary).await;
+                (id, title, content)
+            });
+        }
+    }
+
+    let mut extracted = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(item) = res {
+            extracted.push(item);
+        }
+    }
+
+    let mut articles_for_llm = Vec::new();
+    for (id, title, content) in &extracted {
+        articles_for_llm.push((*id, title.as_str(), content.as_str()));
+    }
+
+    let (batch_res, model) = ai_service.llm.summarize_batch(&articles_for_llm).await;
+
+    // Failure contract
+    if batch_res.top.is_empty() && batch_res.items.is_empty() {
+        return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+    }
+
+    let mut summary_inputs = Vec::new();
+    for item in &batch_res.items {
+        summary_inputs.push(crate::ai::db::ArticleSummaryInput {
+            entry_id: item.id,
+            summary: item.brief.clone(),
+            suggested_title: if item.suggested_title.is_empty() { None } else { Some(item.suggested_title.clone()) },
+            model: model.clone(),
+        });
+    }
+
+    let brief_text = if !batch_res.top.is_empty() {
+        Some((page_key.as_str(), batch_res.top.as_str()))
+    } else {
+        None
+    };
+
+    if ai_service.db.save_batch_results(brief_text, &summary_inputs).await.is_err() {
+        return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+    }
+
+    let card_html = if !batch_res.top.is_empty() {
+        ExecutiveBriefCardTemplate { brief: &batch_res.top }
+            .render()
+            .unwrap_or_default()
+    } else {
+        r#"<div id="page-executive-brief" class="hidden"></div>"#.to_string()
+    };
+
+    let mut full_html = card_html;
+    for (id, title, ..) in &entries {
+        if let Some(item) = batch_res.items.iter().find(|i| i.id == *id) {
+            if !item.suggested_title.is_empty() {
+                full_html.push_str(&render_title_oob_span(*id, title, &item.suggested_title));
+            }
+        }
+    }
+
+    (StatusCode::OK, headers, Html(full_html)).into_response()
 }
 
 pub async fn get_entry_ai_summary_htmx(
@@ -498,7 +781,7 @@ pub async fn mark_page_read_htmx(
         offset: Some(0),
     };
 
-    render_entries_list(&schema, None, &headers, &filter_query, config.auth_enabled).await
+    render_entries_list(&schema, None, None, &headers, &filter_query, config.auth_enabled).await
 }
 
 pub async fn get_entry_detail_htmx(
@@ -506,6 +789,7 @@ pub async fn get_entry_detail_htmx(
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
     State(cache): State<Arc<MinifluxCache>>,
+    State(ai_service): State<Arc<AiService>>,
     _headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
@@ -608,9 +892,27 @@ pub async fn get_entry_detail_htmx(
         .unwrap_or("Feed")
         .to_string();
 
+    let teaser_str = if !summary.is_empty() { summary.as_str() } else { content };
+
+    let (suggested_title, summary) = if config.ai_enabled {
+        if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+            (record.suggested_title, record.summary)
+        } else {
+            let fallback_teaser = if !teaser_str.is_empty() {
+                teaser_str.to_string()
+            } else {
+                summary
+            };
+            (None, fallback_teaser)
+        }
+    } else {
+        (None, summary)
+    };
+
     let entry = EntryViewModel {
         id,
         title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        suggested_title,
         feed_title,
         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
@@ -655,7 +957,7 @@ pub async fn get_entry_detail_htmx(
             html.push_str(&oob_filter_unread_count);
         }
         let oob_dot = format!(
-            r#"<span id="entry-{}-dot" hx-swap-oob="true"></span>"#,
+            r#"<span id="entry-{}-dot" class="inline-flex shrink-0 empty:hidden" hx-swap-oob="true"></span>"#,
             id
         );
         let oob_bar = format!(
@@ -779,6 +1081,7 @@ pub async fn mark_entry_read_htmx(
         EntryViewModel {
             id,
             title: e.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            suggested_title: None,
             feed_title: e
                 .get("feed")
                 .and_then(|f| f.get("title"))
@@ -797,6 +1100,7 @@ pub async fn mark_entry_read_htmx(
         EntryViewModel {
             id,
             title: format!("Article {}", id),
+            suggested_title: None,
             feed_title: "Feed".to_string(),
             published_at: "Just now".to_string(),
             reading_time: 2,
@@ -847,6 +1151,7 @@ pub async fn mark_feed_read_htmx(
 
     let template = EntryListTemplate {
         entries: Vec::new(),
+        top_executive_brief: None,
         unread_count,
         current_page: 1,
         total_pages: 1,
@@ -857,6 +1162,10 @@ pub async fn mark_feed_read_htmx(
         status: "all".to_string(),
         search: "".to_string(),
         limit: 50,
+        is_brief_eligible: false,
+        offset: 0,
+        feed_id: None,
+        category_id: None,
     };
 
     match template.render() {
@@ -883,6 +1192,7 @@ pub async fn mark_all_read_htmx(
 
     let template = EntryListTemplate {
         entries: Vec::new(),
+        top_executive_brief: None,
         unread_count: Some(0),
         current_page: 1,
         total_pages: 1,
@@ -893,6 +1203,10 @@ pub async fn mark_all_read_htmx(
         status: "all".to_string(),
         search: "".to_string(),
         limit: 50,
+        is_brief_eligible: false,
+        offset: 0,
+        feed_id: None,
+        category_id: None,
     };
 
     match template.render() {
@@ -1053,5 +1367,58 @@ mod tests {
             "Auth unread filter must not restrict publishedAfter: {}",
             f_unread_auth
         );
+    }
+
+    #[test]
+    fn test_filter_specific_brief() {
+        // Only Unread and Default (None) views with no search are eligible
+        assert!(is_brief_eligible_filter(Some("unread"), None));
+        assert!(is_brief_eligible_filter(None, None));
+
+        // Prohibited: today, read, starred, all, and ANY view with active search
+        assert!(!is_brief_eligible_filter(Some("today"), None), "today view is prohibited from executive brief");
+        assert!(!is_brief_eligible_filter(Some("unread"), Some("search")), "unread with active search is prohibited");
+        assert!(!is_brief_eligible_filter(Some("today"), Some("search")), "today with active search is prohibited");
+        assert!(!is_brief_eligible_filter(Some("read"), None));
+        assert!(!is_brief_eligible_filter(Some("starred"), None));
+        assert!(!is_brief_eligible_filter(Some("all"), None));
+        assert!(!is_brief_eligible_filter(None, Some("search")));
+        assert!(!is_brief_eligible_filter(Some("read"), Some("search")));
+        assert!(!is_brief_eligible_filter(Some("starred"), Some("search")));
+        assert!(!is_brief_eligible_filter(Some("all"), Some("search")));
+    }
+
+    #[test]
+    fn test_escape_html_entities() {
+        let raw = r#"<script>alert("XSS & danger")</script> 'test'"#;
+        let escaped = escape_html(raw);
+        assert!(!escaped.contains('<'));
+        assert!(!escaped.contains('>'));
+        assert!(!escaped.contains('"'));
+        assert!(!escaped.contains('\''));
+        assert!(escaped.contains("&lt;script&gt;"));
+        assert!(escaped.contains("&quot;XSS &amp; danger&quot;"));
+        assert!(escaped.contains("&#x27;test&#x27;"));
+    }
+
+    #[test]
+    fn test_render_title_oob_span_typography_and_escaping() {
+        let span = render_title_oob_span(
+            789,
+            r#"Original <script>alert(1)</script> "Quotes""#,
+            r#"AI & "Punchy" Title"#,
+        );
+        assert!(span.contains("id=\"entry-title-789\""));
+        assert!(span.contains("hx-swap-oob=\"outerHTML\""));
+        assert!(span.contains("class=\"article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors\""));
+        assert!(span.contains(r#"title="Original &lt;script&gt;alert(1)&lt;/script&gt; &quot;Quotes&quot;""#));
+        assert!(span.contains("AI &amp; &quot;Punchy&quot; Title"));
+    }
+
+    #[test]
+    fn test_executive_brief_failure_contract_hidden_div() {
+        let hidden_div = r#"<div id="page-executive-brief" class="hidden"></div>"#;
+        assert!(hidden_div.contains("id=\"page-executive-brief\""));
+        assert!(hidden_div.contains("class=\"hidden\""));
     }
 }

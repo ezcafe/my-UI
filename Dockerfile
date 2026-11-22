@@ -22,8 +22,12 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
 # Build release binary for server and strip symbols
-RUN cargo build --release --bin server && \
-    strip /build/target/release/server
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
+    cargo build --release --bin server && \
+    cp /build/target/release/server /usr/local/bin/server && \
+    strip /usr/local/bin/server
 
 # ---------------------------------------------------------
 # Stage 2: Minimal runtime image
@@ -48,7 +52,7 @@ RUN mkdir -p /app/data && \
     chmod 750 /app/data
 
 # Copy server binary from builder
-COPY --from=builder --chown=appuser:appuser /build/target/release/server /usr/local/bin/server
+COPY --from=builder --chown=appuser:appuser /usr/local/bin/server /usr/local/bin/server
 RUN chmod 755 /usr/local/bin/server
 
 # Non-sensitive default environment variables
@@ -67,7 +71,7 @@ EXPOSE 3000
 
 # Container healthcheck probe against /health
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://127.0.0.1:3000/health || exit 1
+    CMD curl -f "http://127.0.0.1:${PORT:-3000}/health" || exit 1
 
 # Entrypoint execution
 ENTRYPOINT ["/usr/local/bin/server"]

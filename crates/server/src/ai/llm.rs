@@ -38,10 +38,7 @@ impl LlmCliRunner {
     }
 
     pub async fn summarize(&self, title: &str, content: &str) -> (String, String) {
-        let _permit = match self.semaphore.acquire().await {
-            Ok(p) => Some(p),
-            Err(_) => None,
-        };
+        let _permit = self.semaphore.acquire().await.ok();
 
         let prompt = Self::format_prompt(title, content);
         let args = self.build_args(&prompt);

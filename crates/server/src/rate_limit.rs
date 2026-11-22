@@ -22,6 +22,11 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(capacity: f64, refill_per_sec: f64) -> Self {
+        let (capacity, refill_per_sec) = if capacity <= 0.0 || refill_per_sec <= 0.0 {
+            (60.0, 5.0)
+        } else {
+            (capacity, refill_per_sec)
+        };
         Self {
             buckets: Arc::new(Mutex::new(HashMap::new())),
             capacity,
@@ -34,6 +39,12 @@ impl RateLimiter {
     pub async fn check(&self, ip: &str) -> Result<(u64, u64), u64> {
         let mut buckets = self.buckets.lock().await;
         let now = Instant::now();
+
+        if buckets.len() > 100 {
+            let prune_threshold = std::time::Duration::from_secs(600); // 10 minutes
+            buckets.retain(|_, b| now.duration_since(b.last_refill) < prune_threshold);
+        }
+
         let bucket = buckets.entry(ip.to_string()).or_insert_with(|| ClientBucket {
             tokens: self.capacity,
             last_refill: now,
@@ -51,6 +62,11 @@ impl RateLimiter {
             let wait_secs = ((1.0 - bucket.tokens) / self.refill_per_sec).ceil() as u64;
             Err(wait_secs.max(1))
         }
+    }
+
+    pub async fn bucket_count(&self) -> usize {
+        let buckets = self.buckets.lock().await;
+        buckets.len()
     }
 }
 
@@ -167,5 +183,49 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_parameter_validation_defaults() {
+        let limiter = RateLimiter::new(-5.0, 0.0);
+        let res = limiter.check("127.0.0.1").await;
+        assert!(res.is_ok());
+        let (cap, remaining) = res.unwrap();
+        assert_eq!(cap, 60);
+        assert_eq!(remaining, 59);
+
+        let limiter_zero = RateLimiter::new(0.0, -1.0);
+        let res_zero = limiter_zero.check("127.0.0.1").await;
+        assert!(res_zero.is_ok());
+        let (cap_zero, remaining_zero) = res_zero.unwrap();
+        assert_eq!(cap_zero, 60);
+        assert_eq!(remaining_zero, 59);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_stale_bucket_pruning() {
+        let limiter = RateLimiter::new(60.0, 5.0);
+        // Pre-populate 105 buckets
+        {
+            let mut buckets = limiter.buckets.lock().await;
+            let old_time = Instant::now() - std::time::Duration::from_secs(700);
+            for i in 0..105 {
+                buckets.insert(
+                    format!("10.0.0.{}", i),
+                    ClientBucket {
+                        tokens: 60.0,
+                        last_refill: old_time,
+                    },
+                );
+            }
+        }
+
+        assert_eq!(limiter.bucket_count().await, 105);
+
+        // Next check triggers pruning of stale (> 600s) buckets
+        let _ = limiter.check("10.0.0.200").await;
+
+        // Old 105 buckets should be pruned, leaving only the active one
+        assert_eq!(limiter.bucket_count().await, 1);
     }
 }

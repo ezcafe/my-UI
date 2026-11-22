@@ -22,8 +22,7 @@ struct SqliteCustomizer;
 impl r2d2::CustomizeConnection<rusqlite::Connection, rusqlite::Error> for SqliteCustomizer {
     fn on_acquire(&self, conn: &mut rusqlite::Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA busy_timeout = 5000;
+            "PRAGMA busy_timeout = 5000;
              PRAGMA synchronous = NORMAL;",
         )?;
         Ok(())
@@ -57,6 +56,7 @@ impl AiDb {
 
     fn init_schema(&self) -> Result<(), AiDbError> {
         let conn = self.pool.get()?;
+        conn.execute_batch("PRAGMA journal_mode = WAL;")?;
         let version: i32 = conn.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
         if version < 1 {
             conn.execute_batch(
@@ -165,5 +165,18 @@ mod tests {
 
         db.save_summary(202, "Updated Summary", "claude-3-5").await.expect("save 2");
         assert_eq!(db.get_summary(202).await.as_deref(), Some("Updated Summary"));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_wal_mode_active() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_str().unwrap();
+        let db = AiDb::new(path).expect("AiDb init failed");
+
+        let conn = db.pool.get().expect("get connection");
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
+            .expect("query journal_mode");
+        assert_eq!(journal_mode.to_lowercase(), "wal");
     }
 }

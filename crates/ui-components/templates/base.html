@@ -287,12 +287,14 @@
 
     /* HTMX Indicator Utility: Opacity-based to prevent layout shift */
     .htmx-indicator {
+      display: none;
       opacity: 0;
       transition: opacity 150ms ease-in-out;
       pointer-events: none;
     }
     .htmx-request.htmx-indicator,
     .htmx-request .htmx-indicator {
+      display: block;
       opacity: 1;
     }
 
@@ -364,8 +366,10 @@
       const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
       updateThemeIcons(currentTheme);
     });
-    document.body.addEventListener("htmx:afterSwap", () => {
-      lucide.createIcons();
+    document.body.addEventListener("htmx:afterSwap", (evt) => {
+      if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons({ root: evt.detail.target });
+      }
     });
   </script>
 </body>

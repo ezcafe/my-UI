@@ -1119,10 +1119,6 @@ mod tests {
             "Index template must define cacheLoadedArticlesFromDom helper"
         );
         assert!(
-            html.contains("id=\"unread-pill\"") && html.contains("data-base-unread=\"7\""),
-            "unread-pill must include data-base-unread attribute"
-        );
-        assert!(
             html.contains("id=\"filter-unread-count\"") && html.contains("data-base-unread=\"7\""),
             "filter-unread-count must include data-base-unread attribute"
         );
@@ -1142,10 +1138,6 @@ mod tests {
         assert!(
             html.contains("function markArticleRead("),
             "Index template must define markArticleRead function in script block"
-        );
-        assert!(
-            html.contains("id=\"unread-pill\"") && html.contains("data-base-unread=\"7\""),
-            "unread-pill must include data-base-unread attribute"
         );
         assert!(
             html.contains("id=\"filter-unread-count\"") && html.contains("data-base-unread=\"7\""),
@@ -1218,5 +1210,54 @@ mod tests {
             handle_fn_slice.contains("closeDetailPanel()"),
             "handleFilterClick must call closeDetailPanel() to return to list view"
         );
+    }
+
+    #[test]
+    fn test_entry_list_hides_pagination_when_no_news() {
+        let template = EntryListTemplate {
+            entries: vec![],
+            unread_count: Some(0),
+            current_page: 1,
+            total_pages: 5,
+            has_prev: false,
+            has_next: true,
+            prev_offset: 0,
+            next_offset: 50,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+        };
+        let html = template.render().expect("Failed to render EntryListTemplate");
+        assert!(!html.contains("aria-label=\"Pagination\""));
+        assert!(!html.contains("Page 1 of 5"));
+        assert!(html.contains("All caught up!"));
+    }
+
+    #[test]
+    fn test_index_template_omits_title_unread_counting() {
+        let template = IndexTemplate {
+            unread_count: 7,
+            today_count: 3,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+        assert!(html.contains("My News"));
+        assert!(!html.contains("7 unread"));
+    }
+
+    #[test]
+    fn test_htmx_indicator_hidden_by_default() {
+        let template = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+        assert!(html.contains(".htmx-indicator {\n      display: none;"));
+        assert!(html.contains(".htmx-request.htmx-indicator,\n    .htmx-request .htmx-indicator {\n      display: block;"));
     }
 }

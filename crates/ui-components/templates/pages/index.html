@@ -9,9 +9,6 @@
     <header class="h-14 px-6 border-b border-border grid grid-cols-[1fr_auto_1fr] items-center shrink-0 select-none bg-card">
       <div class="flex items-center gap-3">
         <span class="font-display text-xl font-bold uppercase tracking-wider text-brand">My News</span>
-        <span id="unread-pill" data-base-unread="{{ unread_count }}" class="px-2.5 py-0.5 rounded-full bg-muted border border-border text-foreground font-bold text-xs tabular">
-          {{ unread_count }} unread
-        </span>
       </div>
 
       <div class="flex justify-center">
@@ -210,7 +207,7 @@
     if (entriesList) {
       entriesList.innerHTML = cachedHtml;
       if (window.lucide && typeof lucide.createIcons === 'function') {
-        lucide.createIcons();
+        lucide.createIcons({ root: entriesList });
       }
       if (typeof syncDomReadStates === 'function') {
         syncDomReadStates();
@@ -302,15 +299,26 @@
   function filterArticlesClientSide(query) {
     const q = (query || '').toLowerCase().trim();
     const items = document.querySelectorAll('#entries-list .annuaire-row, #entries-list .ar-list-item');
+    let visibleCount = 0;
     items.forEach(item => {
       const titleEl = item.querySelector('.article-title') || item;
       const title = titleEl.textContent.toLowerCase();
       if (!q || title.includes(q)) {
         item.style.display = '';
+        visibleCount++;
       } else {
         item.style.display = 'none';
       }
     });
+
+    const pagination = document.querySelector('#entries-list nav[aria-label="Pagination"]');
+    if (pagination) {
+      if (q || visibleCount === 0) {
+        pagination.style.display = 'none';
+      } else {
+        pagination.style.display = '';
+      }
+    }
   }
 
   function getVisibleEntryIds() {
@@ -456,7 +464,7 @@
       panel.classList.remove('hidden');
 
       if (window.lucide && typeof lucide.createIcons === 'function') {
-        lucide.createIcons();
+        lucide.createIcons({ root: panel });
       }
       if (window.htmx && typeof htmx.process === 'function') {
         htmx.process(panel);
@@ -789,7 +797,7 @@
           `).join('');
         }
         if (window.lucide && typeof lucide.createIcons === 'function') {
-          lucide.createIcons();
+          lucide.createIcons({ root: list });
         }
         syncDomReadStates();
       };
@@ -868,7 +876,7 @@
         const list = document.getElementById('entries-list');
         if (list) list.appendChild(emptyEl);
         if (window.lucide && typeof lucide.createIcons === 'function') {
-          lucide.createIcons();
+          lucide.createIcons({ root: emptyEl });
         }
       }
     } else if (emptyEl) {
@@ -943,7 +951,9 @@
     toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background px-4 py-2.5 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
     toast.innerHTML = '<i data-lucide="bookmark" class="w-4 h-4 text-brand shrink-0"></i><span>' + message + '</span>';
     container.appendChild(toast);
-    if (window.lucide) { lucide.createIcons(); }
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: toast });
+    }
     setTimeout(() => {
       toast.style.opacity = '0';
       setTimeout(() => toast.remove(), 300);

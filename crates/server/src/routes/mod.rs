@@ -92,7 +92,7 @@ mod tests {
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(html.contains("My News"));
-        assert!(html.contains("id=\"unread-pill\""));
+        assert!(html.contains("id=\"filter-unread-count\""));
     }
 
     #[tokio::test]

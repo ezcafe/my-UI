@@ -1,5 +1,13 @@
 use scraper::{ElementRef, Html, Node, Selector};
+use std::sync::LazyLock;
 use std::time::Duration;
+
+static ARTICLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("article").expect("valid article selector")
+});
+static BODY_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("body").expect("valid body selector")
+});
 
 #[derive(Clone)]
 pub struct ArticleExtractor {
@@ -21,18 +29,14 @@ impl ArticleExtractor {
 
         // 1. Try finding <article> tag
         let mut extracted_text = String::new();
-        if let Ok(article_sel) = Selector::parse("article") {
-            if let Some(article_elem) = document.select(&article_sel).next() {
-                extracted_text = Self::extract_clean_text(article_elem);
-            }
+        if let Some(article_elem) = document.select(&ARTICLE_SELECTOR).next() {
+            extracted_text = Self::extract_clean_text(article_elem);
         }
 
         // 2. If <article> tag is absent or too short (< 50 chars), fallback to <body>
         if extracted_text.len() < 50 {
-            if let Ok(body_sel) = Selector::parse("body") {
-                if let Some(body_elem) = document.select(&body_sel).next() {
-                    extracted_text = Self::extract_clean_text(body_elem);
-                }
+            if let Some(body_elem) = document.select(&BODY_SELECTOR).next() {
+                extracted_text = Self::extract_clean_text(body_elem);
             }
         }
 
@@ -212,5 +216,14 @@ mod tests {
         let body_after_title = content.split("\n\n").nth(1).expect("body content after title");
         let word_count = body_after_title.split_whitespace().count();
         assert_eq!(word_count, 500);
+    }
+
+    #[test]
+    fn test_extractor_parses_content_with_lazylock_selectors() {
+        let html = "<article><p>Hello world from lazy selector article extraction!</p></article>";
+        let extractor = ArticleExtractor::new();
+        let content = extractor.parse_html(html, "Lazy Test", "teaser");
+        assert!(content.contains("Title: Lazy Test"));
+        assert!(content.contains("Hello world from lazy selector article extraction!"));
     }
 }

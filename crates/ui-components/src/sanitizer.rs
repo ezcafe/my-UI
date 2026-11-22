@@ -1,5 +1,14 @@
 use ammonia::Builder;
+use regex::Regex;
 use std::collections::HashSet;
+use std::sync::LazyLock;
+
+static RE_ANCHOR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"<a(\s+[^>]*)?>"#).expect("Valid anchor regex")
+});
+static RE_TARGET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"target="[^"]*""#).expect("Valid target regex")
+});
 
 pub fn sanitize_html(input: &str) -> String {
     let mut builder = Builder::default();
@@ -33,12 +42,10 @@ pub fn sanitize_html(input: &str) -> String {
     let cleaned = builder.clean(input).to_string();
 
     // Ensure all <a> tags have target="_blank"
-    let re = regex::Regex::new(r#"<a(\s+[^>]*)?>"#).unwrap();
-    let re_target = regex::Regex::new(r#"target="[^"]*""#).unwrap();
-    re.replace_all(&cleaned, |caps: &regex::Captures| {
+    RE_ANCHOR.replace_all(&cleaned, |caps: &regex::Captures| {
         let tag = caps.get(0).unwrap().as_str();
         if tag.contains("target=") {
-            re_target.replace(tag, r#"target="_blank""#).to_string()
+            RE_TARGET.replace(tag, r#"target="_blank""#).to_string()
         } else {
             tag.replacen("<a", "<a target=\"_blank\"", 1)
         }
@@ -75,5 +82,14 @@ mod tests {
         assert!(clean.contains(r#"<a target="_blank" href="https://a.com" rel="noopener noreferrer">A</a>"#));
         assert!(clean.contains(r#"<a target="_blank" href="https://b.com" rel="noopener noreferrer">B</a>"#));
         assert!(clean.contains(r#"<a target="_blank" href="https://c.com" rel="noopener noreferrer">C</a>"#));
+    }
+
+    #[test]
+    fn test_sanitizer_preserves_links_and_attributes_with_lazylock() {
+        let input = r#"<p><a href="https://example.com" class="link">Visit</a></p>"#;
+        let output = sanitize_html(input);
+        assert!(output.contains(r#"href="https://example.com""#));
+        assert!(output.contains(r#"target="_blank""#));
+        assert!(output.contains(r#"rel="noopener noreferrer""#));
     }
 }

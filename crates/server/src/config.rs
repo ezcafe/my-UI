@@ -126,10 +126,11 @@ impl Config {
         let miniflux_base_url = get_req("MINIFLUX_BASE_URL")?;
         let miniflux_api_key = get_req("MINIFLUX_API_KEY")?;
 
-        let ai_enabled = map
-            .get("AI_ENABLED")
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            .unwrap_or(false);
+        let ai_enabled = auth_enabled
+            && map
+                .get("AI_ENABLED")
+                .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                .unwrap_or(false);
 
         let llm_cli_cmd = map
             .get("LLM_CLI_CMD")
@@ -318,5 +319,54 @@ mod tests {
         assert!(!config.auth_enabled);
         assert!(!config.session_secret.is_empty());
         assert!(!config.oidc_issuer_url.is_empty());
+    }
+
+    #[test]
+    fn test_config_ai_disabled_when_auth_disabled() {
+        let vars = [
+            ("AUTH_ENABLED", "false"),
+            ("AI_ENABLED", "true"),
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+        ];
+        let config = Config::from_map(&make_test_env(&vars)).expect("should succeed");
+        assert!(!config.auth_enabled);
+        assert!(
+            !config.ai_enabled,
+            "ai_enabled must be false when auth_enabled is false even if AI_ENABLED=true"
+        );
+    }
+
+    #[test]
+    fn test_config_ai_matrix_permutations() {
+        let base_vars = [
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            ("OIDC_ISSUER_URL", "https://id.example.com"),
+            ("OIDC_CLIENT_ID", "client-123"),
+            ("OIDC_CLIENT_SECRET", "secret-456"),
+            ("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback"),
+        ];
+
+        let test_matrix = [
+            ("false", "false", false),
+            ("false", "true", false),
+            ("true", "false", false),
+            ("true", "true", true),
+        ];
+
+        for (auth_val, ai_val, expected_ai) in test_matrix {
+            let mut map = make_test_env(&base_vars);
+            map.insert("AUTH_ENABLED".to_string(), auth_val.to_string());
+            map.insert("AI_ENABLED".to_string(), ai_val.to_string());
+
+            let config = Config::from_map(&map).expect("config load");
+            assert_eq!(
+                config.ai_enabled, expected_ai,
+                "Failed matrix permutation AUTH_ENABLED={}, AI_ENABLED={}: expected ai_enabled={}",
+                auth_val, ai_val, expected_ai
+            );
+        }
     }
 }

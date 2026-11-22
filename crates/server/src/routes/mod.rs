@@ -887,4 +887,49 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
+
+    #[tokio::test]
+    async fn test_hx_entries_ai_summary_disabled_when_ai_flag_off() {
+        let server = MockServer::start().await;
+        let (app, cookie) = setup_test_app_ai(&server.uri(), false).await;
+
+        let req = Request::builder()
+            .uri("/hx/entries/123/ai-summary")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("HX-Reswap").and_then(|h| h.to_str().ok()),
+            Some("none")
+        );
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body.contains("AI digest is disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_hx_entries_ai_summary_disabled_in_guest_mode() {
+        let server = MockServer::start().await;
+        let app = setup_test_app_guest(&server.uri()).await;
+
+        let req = Request::builder()
+            .uri("/hx/entries/123/ai-summary")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("HX-Reswap").and_then(|h| h.to_str().ok()),
+            Some("none")
+        );
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(body.contains("AI digest is disabled"));
+    }
 }

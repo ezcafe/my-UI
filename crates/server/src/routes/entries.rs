@@ -383,9 +383,15 @@ pub async fn list_entries_htmx(
 pub async fn get_entry_ai_summary_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
     State(ai_service): State<Arc<AiService>>,
+    headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
+    if !config.ai_enabled {
+        return handle_htmx_error(&headers, AppError::NotFound("AI digest is disabled".to_string()));
+    }
+
     let gql = format!(
         r#"query {{
             entry(id: "{}") {{

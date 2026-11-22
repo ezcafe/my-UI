@@ -50,6 +50,31 @@ Open `.env` and fill in your values. Key settings include:
   - `LLM_MODEL`: Model name (default: `gpt-4o-mini`).
   - `AI_DB_PATH`: Path to SQLite database storing summaries (default in container: `/app/data/summaries.db`).
 
+### 3. Generate a secure `SESSION_SECRET`
+
+When `AUTH_ENABLED=true`, `SESSION_SECRET` is required to encrypt session cookies using AES-256-GCM. It must be **at least 32 characters long**.
+
+Generate a random secret using any of the following commands:
+
+```bash
+# Using OpenSSL (Recommended):
+openssl rand -hex 32
+
+# Or using Python:
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# Or using /dev/urandom:
+head -c 32 /dev/urandom | base64
+```
+
+Copy the output and paste it into your `.env`:
+
+```bash
+SESSION_SECRET=your_generated_random_string_here
+```
+
+*(Note: If `AUTH_ENABLED=false`, a built-in default secret is automatically used for guest mode).*
+
 ---
 
 ## AI Article Summarization Setup

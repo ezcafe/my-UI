@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -22,9 +22,8 @@
 
 ## Run log
 
-- **12:48** · build · verify-pass · TDD mobile container query implemented
-- **12:54** · code-review-phase · clean · 05 verified clean
 - **13:00** · build · verify-pass · searchbox mobile compact & expand (Option 2)
 - **13:02** · test-lite · success · 40 tests passed cleanly
 - **13:16** · build/test · verify-pass · All filter label & generic UI error messages
 - **13:18** · gate-c · approved · commit and push approved
+- **13:21** · merge · success · bc66e6e committed and pushed to origin main

@@ -106,3 +106,58 @@ pub fn build_app_with_ai(
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use miniflux_client::client::MinifluxClient;
+    use miniflux_client::schema::build_schema;
+    use serde_json::Value;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: "http://127.0.0.1:8080".to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: false,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            ai_db_path: ":memory:".to_string(),
+        });
+
+        let client = MinifluxClient::new("http://127.0.0.1:8080".to_string(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = build_app(config, schema);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+}
+

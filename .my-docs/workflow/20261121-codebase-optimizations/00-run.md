@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | yes | yes
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 1
 - **Gate B approved:** gen:1
 - **Build armed:** gen:1
@@ -36,3 +36,4 @@
 - **21:48** · review · Adv, Quality, api, db, Merged all clean
 - **21:50** · test-lite · 06 success (121 tests pass, 0 warnings)
 - **08:39** · gate-c · approved: commit
+- **08:40** · merge · committed b3a23f33 · status: paused

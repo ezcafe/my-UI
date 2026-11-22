@@ -1,0 +1,24 @@
+# Rust build artifacts
+target/
+
+# Git and GitHub metadata
+.git/
+.gitignore
+.github/
+
+# Workflow and AI metadata
+.gemini/
+.my-docs/
+
+# Local runtime databases and SQLite files
+data/
+crates/*/data/
+*.sqlite*
+*.db*
+
+# Secrets and environment configurations
+.env*
+!.env.example
+
+# Markdown documentation
+*.md

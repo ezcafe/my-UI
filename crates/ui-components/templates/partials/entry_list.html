@@ -132,10 +132,10 @@
       {% endif %}
       {% endfor %}
 
-      <!-- Priority 2: 3-column row of featured articles below hero -->
+      <!-- Priority 2: Featured articles grid below hero (up to 6 items) -->
       <div class="magazine-p2-grid">
         {% for entry in entries %}
-        {% if loop.index0 >= 1 && loop.index0 <= 3 %}
+        {% if loop.index0 >= 1 && loop.index0 <= 6 %}
         <div class="magazine-card priority-2 group rounded-lg border border-border bg-card hover:border-foreground/30 transition-colors flex flex-col overflow-hidden select-none {% if entry.is_read %}read opacity-50 grayscale{% else %}unread{% endif %}"
              id="mag-entry-{{ entry.id }}"
              data-entry-id="{{ entry.id }}"
@@ -165,10 +165,10 @@
       </div>
     </div>
 
-    <!-- Right Column: Priority 3 (Title Only with Brief Tooltip) -->
+    <!-- Right Column: Priority 3 (Title Only with Brief Tooltip, starting after P2) -->
     <div id="mag-col-right" class="w-full flex flex-col gap-3">
       {% for entry in entries %}
-      {% if loop.index0 >= 4 %}
+      {% if loop.index0 >= 7 %}
       <div class="magazine-card priority-3 group rounded-lg border border-border bg-card hover:border-foreground/30 transition-colors p-3.5 flex flex-col justify-center overflow-hidden select-none {% if entry.is_read %}read opacity-50 grayscale{% else %}unread{% endif %}"
            id="mag-entry-{{ entry.id }}"
            data-entry-id="{{ entry.id }}"

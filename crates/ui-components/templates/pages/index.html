@@ -27,14 +27,14 @@
           <i data-lucide="moon" id="theme-icon-moon" class="w-4 h-4"></i>
         </button>
 
-        <!-- Magazine / List View Switcher (Icon Only) -->
+        <!-- Magazine / List View Switcher (Icon Only, Status via Title) -->
         <button 
           id="ai-toggle-btn"
           type="button" 
           onclick="toggleAiView()" 
-          class="p-2 rounded-full border border-primary bg-primary text-primary-foreground transition-colors cursor-pointer select-none" 
+          class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors cursor-pointer select-none" 
           title="Switch to List view">
-          <i data-lucide="newspaper" id="view-icon-magazine" class="w-4 h-4 text-brand"></i>
+          <i data-lucide="newspaper" id="view-icon-magazine" class="w-4 h-4"></i>
           <i data-lucide="list" id="view-icon-list" class="w-4 h-4 hidden"></i>
         </button>
 
@@ -206,13 +206,12 @@
     const magView = document.getElementById('entries-magazine-view');
 
     if (btn) {
+      btn.className = 'p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors cursor-pointer select-none';
       if (mode === 'ai') {
-        btn.className = 'p-2 rounded-full border border-primary bg-primary text-primary-foreground transition-colors cursor-pointer select-none';
         btn.title = 'Switch to List view';
         if (iconMag) iconMag.classList.remove('hidden');
         if (iconList) iconList.classList.add('hidden');
       } else {
-        btn.className = 'p-2 rounded-full border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer select-none';
         btn.title = 'Switch to Magazine view';
         if (iconMag) iconMag.classList.add('hidden');
         if (iconList) iconList.classList.remove('hidden');

@@ -40,3 +40,5 @@
 - **10:46** · toggle-icon-only · verify-pass · button switched to icon-only (newspaper vs list icon), 190 tests passing
 - **10:50** · p3-title-brief-tooltip · verify-pass · priority 3 title and card display brief on hover tooltip, 190 tests passing
 - **10:51** · merge · success · merged and committed per user Gate C approval ("merge and push")
+- **10:53** · p2-six-items · verify-pass · expanded priority 2 to 6 items, 190 tests passing
+- **10:54** · neutral-view-toggle-button · verify-pass · removed active styling from view toggle button, relying on title for status, 190 tests passing

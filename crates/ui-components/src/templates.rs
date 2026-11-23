@@ -2063,8 +2063,8 @@ mod tests {
             is_read: false,
             is_bookmarked: false,
         });
-        // Entries 1..5: Priority 2 (Up to 4 standard cards)
-        for i in 1..=4 {
+        // Entries 1..=6: Priority 2 (6 featured cards in center column)
+        for i in 1..=6 {
             entries.push(EntryViewModel {
                 id: 101 + i,
                 title: format!("Standard Article {}", i),
@@ -2081,9 +2081,9 @@ mod tests {
                 is_bookmarked: false,
             });
         }
-        // Entry 5: Priority 3 (Card in right column)
+        // Entry 7: Priority 3 (Card in right column)
         entries.push(EntryViewModel {
-            id: 106,
+            id: 108,
             title: "Compact Bottom Article".into(),
             suggested_title: None,
             feed_title: "Hacker News".into(),
@@ -2092,7 +2092,7 @@ mod tests {
             reading_time: 1,
             summary: "Summary for Priority 3".into(),
             image_url: None,
-            url: "https://example.com/106".into(),
+            url: "https://example.com/108".into(),
             author: None,
             is_read: false,
             is_bookmarked: false,
@@ -2165,8 +2165,9 @@ mod tests {
         assert!(mag_view.contains("Hero Suggested Headline"), "Hero must render suggested title: {}", mag_view);
         assert!(mag_view.contains("AI summary brief for hero article"), "Hero must render brief: {}", mag_view);
 
-        // Priority 2 checks: Small photo + brief
+        // Priority 2 checks: 6 featured cards with small photo + brief
         assert!(mag_view.contains("Brief for standard article 1"), "Priority 2 must render brief: {}", mag_view);
+        assert!(mag_view.contains("Brief for standard article 6"), "Priority 2 must render all 6 items: {}", mag_view);
 
         // Priority 3 checks: Renders title in right column with normal font weight and tooltip brief
         assert!(mag_view.contains("Compact Bottom Article"), "Priority 3 must render title: {}", mag_view);
@@ -2211,6 +2212,8 @@ mod tests {
         assert!(ai_btn_pos > theme_pos, "ai-toggle-btn must be positioned after theme-toggle-btn");
 
         assert!(html.contains("onclick=\"toggleAiView()\""), "AI toggle button must call toggleAiView()");
+        assert!(html.contains("border-border bg-card hover:bg-muted text-foreground"), "Button must use neutral styling without active background: {}", html);
+        assert!(!html.contains("border-primary bg-primary"), "Button must NOT use primary active background: {}", html);
         assert!(html.contains("id=\"view-icon-magazine\""), "Must contain magazine icon: {}", html);
         assert!(html.contains("id=\"view-icon-list\""), "Must contain list icon: {}", html);
         assert!(html.contains("toggleAiView"), "Must define toggleAiView in script");

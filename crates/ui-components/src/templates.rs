@@ -1025,6 +1025,8 @@ mod tests {
         assert!(html.contains(".magazine-3col-grid"), "base.html must include .magazine-3col-grid in style block");
         assert!(html.contains("magazine-container"), "base.html must include magazine-container");
         assert!(html.contains("minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr)"), "base.html must define 3-column grid template");
+        assert!(html.contains(".magazine-p2-grid"), "base.html must include .magazine-p2-grid");
+        assert!(html.contains("repeat(3, minmax(0, 1fr))"), "base.html must define 3-column grid for priority 2: {}", html);
     }
 
     #[test]

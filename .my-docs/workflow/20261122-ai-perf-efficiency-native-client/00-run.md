@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** full
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | yes | yes
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 0
 - **Gate B approved:** gen:0
 - **Build armed:** none
@@ -22,8 +22,8 @@
 
 ## Run log
 
-- **20:59** · smoke · smoke-pass · Smoke source Smoke-Task
 - **20:59** · clarity-check · ok — adversarial
 - **21:03** · merge-findings · clean · all review axes & lenses clean
 - **21:04** · test-full · success · 171 tests passing, path full
 - **21:06** · gate-c · approved · commit, push
+- **21:08** · merge · commit `5402626` · pushed origin/main · status done

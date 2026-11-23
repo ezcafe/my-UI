@@ -84,7 +84,7 @@ pub async fn index_page(
         d
     };
 
-    let unread_count = if config.auth_enabled {
+    let mut unread_count = if config.auth_enabled {
         data.get("unreadCounter")
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32
@@ -104,6 +104,10 @@ pub async fn index_page(
         .and_then(|r| r.get("total"))
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
+
+    if unread_count == 0 && total > 0 {
+        unread_count = total as i32;
+    }
 
     let limit: i64 = 50;
     let offset: i64 = 0;

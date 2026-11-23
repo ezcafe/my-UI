@@ -1892,4 +1892,62 @@ mod tests {
         assert!(html.contains(r#"aria-label="Pagination""#), "Must contain pagination nav");
         assert!(!html.contains("border-t border-border"), "Pagination nav must not have border-t border-border: {}", html);
     }
+
+    #[test]
+    fn test_render_entry_list_with_static_top_executive_brief() {
+        let entry = EntryViewModel {
+            id: 1,
+            title: "Test".into(),
+            suggested_title: None,
+            feed_title: "Feed".into(),
+            published_at: "now".into(),
+            reading_time: 1,
+            summary: "S".into(),
+            url: "https://example.com".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let list_tpl = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: Some("Pre-existing Executive Brief Summary".to_string()),
+            unread_count: Some(5),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 15,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+        let html = list_tpl.render().expect("render entry list with static brief");
+        assert!(html.contains("Pre-existing Executive Brief Summary"), "Must contain static executive brief: {}", html);
+        assert!(html.contains("Executive Brief"), "Must contain Executive Brief header: {}", html);
+        assert!(!html.contains("hx-trigger=\"load\""), "Must not contain hx-trigger=load: {}", html);
+        assert!(!html.contains("Generating Executive Brief..."), "Must not contain loading skeleton: {}", html);
+    }
+
+    #[test]
+    fn test_index_template_brief_caching_and_throttling_scripts() {
+        let template = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("Failed to render IndexTemplate");
+
+        assert!(html.contains("readSinceLastBriefSet = new Set()"), "Must define readSinceLastBriefSet");
+        assert!(html.contains("htmx.process(entriesList)"), "Must call htmx.process in applyCachedList");
+        assert!(html.contains("request_brief"), "Must configure request_brief parameter");
+        assert!(html.contains("effectiveUnread = visibleUnreadRowCount"), "Must fallback effectiveUnread in syncDomReadStates");
+        assert!(html.contains("isBriefSwap = targetId === 'page-executive-brief'"), "Must handle brief swap in htmx:afterSwap");
+    }
 }

@@ -26,6 +26,7 @@ pub struct EntriesFilterQuery {
     pub search: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub request_brief: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -205,7 +206,7 @@ pub async fn render_entries_list(
         }
     };
 
-    let unread_count = if auth_enabled {
+    let mut unread_count = if auth_enabled {
         data.get("unreadCounter").and_then(|v| v.as_i64()).map(|c| c as i32)
     } else {
         data.get("todayCounter").and_then(|v| v.as_i64()).map(|c| c as i32)
@@ -216,6 +217,11 @@ pub async fn render_entries_list(
         .and_then(|r| r.get("total"))
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
+
+    let is_unread_status = query.status.as_deref() == Some("unread") || query.status.is_none();
+    if unread_count.unwrap_or(0) == 0 && total > 0 && is_unread_status {
+        unread_count = Some(total as i32);
+    }
 
     let limit = limit_val;
     let offset = offset_val;
@@ -258,12 +264,14 @@ pub async fn render_entries_list(
         })
         .unwrap_or_default();
 
-    let is_eligible = is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref());
+    let filter_eligible = is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref());
+    let request_brief = query.request_brief.unwrap_or(true);
+    let is_eligible = filter_eligible && request_brief;
 
-    let (ai_summaries, _top_executive_brief) = if let Some(ai) = ai_service {
+    let (ai_summaries, top_executive_brief) = if let Some(ai) = ai_service {
         let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
         let summaries = ai.db.get_batch_summaries(&entry_ids).await;
-        let page_brief = if is_eligible {
+        let page_brief = if filter_eligible && !is_eligible {
             ai.db.get_latest_page_brief().await
         } else {
             None
@@ -300,7 +308,7 @@ pub async fn render_entries_list(
 
     let template = EntryListTemplate {
         entries,
-        top_executive_brief: None,
+        top_executive_brief,
         unread_count,
         current_page,
         total_pages,
@@ -854,6 +862,7 @@ pub async fn mark_page_read_htmx(
         category_id: form.category_id,
         limit: Some(50),
         offset: Some(0),
+        request_brief: None,
     };
 
     render_entries_list(&schema, None, None, &headers, &filter_query, config.auth_enabled).await
@@ -1598,6 +1607,7 @@ mod tests {
             feed_id: None,
             category_id: None,
             search: None,
+            request_brief: None,
         };
 
         let response = executive_brief_htmx(
@@ -1753,6 +1763,7 @@ mod tests {
             feed_id: None,
             category_id: None,
             search: None,
+            request_brief: None,
         };
 
         let response = executive_brief_htmx(
@@ -1785,5 +1796,169 @@ mod tests {
         let page_key = crate::ai::compute_page_key("unread", &[888, 999]);
         let saved_brief = db.get_page_brief_by_key(&page_key).await;
         assert_eq!(saved_brief.as_deref(), Some("Whole Page Brief Synthesis"));
+    }
+
+    #[test]
+    fn test_entries_filter_query_request_brief_parsing() {
+        use axum::extract::Query;
+        use axum::http::Uri;
+
+        let uri: Uri = "/entries?request_brief=true".parse().unwrap();
+        let Query(q): Query<EntriesFilterQuery> = Query::try_from_uri(&uri).unwrap();
+        assert_eq!(q.request_brief, Some(true));
+
+        let uri: Uri = "/entries?request_brief=false".parse().unwrap();
+        let Query(q): Query<EntriesFilterQuery> = Query::try_from_uri(&uri).unwrap();
+        assert_eq!(q.request_brief, Some(false));
+
+        let uri: Uri = "/entries".parse().unwrap();
+        let Query(q): Query<EntriesFilterQuery> = Query::try_from_uri(&uri).unwrap();
+        assert_eq!(q.request_brief, None);
+    }
+
+    #[tokio::test]
+    async fn test_unread_count_fallback_to_total_in_entries() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use http_body_util::BodyExt;
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 5,
+                "entries": [{
+                    "id": 100,
+                    "user_id": 1,
+                    "feed_id": 1,
+                    "title": "Unread Article",
+                    "url": "http://example.com/100",
+                    "comments_url": "",
+                    "author": "Author",
+                    "content": "Content",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 1,
+                    "created_at": "2026-11-23T08:00:00Z",
+                    "published_at": "2026-11-23T08:00:00Z",
+                    "feed": {
+                        "id": 1,
+                        "user_id": 1,
+                        "title": "Tech",
+                        "checked_at": "2026-11-23T08:00:00Z",
+                        "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "reads": {},
+                "unreads": {}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let headers = axum::http::HeaderMap::new();
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            ..Default::default()
+        };
+
+        let response = render_entries_list(&schema, None, None, &headers, &query, true).await;
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains(r#"data-base-unread="5""#), "Must fallback unread count to total (5) when counter is 0: {}", html);
+        assert!(html.contains("(5)"), "Must display (5) in unread count span: {}", html);
+    }
+
+    #[tokio::test]
+    async fn test_render_entries_list_request_brief_false_loads_latest_page_brief() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use http_body_util::BodyExt;
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 1,
+                "entries": [{
+                    "id": 100,
+                    "user_id": 1,
+                    "feed_id": 1,
+                    "title": "Article",
+                    "url": "http://example.com/100",
+                    "comments_url": "",
+                    "author": "Author",
+                    "content": "Content",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 1,
+                    "created_at": "2026-11-23T08:00:00Z",
+                    "published_at": "2026-11-23T08:00:00Z",
+                    "feed": {
+                        "id": 1,
+                        "user_id": 1,
+                        "title": "Tech",
+                        "checked_at": "2026-11-23T08:00:00Z",
+                        "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "reads": {},
+                "unreads": { "1": 1 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(crate::ai::AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        db.save_page_brief("Existing Latest Executive Brief").await.unwrap();
+
+        let llm = crate::ai::llm::LlmCliRunner::new(
+            "llm".to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        let ai_service = crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        };
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let headers = axum::http::HeaderMap::new();
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            request_brief: Some(false),
+            ..Default::default()
+        };
+
+        let response = render_entries_list(&schema, None, Some(&ai_service), &headers, &query, true).await;
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("Existing Latest Executive Brief"), "Must render latest saved page brief: {}", html);
+        assert!(!html.contains("hx-trigger=\"load\""), "Must not trigger brief generation when request_brief is false: {}", html);
     }
 }

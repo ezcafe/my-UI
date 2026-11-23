@@ -162,6 +162,14 @@
 <script>
   const FILTER_CACHE_TTL_MS = 60000;
   const filterCache = new Map();
+  const readSinceLastBriefSet = new Set();
+
+  function recordReadArticle(id) {
+    const numId = Number(id);
+    if (numId) {
+      readSinceLastBriefSet.add(numId);
+    }
+  }
 
   function invalidateFilterCache() {
     filterCache.clear();
@@ -192,6 +200,9 @@
       entriesList.innerHTML = cachedHtml;
       if (window.lucide && typeof lucide.createIcons === 'function') {
         lucide.createIcons({ root: entriesList });
+      }
+      if (window.htmx && typeof htmx.process === 'function') {
+        htmx.process(entriesList);
       }
       if (typeof syncDomReadStates === 'function') {
         syncDomReadStates();
@@ -399,6 +410,8 @@
     const numId = Number(id);
     if (!numId) return;
 
+    recordReadArticle(numId);
+
     // Optimistic visual update
     const bar = document.getElementById('entry-' + numId + '-bar');
     if (bar) {
@@ -592,10 +605,25 @@
     }
   });
 
+  document.addEventListener('htmx:configRequest', (evt) => {
+    const trigger = evt.detail && evt.detail.elt;
+    if (trigger && (trigger.id === 'filter-unread' || (typeof trigger.closest === 'function' && trigger.closest('#filter-unread')))) {
+      if (readSinceLastBriefSet.size >= 10) {
+        evt.detail.parameters['request_brief'] = 'true';
+        readSinceLastBriefSet.clear();
+      } else {
+        evt.detail.parameters['request_brief'] = 'false';
+      }
+    }
+  });
+
   document.addEventListener('htmx:afterSwap', (evt) => {
     if (evt.detail && evt.detail.target) {
       const targetId = evt.detail.target.id || '';
-      if (targetId === 'entries-list') {
+      const isEntriesSwap = targetId === 'entries-list';
+      const isBriefSwap = targetId === 'page-executive-brief' || (evt.detail.target && evt.detail.target.closest('#entries-list') && evt.detail.target.id !== 'detail-panel');
+
+      if (isEntriesSwap || isBriefSwap) {
         let status = null;
         if (evt.detail.elt && typeof evt.detail.elt.getAttribute === 'function') {
           status = evt.detail.elt.getAttribute('data-status');
@@ -606,10 +634,11 @@
         }
         const searchInput = document.getElementById('search-input');
         const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
-        if (status && !searchQuery) {
+        const entriesListEl = document.getElementById('entries-list');
+        if (status && !searchQuery && entriesListEl) {
           filterCache.set(status, {
             timestamp: Date.now(),
-            html: evt.detail.target.innerHTML,
+            html: entriesListEl.innerHTML,
           });
         }
         if (typeof syncDomReadStates === 'function') {
@@ -622,6 +651,7 @@
           const detail = panel.querySelector('[data-entry-id]');
           if (detail) {
             const entryId = detail.getAttribute('data-entry-id');
+            recordReadArticle(entryId);
             // Do not cache error cards
             if (entryId && !panel.querySelector('.stroke-destructive')) {
               saveCachedArticle(entryId, panel.innerHTML);
@@ -840,7 +870,10 @@
     const baseServerUnread = (filterCount && filterCount.dataset.baseUnread !== undefined)
       ? parseInt(filterCount.dataset.baseUnread, 10)
       : (pill && pill.dataset.baseUnread !== undefined ? parseInt(pill.dataset.baseUnread, 10) : 0);
-    const effectiveUnread = Math.max(0, baseServerUnread - readSet.size);
+    let effectiveUnread = Math.max(0, baseServerUnread - readSet.size);
+    if (isUnreadFilter && effectiveUnread === 0 && visibleUnreadRowCount > 0) {
+      effectiveUnread = visibleUnreadRowCount;
+    }
 
     if (pill) {
       pill.textContent = effectiveUnread + ' unread';
@@ -874,6 +907,9 @@
   function markLocallyRead(id) {
     const numId = Number(id);
     if (!numId) return;
+    if (typeof recordReadArticle === 'function') {
+      recordReadArticle(numId);
+    }
     readSet.add(numId);
     syncDomReadStates();
     if (typeof invalidateFilterCache === 'function') {

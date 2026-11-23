@@ -75,7 +75,7 @@ impl LlmCliRunner {
         let mut prompt = String::from(
             "You are an executive news editor. For the articles below, provide:\n\
              1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page.\n\
-             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, <=10 words) and \"b\" (executive brief, strictly 3 sentences, what changed/why it matters). Do not regenerate items for existing briefs.\n\n\
+             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"b\" (executive brief, strictly 3 sentences, what changed/why it matters). Do not regenerate items for existing briefs.\n\n\
              CRITICAL MULTILINGUAL RULE:\n\
              For each article and for the overall brief, write your response in the EXACT SAME LANGUAGE as the source text.\n\
              If an article is in Vietnamese, its suggested title and brief MUST be in Vietnamese.\n\
@@ -1281,5 +1281,30 @@ Some outro text
         assert!(prompt.contains("Brief:\nBrief already in db") || prompt.contains("Brief: Brief already in db"));
 
         assert!(prompt.contains("Do not regenerate items for existing briefs") || prompt.contains("For each NEW article id"));
+    }
+
+    #[test]
+    fn test_format_batch_prompt_suggested_title_one_sentence() {
+        let items = [
+            BatchArticleInput {
+                id: 101,
+                title: "New Post",
+                source: "Tech News",
+                published_at: "2026-11-22T12:00:00Z",
+                content_or_brief: "Full text of new post",
+                is_cached: false,
+            },
+        ];
+        let prompt = LlmCliRunner::format_batch_prompt_structured(&items);
+        assert!(
+            prompt.contains("suggested title, strictly in one sentence"),
+            "Batch prompt must require suggested title strictly in one sentence: {}",
+            prompt
+        );
+        assert!(
+            !prompt.contains("<=10 words"),
+            "Batch prompt must not contain '<=10 words': {}",
+            prompt
+        );
     }
 }

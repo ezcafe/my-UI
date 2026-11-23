@@ -35,6 +35,16 @@ pub struct BatchAiResponse {
     pub items: Vec<BatchAiItem>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchArticleInput<'a> {
+    pub id: i64,
+    pub title: &'a str,
+    pub source: &'a str,
+    pub published_at: &'a str,
+    pub content_or_brief: &'a str,
+    pub is_cached: bool,
+}
+
 #[derive(Clone)]
 pub struct LlmCliRunner {
     pub cli_cmd: String,
@@ -55,17 +65,17 @@ impl LlmCliRunner {
 
     pub fn format_prompt(title: &str, content: &str) -> String {
         format!(
-            "Summarize what changed or why this news matters in 1 to 2 concise sentences (strictly under 35 words). Do not include introductory filler.\n\nArticle Title: {}\nArticle Content:\n{}",
+            "Summarize what changed or why this news matters in strictly 3 concise sentences. Do not include introductory filler.\n\nArticle Title: {}\nArticle Content:\n{}",
             title.trim(),
             content.trim()
         )
     }
 
-    pub fn format_batch_prompt(articles: &[(i64, &str, &str)]) -> String {
+    pub fn format_batch_prompt_structured(items: &[BatchArticleInput<'_>]) -> String {
         let mut prompt = String::from(
             "You are an executive news editor. For the articles below, provide:\n\
-             1. \"top\": A 1-2 sentence executive brief (<35 words) synthesizing the most important themes.\n\
-             2. \"items\": For each article id, a punchy \"t\" (suggested title, <=10 words) and \"b\" (executive brief, 1-2 sentences, <35 words, what changed/why it matters).\n\n\
+             1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page.\n\
+             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, <=10 words) and \"b\" (executive brief, strictly 3 sentences, what changed/why it matters). Do not regenerate items for existing briefs.\n\n\
              CRITICAL MULTILINGUAL RULE:\n\
              For each article and for the overall brief, write your response in the EXACT SAME LANGUAGE as the source text.\n\
              If an article is in Vietnamese, its suggested title and brief MUST be in Vietnamese.\n\
@@ -73,28 +83,67 @@ impl LlmCliRunner {
              Do NOT translate articles into a different language.\n\n\
              Output raw JSON only using this compact schema:\n\
              {\"top\":\"...\",\"items\":[{\"i\":101,\"t\":\"...\",\"b\":\"...\"}]}\n\n\
-             Articles:\n",
+             Articles by Source:\n\n",
         );
-        for (id, title, content) in articles {
-            let trimmed_title = title.trim();
-            let mut clean_content = content.trim();
-            if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}\n\n", trimmed_title)) {
-                clean_content = stripped.trim();
-            } else if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}", trimmed_title)) {
-                clean_content = stripped.trim();
-            } else if let Some(stripped) = clean_content.strip_prefix("Title:") {
-                if let Some((_, rest)) = stripped.split_once("\n\n") {
-                    clean_content = rest.trim();
+
+        let mut groups: Vec<(&str, Vec<&BatchArticleInput<'_>>)> = Vec::new();
+        for item in items {
+            let src = if item.source.trim().is_empty() {
+                "General"
+            } else {
+                item.source.trim()
+            };
+            if let Some((_, list)) = groups.iter_mut().find(|(s, _)| *s == src) {
+                list.push(item);
+            } else {
+                groups.push((src, vec![item]));
+            }
+        }
+
+        for (src, mut group_items) in groups {
+            prompt.push_str(&format!("### Source: {}\n", src));
+            group_items.sort_by(|a, b| b.published_at.cmp(a.published_at));
+            for item in group_items {
+                let trimmed_title = item.title.trim();
+                let mut clean_content = item.content_or_brief.trim();
+                if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}\n\n", trimmed_title)) {
+                    clean_content = stripped.trim();
+                } else if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}", trimmed_title)) {
+                    clean_content = stripped.trim();
+                } else if let Some(stripped) = clean_content.strip_prefix("Title:") {
+                    if let Some((_, rest)) = stripped.split_once("\n\n") {
+                        clean_content = rest.trim();
+                    }
+                }
+                if item.is_cached {
+                    prompt.push_str(&format!(
+                        "[ID {}] (Existing Brief) Title: {}\nBrief:\n{}\n\n",
+                        item.id, trimmed_title, clean_content
+                    ));
+                } else {
+                    prompt.push_str(&format!(
+                        "[ID {}] (New Article) Title: {}\nContent:\n{}\n\n",
+                        item.id, trimmed_title, clean_content
+                    ));
                 }
             }
-            prompt.push_str(&format!(
-                "[ID {}] Title: {}\nContent:\n{}\n\n",
-                id,
-                trimmed_title,
-                clean_content
-            ));
         }
         prompt
+    }
+
+    pub fn format_batch_prompt(articles: &[(i64, &str, &str)]) -> String {
+        let items: Vec<BatchArticleInput> = articles
+            .iter()
+            .map(|(id, title, content)| BatchArticleInput {
+                id: *id,
+                title,
+                source: "General",
+                published_at: "",
+                content_or_brief: content,
+                is_cached: false,
+            })
+            .collect();
+        Self::format_batch_prompt_structured(&items)
     }
 
     pub fn build_args(&self) -> Vec<String> {
@@ -224,16 +273,16 @@ impl LlmCliRunner {
         BatchAiResponse::default()
     }
 
-    pub async fn summarize_batch(
+    pub async fn summarize_batch_structured(
         &self,
-        articles: &[(i64, &str, &str)],
+        articles: &[BatchArticleInput<'_>],
     ) -> (BatchAiResponse, String) {
         if articles.is_empty() {
             return (BatchAiResponse::default(), self.model.clone());
         }
 
         let _permit = self.semaphore.acquire().await.ok();
-        let prompt = Self::format_batch_prompt(articles);
+        let prompt = Self::format_batch_prompt_structured(articles);
         let args = self.build_args();
 
         let dispatch_msg = Self::format_dispatch_log(&self.model, articles.len(), &prompt);
@@ -278,7 +327,7 @@ impl LlmCliRunner {
                         "{}",
                         err_log
                     );
-                    Self::fallback_extractive(articles)
+                    Self::fallback_extractive_structured(articles)
                 } else {
                     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if text.is_empty() {
@@ -289,7 +338,7 @@ impl LlmCliRunner {
                             "{}",
                             err_log
                         );
-                        Self::fallback_extractive(articles)
+                        Self::fallback_extractive_structured(articles)
                     } else {
                         let ret_log = Self::format_return_log(elapsed, &text);
                         println!("{}", ret_log);
@@ -312,7 +361,7 @@ impl LlmCliRunner {
                     "{}",
                     err_log
                 );
-                Self::fallback_extractive(articles)
+                Self::fallback_extractive_structured(articles)
             }
             Err(_) => {
                 let elapsed = start.elapsed().as_millis();
@@ -323,29 +372,55 @@ impl LlmCliRunner {
                     "{}",
                     err_log
                 );
-                Self::fallback_extractive(articles)
+                Self::fallback_extractive_structured(articles)
             }
         }
     }
 
-    fn fallback_extractive(articles: &[(i64, &str, &str)]) -> (BatchAiResponse, String) {
+    pub async fn summarize_batch(
+        &self,
+        articles: &[(i64, &str, &str)],
+    ) -> (BatchAiResponse, String) {
+        let items: Vec<BatchArticleInput> = articles
+            .iter()
+            .map(|(id, title, content)| BatchArticleInput {
+                id: *id,
+                title,
+                source: "General",
+                published_at: "",
+                content_or_brief: content,
+                is_cached: false,
+            })
+            .collect();
+        self.summarize_batch_structured(&items).await
+    }
+
+    pub fn fallback_extractive_structured(articles: &[BatchArticleInput<'_>]) -> (BatchAiResponse, String) {
         tracing::warn!(
             target: "ai::batch",
             "[AI_WARN] reason=\"cli_failure\" fallback_strategy=\"extractive\""
         );
         let mut items = Vec::new();
-        for (id, _title, content) in articles {
-            let fallback = miniflux_client::summary::extract_summary(content, 2);
-            let fallback_text = if fallback.is_empty() {
-                content.trim().to_string()
+        for item in articles {
+            if item.is_cached {
+                items.push(BatchAiItem {
+                    id: item.id,
+                    suggested_title: String::new(),
+                    brief: item.content_or_brief.to_string(),
+                });
             } else {
-                fallback
-            };
-            items.push(BatchAiItem {
-                id: *id,
-                suggested_title: String::new(),
-                brief: fallback_text,
-            });
+                let fallback = miniflux_client::summary::extract_summary(item.content_or_brief, 3);
+                let fallback_text = if fallback.is_empty() {
+                    item.content_or_brief.trim().to_string()
+                } else {
+                    fallback
+                };
+                items.push(BatchAiItem {
+                    id: item.id,
+                    suggested_title: String::new(),
+                    brief: fallback_text,
+                });
+            }
         }
         (
             BatchAiResponse {
@@ -354,6 +429,21 @@ impl LlmCliRunner {
             },
             "extractive-fallback".to_string(),
         )
+    }
+
+    pub fn fallback_extractive(articles: &[(i64, &str, &str)]) -> (BatchAiResponse, String) {
+        let items: Vec<BatchArticleInput> = articles
+            .iter()
+            .map(|(id, title, content)| BatchArticleInput {
+                id: *id,
+                title,
+                source: "General",
+                published_at: "",
+                content_or_brief: content,
+                is_cached: false,
+            })
+            .collect();
+        Self::fallback_extractive_structured(&items)
     }
 
     pub async fn summarize(&self, title: &str, content: &str) -> (String, String) {
@@ -405,7 +495,7 @@ impl LlmCliRunner {
                     );
                     eprintln!("{}", err_log);
                     tracing::error!(target: "ai::single", "{}", err_log);
-                    let fallback = miniflux_client::summary::extract_summary(content, 2);
+                    let fallback = miniflux_client::summary::extract_summary(content, 3);
                     let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
                     (fallback_text, "extractive-fallback".to_string())
                 } else {
@@ -414,7 +504,7 @@ impl LlmCliRunner {
                         let err_log = format!("[AI_ERROR_SINGLE] empty_output elapsed_ms={}", elapsed);
                         eprintln!("{}", err_log);
                         tracing::error!(target: "ai::single", "{}", err_log);
-                        let fallback = miniflux_client::summary::extract_summary(content, 2);
+                        let fallback = miniflux_client::summary::extract_summary(content, 3);
                         let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
                         (fallback_text, "extractive-fallback".to_string())
                     } else {
@@ -433,7 +523,7 @@ impl LlmCliRunner {
                 let err_log = format!("[AI_ERROR_SINGLE] process_error=\"{}\"", e);
                 eprintln!("{}", err_log);
                 tracing::error!(target: "ai::single", "{}", err_log);
-                let fallback = miniflux_client::summary::extract_summary(content, 2);
+                let fallback = miniflux_client::summary::extract_summary(content, 3);
                 let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
                 (fallback_text, "extractive-fallback".to_string())
             }
@@ -442,7 +532,7 @@ impl LlmCliRunner {
                 let err_log = format!("[AI_ERROR_SINGLE] timeout_after_{}s elapsed_ms={}", TIMEOUT_SECS, elapsed);
                 eprintln!("{}", err_log);
                 tracing::error!(target: "ai::single", "{}", err_log);
-                let fallback = miniflux_client::summary::extract_summary(content, 2);
+                let fallback = miniflux_client::summary::extract_summary(content, 3);
                 let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
                 (fallback_text, "extractive-fallback".to_string())
             }
@@ -572,18 +662,36 @@ impl LlmHttpClient {
         }
     }
 
-    pub async fn summarize_batch(
+    pub async fn summarize_batch_structured(
         &self,
-        articles: &[(i64, &str, &str)],
+        articles: &[BatchArticleInput<'_>],
     ) -> Result<(BatchAiResponse, String), String> {
         if articles.is_empty() {
             return Ok((BatchAiResponse::default(), self.model.clone()));
         }
 
-        let prompt = LlmCliRunner::format_batch_prompt(articles);
+        let prompt = LlmCliRunner::format_batch_prompt_structured(articles);
         let raw_output = self.request_chat_completion(&prompt).await?;
         let parsed = LlmCliRunner::parse_batch_response(&raw_output);
         Ok((parsed, self.model.clone()))
+    }
+
+    pub async fn summarize_batch(
+        &self,
+        articles: &[(i64, &str, &str)],
+    ) -> Result<(BatchAiResponse, String), String> {
+        let items: Vec<BatchArticleInput> = articles
+            .iter()
+            .map(|(id, title, content)| BatchArticleInput {
+                id: *id,
+                title,
+                source: "General",
+                published_at: "",
+                content_or_brief: content,
+                is_cached: false,
+            })
+            .collect();
+        self.summarize_batch_structured(&items).await
     }
 
     pub async fn summarize(&self, title: &str, content: &str) -> Result<(String, String), String> {
@@ -609,6 +717,24 @@ impl From<LlmCliRunner> for LlmBackend {
 }
 
 impl LlmBackend {
+    pub async fn summarize_batch_structured(
+        &self,
+        articles: &[BatchArticleInput<'_>],
+    ) -> (BatchAiResponse, String) {
+        match self {
+            Self::Cli(cli) => cli.summarize_batch_structured(articles).await,
+            Self::Http { client, fallback } => {
+                match client.summarize_batch_structured(articles).await {
+                    Ok((res, model)) => (res, model),
+                    Err(err) => {
+                        tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
+                        fallback.summarize_batch_structured(articles).await
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn summarize_batch(
         &self,
         articles: &[(i64, &str, &str)],
@@ -642,6 +768,14 @@ impl LlmBackend {
         }
     }
 
+    pub async fn synthesize_page_brief_structured(
+        &self,
+        articles: &[BatchArticleInput<'_>],
+    ) -> (String, String) {
+        let (batch_res, model) = self.summarize_batch_structured(articles).await;
+        (batch_res.top, model)
+    }
+
     pub async fn synthesize_page_brief(
         &self,
         articles: &[(i64, &str, &str)],
@@ -664,11 +798,11 @@ mod tests {
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
 
         // For article 101, Content should NOT repeat "Title: Article Title One"
-        assert!(prompt.contains("[ID 101] Title: Article Title One\nContent:\nBody content of article one."));
+        assert!(prompt.contains("[ID 101] (New Article) Title: Article Title One\nContent:\nBody content of article one."));
         assert!(!prompt.contains("Content:\nTitle: Article Title One"));
 
         // For article 102, Content is preserved cleanly
-        assert!(prompt.contains("[ID 102] Title: Article Title Two\nContent:\nBody content of article two without title prefix."));
+        assert!(prompt.contains("[ID 102] (New Article) Title: Article Title Two\nContent:\nBody content of article two without title prefix."));
     }
 
     #[tokio::test]
@@ -857,8 +991,8 @@ mod tests {
         ];
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
         assert!(prompt.contains(r#"{"top":"...","items":[{"i":101,"t":"...","b":"..."}]"#));
-        assert!(prompt.contains("[ID 101] Title: Article 1"));
-        assert!(prompt.contains("[ID 102] Title: Article 2"));
+        assert!(prompt.contains("[ID 101] (New Article) Title: Article 1"));
+        assert!(prompt.contains("[ID 102] (New Article) Title: Article 2"));
         assert!(prompt.contains("Content of first article"));
         assert!(prompt.contains("Content of second article"));
 
@@ -967,7 +1101,7 @@ Some outro text
         );
 
         let prompt = LlmCliRunner::format_prompt("Rust 2026 Released", "Exciting new features landed.");
-        assert!(prompt.contains("under 35 words"));
+        assert!(prompt.contains("strictly 3 concise sentences"));
         assert!(prompt.contains("Article Title: Rust 2026 Released"));
         assert!(prompt.contains("Article Content:\nExciting new features landed."));
 
@@ -992,7 +1126,7 @@ Some outro text
         let (summary, model) = runner.summarize("Tech Update", content).await;
 
         assert_eq!(model, "extractive-fallback");
-        assert_eq!(summary, "First sentence of news. Second sentence of importance.");
+        assert_eq!(summary, "First sentence of news. Second sentence of importance. Third sentence ignored.");
     }
 
     #[tokio::test]
@@ -1055,5 +1189,97 @@ Some outro text
         assert!(empty_log.starts_with("[AI_ERROR]"));
         assert!(empty_log.contains("error=\"empty_output\""));
         assert!(empty_log.contains("elapsed_ms=45"));
+    }
+
+    #[test]
+    fn test_format_prompt_strictly_3_sentences() {
+        let prompt = LlmCliRunner::format_prompt("Rust 2026", "Content of the article.");
+        assert!(prompt.contains("strictly 3 concise sentences"), "Prompt should require strictly 3 concise sentences: {}", prompt);
+        assert!(!prompt.contains("1 to 2"), "Prompt should not contain 1 to 2 sentences");
+    }
+
+    #[test]
+    fn test_format_batch_prompt_strictly_3_sentences() {
+        let articles = [(1, "Title", "Content")];
+        let prompt = LlmCliRunner::format_batch_prompt(&articles);
+        assert!(prompt.contains("strictly 3 sentences"), "Batch prompt should require strictly 3 sentences for items: {}", prompt);
+    }
+
+    #[test]
+    fn test_extractive_fallback_3_sentences() {
+        let content = "Sentence one. Sentence two. Sentence three. Sentence four.";
+        let articles = [(1, "Title", content)];
+        let (res, model) = LlmCliRunner::fallback_extractive(&articles);
+        assert_eq!(model, "extractive-fallback");
+        assert_eq!(res.items[0].brief, "Sentence one. Sentence two. Sentence three.");
+    }
+
+    #[test]
+    fn test_format_batch_prompt_source_grouping_and_date_sorting() {
+        let items = [
+            BatchArticleInput {
+                id: 101,
+                title: "Rust 1.84",
+                source: "Rust Blog",
+                published_at: "2026-11-20T10:00:00Z",
+                content_or_brief: "Old rust content",
+                is_cached: false,
+            },
+            BatchArticleInput {
+                id: 102,
+                title: "Rust 1.85",
+                source: "Rust Blog",
+                published_at: "2026-11-22T10:00:00Z",
+                content_or_brief: "New rust content",
+                is_cached: false,
+            },
+            BatchArticleInput {
+                id: 201,
+                title: "HN Story",
+                source: "Hacker News",
+                published_at: "2026-11-21T08:00:00Z",
+                content_or_brief: "HN content",
+                is_cached: false,
+            },
+        ];
+
+        let prompt = LlmCliRunner::format_batch_prompt_structured(&items);
+        assert!(prompt.contains("### Source: Rust Blog"), "Must contain Source header for Rust Blog");
+        assert!(prompt.contains("### Source: Hacker News"), "Must contain Source header for Hacker News");
+
+        let pos_102 = prompt.find("[ID 102]").expect("ID 102 present");
+        let pos_101 = prompt.find("[ID 101]").expect("ID 101 present");
+        assert!(pos_102 < pos_101, "Latest article 102 (Nov 22) must appear before older article 101 (Nov 20)");
+    }
+
+    #[test]
+    fn test_format_batch_prompt_handles_cached_briefs_and_new_articles() {
+        let items = [
+            BatchArticleInput {
+                id: 101,
+                title: "New Post",
+                source: "Tech News",
+                published_at: "2026-11-22T12:00:00Z",
+                content_or_brief: "Full text of new post",
+                is_cached: false,
+            },
+            BatchArticleInput {
+                id: 102,
+                title: "Cached Post",
+                source: "Tech News",
+                published_at: "2026-11-21T12:00:00Z",
+                content_or_brief: "Brief already in db",
+                is_cached: true,
+            },
+        ];
+
+        let prompt = LlmCliRunner::format_batch_prompt_structured(&items);
+        assert!(prompt.contains("[ID 101] (New Article) Title: New Post"));
+        assert!(prompt.contains("Content:\nFull text of new post"));
+
+        assert!(prompt.contains("[ID 102] (Existing Brief) Title: Cached Post"));
+        assert!(prompt.contains("Brief:\nBrief already in db") || prompt.contains("Brief: Brief already in db"));
+
+        assert!(prompt.contains("Do not regenerate items for existing briefs") || prompt.contains("For each NEW article id"));
     }
 }

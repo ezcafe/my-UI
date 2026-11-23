@@ -1,6 +1,29 @@
 use crate::ai::AiService;
 use std::sync::Arc;
 
+#[derive(Debug, Clone)]
+pub struct PrefetchCandidate {
+    pub id: i64,
+    pub title: String,
+    pub url: String,
+    pub teaser: String,
+    pub feed_title: String,
+    pub published_at: String,
+}
+
+impl From<(i64, String, String, String)> for PrefetchCandidate {
+    fn from((id, title, url, teaser): (i64, String, String, String)) -> Self {
+        Self {
+            id,
+            title,
+            url,
+            teaser,
+            feed_title: "General".to_string(),
+            published_at: String::new(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AiPrefetchService {
     ai_service: Arc<AiService>,
@@ -12,30 +35,30 @@ impl AiPrefetchService {
     }
 
     /// Spawns background worker to prefetch summaries for uncached entries.
-    /// candidate_entries is a list of (id, title, url, teaser) tuples.
-    pub fn spawn_prefetch_job(&self, candidate_entries: Vec<(i64, String, String, String)>) {
+    pub fn spawn_prefetch_job<T: Into<PrefetchCandidate> + Send + 'static>(&self, candidate_entries: Vec<T>) {
         let ai = self.ai_service.clone();
         tokio::spawn(async move {
             Self::run_prefetch(ai, candidate_entries).await;
         });
     }
 
-    pub async fn run_prefetch(
+    pub async fn run_prefetch<T: Into<PrefetchCandidate>>(
         ai: Arc<AiService>,
-        candidate_entries: Vec<(i64, String, String, String)>,
+        candidate_entries: Vec<T>,
     ) {
+        let candidate_entries: Vec<PrefetchCandidate> = candidate_entries.into_iter().map(Into::into).collect();
         if candidate_entries.is_empty() {
             return;
         }
 
         // 1. Filter out already cached IDs using batched unprocessed check
-        let ids: Vec<i64> = candidate_entries.iter().map(|(id, ..)| *id).collect();
+        let ids: Vec<i64> = candidate_entries.iter().map(|c| c.id).collect();
         let unprocessed_ids = ai.db.get_unprocessed_entry_ids(&ids).await;
         let unprocessed_set: std::collections::HashSet<i64> = unprocessed_ids.into_iter().collect();
 
-        let uncached: Vec<(i64, String, String, String)> = candidate_entries
+        let uncached: Vec<PrefetchCandidate> = candidate_entries
             .into_iter()
-            .filter(|(id, ..)| unprocessed_set.contains(id))
+            .filter(|c| unprocessed_set.contains(&c.id))
             .collect();
 
         // 2. Prefetch threshold: trigger when uncached items >= 1
@@ -45,7 +68,7 @@ impl AiPrefetchService {
         }
 
         let batch_targets: Vec<_> = uncached.into_iter().take(20).collect();
-        let target_ids: Vec<i64> = batch_targets.iter().map(|(id, ..)| *id).collect();
+        let target_ids: Vec<i64> = batch_targets.iter().map(|c| c.id).collect();
         let batch_key = crate::ai::compute_page_key("prefetch", &target_ids);
 
         // 3. Concurrency guard: avoid duplicate in-flight batch runs
@@ -78,15 +101,17 @@ impl AiPrefetchService {
         // 4. Single-call batch prefetch: process all candidate page entries in exactly 1 LLM call
         // Extract article contents concurrently to minimize latency before batch LLM call
         let mut join_set = tokio::task::JoinSet::new();
-        for (id, title, url, teaser) in &batch_targets {
+        for target in &batch_targets {
             let extractor = ai.extractor.clone();
-            let id = *id;
-            let title = title.clone();
-            let url = url.clone();
-            let teaser = teaser.clone();
+            let id = target.id;
+            let title = target.title.clone();
+            let url = target.url.clone();
+            let teaser = target.teaser.clone();
+            let feed_title = target.feed_title.clone();
+            let published_at = target.published_at.clone();
             join_set.spawn(async move {
                 let content = extractor.extract_content(&url, &title, &teaser).await;
-                (id, title, content)
+                (id, title, feed_title, published_at, content)
             });
         }
 
@@ -97,12 +122,19 @@ impl AiPrefetchService {
             }
         }
 
-        let mut articles_for_llm = Vec::new();
-        for (id, title, content) in &extracted_contents {
-            articles_for_llm.push((*id, title.as_str(), content.as_str()));
-        }
+        let articles_for_llm: Vec<crate::ai::llm::BatchArticleInput> = extracted_contents
+            .iter()
+            .map(|(id, title, source, published_at, content)| crate::ai::llm::BatchArticleInput {
+                id: *id,
+                title: title.as_str(),
+                source: source.as_str(),
+                published_at: published_at.as_str(),
+                content_or_brief: content.as_str(),
+                is_cached: false,
+            })
+            .collect();
 
-        let (batch_res, model) = ai.llm.summarize_batch(&articles_for_llm).await;
+        let (batch_res, model) = ai.llm.summarize_batch_structured(&articles_for_llm).await;
 
         // Save page executive brief if top is provided (both with page_key and legacy)
         if !batch_res.top.is_empty() {

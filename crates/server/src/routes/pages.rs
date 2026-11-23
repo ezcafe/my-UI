@@ -162,10 +162,17 @@ pub async fn index_page(
     }
 
     if config.ai_enabled {
-        let candidates: Vec<(i64, String, String, String)> = view_models
+        let candidates: Vec<crate::ai::prefetch::PrefetchCandidate> = view_models
             .iter()
             .filter(|e| !e.is_read)
-            .map(|e| (e.id, e.title.clone(), e.url.clone(), e.summary.clone()))
+            .map(|e| crate::ai::prefetch::PrefetchCandidate {
+                id: e.id,
+                title: e.title.clone(),
+                url: e.url.clone(),
+                teaser: e.summary.clone(),
+                feed_title: e.feed_title.clone(),
+                published_at: e.published_at.clone(),
+            })
             .collect();
         crate::ai::prefetch::AiPrefetchService::new(ai_service.clone())
             .spawn_prefetch_job(candidates);

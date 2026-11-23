@@ -281,10 +281,17 @@ pub async fn render_entries_list(
 
     if let Some(ai) = ai_service {
         if is_eligible {
-            let candidates: Vec<(i64, String, String, String)> = entries
+            let candidates: Vec<crate::ai::prefetch::PrefetchCandidate> = entries
                 .iter()
                 .filter(|e| !e.is_read)
-                .map(|e| (e.id, e.title.clone(), e.url.clone(), e.summary.clone()))
+                .map(|e| crate::ai::prefetch::PrefetchCandidate {
+                    id: e.id,
+                    title: e.title.clone(),
+                    url: e.url.clone(),
+                    teaser: e.summary.clone(),
+                    feed_title: e.feed_title.clone(),
+                    published_at: e.published_at.clone(),
+                })
                 .collect();
             crate::ai::prefetch::AiPrefetchService::new(Arc::new(ai.clone()))
                 .spawn_prefetch_job(candidates);
@@ -485,6 +492,10 @@ pub async fn executive_brief_htmx(
                     title
                     summary
                     url
+                    publishedAt
+                    feed {{
+                        title
+                    }}
                 }}
             }}
         }}",
@@ -496,7 +507,16 @@ pub async fn executive_brief_htmx(
         Err(_) => return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response(),
     };
 
-    let entries: Vec<(i64, String, String, String)> = data
+    struct PageBriefEntry {
+        id: i64,
+        title: String,
+        summary: String,
+        url: String,
+        published_at: String,
+        feed_title: String,
+    }
+
+    let entries: Vec<PageBriefEntry> = data
         .get("entriesResult")
         .and_then(|r| r.get("entries"))
         .and_then(|v| v.as_array())
@@ -507,7 +527,21 @@ pub async fn executive_brief_htmx(
                     let title = item.get("title")?.as_str()?.to_string();
                     let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    Some((id, title, summary, url))
+                    let published_at = item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let feed_title = item
+                        .get("feed")
+                        .and_then(|f| f.get("title"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("General")
+                        .to_string();
+                    Some(PageBriefEntry {
+                        id,
+                        title,
+                        summary,
+                        url,
+                        published_at,
+                        feed_title,
+                    })
                 })
                 .collect()
         })
@@ -518,21 +552,22 @@ pub async fn executive_brief_htmx(
         return (StatusCode::OK, headers, Html("")).into_response();
     }
 
-    let entry_ids: Vec<i64> = entries.iter().map(|(id, ..)| *id).collect();
+    let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
     let status_str = query.status.as_deref().unwrap_or("unread");
     let page_key = compute_page_key(status_str, &entry_ids);
 
+    let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
+
     // 3. Fast-path: Check page brief cache
     if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
-        let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
         let card_html = ExecutiveBriefCardTemplate { brief: &brief }
             .render()
             .unwrap_or_default();
         let mut full_html = card_html;
-        for (id, title, ..) in &entries {
-            if let Some(rec) = cached_map.get(id) {
+        for entry in &entries {
+            if let Some(rec) = cached_map.get(&entry.id) {
                 if let Some(suggested) = &rec.suggested_title {
-                    full_html.push_str(&render_title_oob_span(*id, title, suggested));
+                    full_html.push_str(&render_title_oob_span(entry.id, &entry.title, suggested));
                 }
             }
         }
@@ -552,10 +587,10 @@ pub async fn executive_brief_htmx(
                         .render()
                         .unwrap_or_default();
                     let mut full_html = card_html;
-                    for (id, title, ..) in &entries {
-                        if let Some(rec) = cached_map.get(id) {
+                    for entry in &entries {
+                        if let Some(rec) = cached_map.get(&entry.id) {
                             if let Some(suggested) = &rec.suggested_title {
-                                full_html.push_str(&render_title_oob_span(*id, title, suggested));
+                                full_html.push_str(&render_title_oob_span(entry.id, &entry.title, suggested));
                             }
                         }
                     }
@@ -586,70 +621,62 @@ pub async fn executive_brief_htmx(
     };
 
     // 5. Uncached extraction and batch synthesis
-    let uncached_ids = ai_service.db.get_unprocessed_entry_ids(&entry_ids).await;
-    let uncached_set: std::collections::HashSet<i64> = uncached_ids.into_iter().collect();
-
-    if uncached_set.is_empty() {
-        // All entries are already cached in SQLite, but page executive brief is missing for this page_key.
-        // Synthesize the page brief directly from the cached item summaries.
-        let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
-        let mut cached_articles = Vec::new();
-        for (id, title, ..) in &entries {
-            if let Some(rec) = cached_map.get(id) {
-                cached_articles.push((*id, title.as_str(), rec.summary.as_str()));
+    let uncached_entries: Vec<&PageBriefEntry> = entries
+        .iter()
+        .filter(|e| {
+            match cached_map.get(&e.id) {
+                Some(rec) => rec.model == "extractive-fallback",
+                None => true,
             }
-        }
-
-        let (synth_top, _model) = ai_service.llm.synthesize_page_brief(&cached_articles).await;
-        if synth_top.is_empty() {
-            return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
-        }
-
-        let _ = ai_service.db.save_page_brief_with_key(&page_key, &synth_top).await;
-
-        let card_html = ExecutiveBriefCardTemplate { brief: &synth_top }
-            .render()
-            .unwrap_or_default();
-
-        let mut full_html = card_html;
-        for (id, title, ..) in &entries {
-            if let Some(rec) = cached_map.get(id) {
-                if let Some(suggested) = &rec.suggested_title {
-                    full_html.push_str(&render_title_oob_span(*id, title, suggested));
-                }
-            }
-        }
-        return (StatusCode::OK, headers, Html(full_html)).into_response();
-    }
+        })
+        .collect();
 
     let mut join_set = tokio::task::JoinSet::new();
-    for (id, title, summary, url) in &entries {
-        if uncached_set.contains(id) {
-            let extractor = ai_service.extractor.clone();
-            let id = *id;
-            let title = title.clone();
-            let url = url.clone();
-            let summary = summary.clone();
-            join_set.spawn(async move {
-                let content = extractor.extract_content(&url, &title, &summary).await;
-                (id, title, content)
-            });
-        }
+    for e in &uncached_entries {
+        let extractor = ai_service.extractor.clone();
+        let id = e.id;
+        let title = e.title.clone();
+        let url = e.url.clone();
+        let summary = e.summary.clone();
+        join_set.spawn(async move {
+            let content = extractor.extract_content(&url, &title, &summary).await;
+            (id, content)
+        });
     }
 
-    let mut extracted = Vec::new();
+    let mut extracted_map = std::collections::HashMap::new();
     while let Some(res) = join_set.join_next().await {
-        if let Ok(item) = res {
-            extracted.push(item);
+        if let Ok((id, content)) = res {
+            extracted_map.insert(id, content);
         }
     }
 
-    let mut articles_for_llm = Vec::new();
-    for (id, title, content) in &extracted {
-        articles_for_llm.push((*id, title.as_str(), content.as_str()));
-    }
+    let batch_inputs: Vec<crate::ai::llm::BatchArticleInput> = entries
+        .iter()
+        .map(|e| {
+            let is_cached = cached_map
+                .get(&e.id)
+                .is_some_and(|r| r.model != "extractive-fallback");
+            let content_or_brief = if is_cached {
+                cached_map.get(&e.id).unwrap().summary.as_str()
+            } else {
+                extracted_map
+                    .get(&e.id)
+                    .map(|s| s.as_str())
+                    .unwrap_or(e.summary.as_str())
+            };
+            crate::ai::llm::BatchArticleInput {
+                id: e.id,
+                title: e.title.as_str(),
+                source: e.feed_title.as_str(),
+                published_at: e.published_at.as_str(),
+                content_or_brief,
+                is_cached,
+            }
+        })
+        .collect();
 
-    let (batch_res, model) = ai_service.llm.summarize_batch(&articles_for_llm).await;
+    let (batch_res, model) = ai_service.llm.summarize_batch_structured(&batch_inputs).await;
 
     // Failure contract
     if batch_res.top.is_empty() && batch_res.items.is_empty() {
@@ -658,12 +685,21 @@ pub async fn executive_brief_htmx(
 
     let mut summary_inputs = Vec::new();
     for item in &batch_res.items {
-        summary_inputs.push(crate::ai::db::ArticleSummaryInput {
-            entry_id: item.id,
-            summary: item.brief.clone(),
-            suggested_title: if item.suggested_title.is_empty() { None } else { Some(item.suggested_title.clone()) },
-            model: model.clone(),
-        });
+        let is_already_cached = cached_map
+            .get(&item.id)
+            .is_some_and(|r| r.model != "extractive-fallback");
+        if !is_already_cached {
+            summary_inputs.push(crate::ai::db::ArticleSummaryInput {
+                entry_id: item.id,
+                summary: item.brief.clone(),
+                suggested_title: if item.suggested_title.is_empty() {
+                    None
+                } else {
+                    Some(item.suggested_title.clone())
+                },
+                model: model.clone(),
+            });
+        }
     }
 
     let brief_text = if !batch_res.top.is_empty() {
@@ -685,11 +721,17 @@ pub async fn executive_brief_htmx(
     };
 
     let mut full_html = card_html;
-    for (id, title, ..) in &entries {
-        if let Some(item) = batch_res.items.iter().find(|i| i.id == *id) {
-            if !item.suggested_title.is_empty() {
-                full_html.push_str(&render_title_oob_span(*id, title, &item.suggested_title));
-            }
+    for entry in &entries {
+        let suggested = batch_res
+            .items
+            .iter()
+            .find(|i| i.id == entry.id && !i.suggested_title.is_empty())
+            .map(|i| i.suggested_title.as_str())
+            .or_else(|| {
+                cached_map.get(&entry.id).and_then(|r| r.suggested_title.as_deref())
+            });
+        if let Some(sug) = suggested {
+            full_html.push_str(&render_title_oob_span(entry.id, &entry.title, sug));
         }
     }
 
@@ -1578,5 +1620,170 @@ mod tests {
         let page_key = crate::ai::compute_page_key("unread", &[888]);
         let saved_brief = db.get_page_brief_by_key(&page_key).await;
         assert_eq!(saved_brief.as_deref(), Some("Synthesized From Cached Brief"));
+    }
+
+    #[tokio::test]
+    async fn test_executive_brief_reuses_db_summaries_and_synthesizes_top() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use http_body_util::BodyExt;
+
+        let mock_server = MockServer::start().await;
+        // Mock entries endpoint returning entry 888 and 999
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 2,
+                "entries": [
+                    {
+                        "id": 888,
+                        "user_id": 1,
+                        "feed_id": 10,
+                        "title": "Cached Item 888",
+                        "url": "http://example.com/888",
+                        "comments_url": "",
+                        "author": "Author A",
+                        "content": "Content 888",
+                        "status": "unread",
+                        "starred": false,
+                        "reading_time": 2,
+                        "created_at": "2026-11-22T08:00:00Z",
+                        "published_at": "2026-11-22T08:00:00Z",
+                        "feed": {
+                            "id": 10,
+                            "user_id": 1,
+                            "title": "Tech Feed",
+                            "checked_at": "2026-11-22T08:00:00Z",
+                            "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                        }
+                    },
+                    {
+                        "id": 999,
+                        "user_id": 1,
+                        "feed_id": 10,
+                        "title": "New Item 999",
+                        "url": "http://example.com/999",
+                        "comments_url": "",
+                        "author": "Author B",
+                        "content": "New full content of 999",
+                        "status": "unread",
+                        "starred": false,
+                        "reading_time": 3,
+                        "created_at": "2026-11-22T09:00:00Z",
+                        "published_at": "2026-11-22T09:00:00Z",
+                        "feed": {
+                            "id": 10,
+                            "user_id": 1,
+                            "title": "Tech Feed",
+                            "checked_at": "2026-11-22T09:00:00Z",
+                            "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                        }
+                    }
+                ]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_file = tempfile::NamedTempFile::new().unwrap();
+        let db = Arc::new(crate::ai::AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        // Save summary in DB for entry 888 beforehand
+        db.save_summary_and_title(888, Some("Existing 888 Title"), "Existing brief 888", "test-model")
+            .await
+            .unwrap();
+
+        let prompt_dump_file = tempfile::NamedTempFile::new().unwrap();
+        let prompt_dump_path = prompt_dump_file.path().to_str().unwrap().to_string();
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        let script_content = format!(
+            "#!/bin/sh\ncat > \"{}\"\nprintf '%s' '{{\"top\":\"Whole Page Brief Synthesis\",\"items\":[{{\"i\":999,\"t\":\"New 999 Title\",\"b\":\"New brief 999 sentence 1. Sentence 2. Sentence 3.\"}}]}}'\n",
+            prompt_dump_path
+        );
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let llm = crate::ai::llm::LlmCliRunner::new(
+            script_file.path().to_str().unwrap().to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        let ai_service = Arc::new(crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            ai_db_path: db_file.path().to_str().unwrap().to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            limit: Some(15),
+            offset: Some(0),
+            feed_id: None,
+            category_id: None,
+            search: None,
+        };
+
+        let response = executive_brief_htmx(
+            Query(query),
+            State(schema),
+            State(config),
+            State(ai_service.clone()),
+        ).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("Whole Page Brief Synthesis"), "Html should contain synthesized top: {}", html);
+        assert!(html.contains("id=\"entry-title-999\""));
+        assert!(html.contains("id=\"entry-title-888\""));
+
+        // Verify the prompt piped to LLM contained BOTH existing 888 brief and new 999 article
+        let piped_prompt = std::fs::read_to_string(&prompt_dump_path).unwrap_or_default();
+        assert!(piped_prompt.contains("[ID 888] (Existing Brief)"), "Prompt must include cached brief for 888: {}", piped_prompt);
+        assert!(piped_prompt.contains("[ID 999] (New Article)"), "Prompt must include new article for 999: {}", piped_prompt);
+        assert!(piped_prompt.contains("### Source: Tech Feed"), "Prompt must include source header");
+
+        // Verify 999 was saved to DB and 888 was preserved
+        let summaries = db.get_batch_summaries(&[888, 999]).await;
+        assert_eq!(summaries.get(&888).unwrap().summary, "Existing brief 888");
+        assert!(summaries.get(&999).unwrap().summary.contains("New brief 999"));
+
+        // Verify page executive brief was saved
+        let page_key = crate::ai::compute_page_key("unread", &[888, 999]);
+        let saved_brief = db.get_page_brief_by_key(&page_key).await;
+        assert_eq!(saved_brief.as_deref(), Some("Whole Page Brief Synthesis"));
     }
 }

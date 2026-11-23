@@ -760,9 +760,9 @@
         } else {
           articles.sort((a, b) => b.id - a.id);
           list.innerHTML = articles.map(art => `
-            <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}">
+            <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}" onclick="openEntryDetail(${art.id})">
               <div id="entry-${art.id}-bar" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>
-              <div class="flex items-center gap-1.5 flex-1 min-w-0" onclick="openEntryDetail(${art.id})">
+              <div class="flex items-center gap-1.5 flex-1 min-w-0">
                 <span id="entry-${art.id}-dot" class="inline-flex shrink-0 empty:hidden"></span>
                 <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
                   ${escapeHtml(art.title)}

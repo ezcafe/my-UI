@@ -1787,4 +1787,109 @@ mod tests {
         assert!(!html.contains("animate-pulse"));
         assert!(html.contains("All caught up!"));
     }
+
+    #[test]
+    fn test_annuaire_row_click_target() {
+        let entry = EntryViewModel {
+            id: 42,
+            title: "Row Click Test".into(),
+            suggested_title: None,
+            feed_title: "Tech".into(),
+            published_at: "now".into(),
+            reading_time: 2,
+            summary: "Summary text".into(),
+            url: "https://example.com/42".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+
+        // 1. Check EntryItemTemplate
+        let item_tpl = EntryItemTemplate {
+            entry: entry.clone(),
+            unread_count: None,
+        };
+        let item_html = item_tpl.render().expect("render entry item");
+        assert!(
+            item_html.contains(r#"class="annuaire-row"#) && item_html.contains(r#"onclick="openEntryDetail(42)""#),
+            "Outer annuaire-row must have onclick handler: {}", item_html
+        );
+        // Ensure inner title container does not also have onclick
+        assert!(
+            !item_html.contains(r#"<div class="flex items-center gap-1.5 flex-1 min-w-0" onclick="openEntryDetail(42)">"#),
+            "Inner title container must not have onclick handler"
+        );
+        // Ensure external link has stopPropagation
+        assert!(
+            item_html.contains("event.stopPropagation()"),
+            "External link button must retain stopPropagation"
+        );
+
+        // 2. Check EntryListTemplate
+        let list_tpl = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: None,
+            unread_count: None,
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 15,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+        let list_html = list_tpl.render().expect("render entry list");
+        assert!(
+            list_html.contains(r#"<div class="annuaire-row"#) && list_html.contains(r#"onclick="openEntryDetail(42)""#),
+            "Outer annuaire-row in list must have onclick handler: {}", list_html
+        );
+        assert!(
+            !list_html.contains(r#"<div class="flex items-center gap-1.5 flex-1 min-w-0" onclick="openEntryDetail(42)">"#),
+            "Inner title container in list must not have onclick handler"
+        );
+    }
+
+    #[test]
+    fn test_pagination_nav_no_top_border() {
+        let entry = EntryViewModel {
+            id: 1,
+            title: "Test".into(),
+            suggested_title: None,
+            feed_title: "Feed".into(),
+            published_at: "now".into(),
+            reading_time: 1,
+            summary: "S".into(),
+            url: "https://example.com".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let list_tpl = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: None,
+            unread_count: None,
+            current_page: 2,
+            total_pages: 5,
+            has_prev: true,
+            has_next: true,
+            prev_offset: 0,
+            next_offset: 30,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 15,
+            is_brief_eligible: false,
+            offset: 15,
+            feed_id: None,
+            category_id: None,
+        };
+        let html = list_tpl.render().expect("render entry list with pagination");
+        assert!(html.contains(r#"aria-label="Pagination""#), "Must contain pagination nav");
+        assert!(!html.contains("border-t border-border"), "Pagination nav must not have border-t border-border: {}", html);
+    }
 }

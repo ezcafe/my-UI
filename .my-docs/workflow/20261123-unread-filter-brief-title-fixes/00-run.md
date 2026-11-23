@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** auto gen:0
 - **Build armed:** none
@@ -32,3 +32,4 @@
 - **08:58** · code-review-phase · clean · adversarial & quality clean
 - **08:59** · test-lite · success · 185 tests passing, path lite
 - **09:00** · gate-c · approved · commit approved by user
+- **09:01** · merge · commit 4f3a64d · status paused

@@ -7,9 +7,13 @@ pub struct EntryViewModel {
     pub title: String,
     pub suggested_title: Option<String>,
     pub feed_title: String,
+    #[serde(default)]
+    pub category_title: Option<String>,
     pub published_at: String,
     pub reading_time: i32,
     pub summary: String,
+    #[serde(default)]
+    pub image_url: Option<String>,
     pub url: String,
     pub author: Option<String>,
     pub is_read: bool,
@@ -139,6 +143,8 @@ mod tests {
             url: "https://example.com/10".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         assert_eq!(entry.suggested_title.as_deref(), Some("AI Punchy Title"));
@@ -180,6 +186,8 @@ mod tests {
             url: "https://example.com/101".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -236,6 +244,8 @@ mod tests {
             url: "https://example.com/spatial".to_string(),
             author: Some("Visionary".to_string()),
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: true,
         };
 
@@ -284,6 +294,8 @@ mod tests {
             url: "https://example.com/spatial-read".to_string(),
             author: Some("Visionary".to_string()),
             is_read: true,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let template_read = EntryItemTemplate {
@@ -312,7 +324,9 @@ mod tests {
                 url: "https://example.com/1".to_string(),
                 author: None,
                 is_read: false,
-                is_bookmarked: false,
+                category_title: None,
+            image_url: None,
+            is_bookmarked: false,
             },
             EntryViewModel {
                 id: 2,
@@ -325,7 +339,9 @@ mod tests {
                 url: "https://example.com/2".to_string(),
                 author: None,
                 is_read: true,
-                is_bookmarked: true,
+                category_title: None,
+            image_url: None,
+            is_bookmarked: true,
             },
         ];
 
@@ -349,10 +365,11 @@ mod tests {
         };
         let html = template.render().expect("Failed to render EntryListTemplate");
 
-        assert!(html.contains("First Title"));
-        assert!(html.contains("Second Title"));
-        assert!(!html.contains("Summary A"));
-        assert!(!html.contains("Summary B"));
+        let list_view_html = html.split(r#"id="entries-magazine-view""#).next().unwrap();
+        assert!(list_view_html.contains("First Title"));
+        assert!(list_view_html.contains("Second Title"));
+        assert!(!list_view_html.contains("Summary A"), "List view rows must be title-only without summary");
+        assert!(!list_view_html.contains("Summary B"), "List view rows must be title-only without summary");
         assert!(html.contains("data-lucide=\"external-link\""));
         assert!(html.contains("href=\"https://example.com/1\""));
         assert!(html.contains("href=\"https://example.com/2\""));
@@ -463,6 +480,8 @@ mod tests {
             url: "https://example.com/agent".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let group = FeedSummaryGroupViewModel {
@@ -494,6 +513,8 @@ mod tests {
             url: "https://example.com/audio".to_string(),
             author: Some("Visionary Designer".to_string()),
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -528,6 +549,8 @@ mod tests {
             url: "https://example.com/xr".to_string(),
             author: None,
             is_read: true,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -576,6 +599,8 @@ mod tests {
             url: "https://example.com/xr".to_string(),
             author: None,
             is_read: true,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -619,6 +644,8 @@ mod tests {
             url: "https://example.com/xr".to_string(),
             author: None,
             is_read: true,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -716,6 +743,8 @@ mod tests {
             url: "https://example.com/1".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let template = EntryListTemplate {
@@ -828,6 +857,8 @@ mod tests {
             url: "https://example.com/item".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let template = EntryItemTemplate {
@@ -858,6 +889,8 @@ mod tests {
             url: "https://example.com/item".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let template = EntryListTemplate {
@@ -902,6 +935,8 @@ mod tests {
             url: "https://example.com/detail".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let template = EntryDetailTemplate {
@@ -975,6 +1010,21 @@ mod tests {
             html.contains("bg-muted") || html.contains("bg-primary"),
             "Skeleton should reference Annuaire token styling"
         );
+    }
+
+    #[test]
+    fn test_magazine_grid_css_in_base_template() {
+        let template = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("render index template");
+        assert!(html.contains(".magazine-3col-grid"), "base.html must include .magazine-3col-grid in style block");
+        assert!(html.contains("magazine-container"), "base.html must include magazine-container");
+        assert!(html.contains("minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr)"), "base.html must define 3-column grid template");
     }
 
     #[test]
@@ -1206,6 +1256,8 @@ mod tests {
             url: "https://example.com/item".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -1328,7 +1380,9 @@ mod tests {
                 url: "https://example.com".into(),
                 author: None,
                 is_read: false,
-                is_bookmarked: false,
+                category_title: None,
+            image_url: None,
+            is_bookmarked: false,
             },
             unread_count: Some(5),
         };
@@ -1651,6 +1705,8 @@ mod tests {
             url: "https://example.com/99".to_string(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -1735,6 +1791,8 @@ mod tests {
             url: "https://example.com".into(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let template = EntryListTemplate {
@@ -1801,6 +1859,8 @@ mod tests {
             url: "https://example.com/42".into(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
 
@@ -1868,6 +1928,8 @@ mod tests {
             url: "https://example.com".into(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let list_tpl = EntryListTemplate {
@@ -1906,6 +1968,8 @@ mod tests {
             url: "https://example.com".into(),
             author: None,
             is_read: false,
+            category_title: None,
+            image_url: None,
             is_bookmarked: false,
         };
         let list_tpl = EntryListTemplate {
@@ -1929,6 +1993,8 @@ mod tests {
         let html = list_tpl.render().expect("render entry list with static brief");
         assert!(html.contains("Pre-existing Executive Brief Summary"), "Must contain static executive brief: {}", html);
         assert!(html.contains("Executive Brief"), "Must contain Executive Brief header: {}", html);
+        assert!(html.contains("id=\"list-executive-brief\""), "Must contain list-executive-brief for list view: {}", html);
+        assert!(html.contains("id=\"page-executive-brief\""), "Must contain page-executive-brief for magazine view: {}", html);
         assert!(!html.contains("hx-trigger=\"load\""), "Must not contain hx-trigger=load: {}", html);
         assert!(!html.contains("Generating Executive Brief..."), "Must not contain loading skeleton: {}", html);
     }
@@ -1949,5 +2015,210 @@ mod tests {
         assert!(html.contains("request_brief"), "Must configure request_brief parameter");
         assert!(html.contains("effectiveUnread = visibleUnreadRowCount"), "Must fallback effectiveUnread in syncDomReadStates");
         assert!(html.contains("isBriefSwap = targetId === 'page-executive-brief'"), "Must handle brief swap in htmx:afterSwap");
+    }
+
+    #[test]
+    fn test_entry_view_model_category_and_image_url() {
+        let entry = EntryViewModel {
+            id: 42,
+            title: "Tech Article".into(),
+            suggested_title: Some("Punchy Title".into()),
+            feed_title: "TechCrunch".into(),
+            category_title: Some("Technology".into()),
+            published_at: "10 mins ago".into(),
+            reading_time: 3,
+            summary: "Executive brief content".into(),
+            image_url: Some("https://example.com/photo.jpg".into()),
+            url: "https://example.com/article".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        assert_eq!(entry.category_title.as_deref(), Some("Technology"));
+        assert_eq!(entry.image_url.as_deref(), Some("https://example.com/photo.jpg"));
+
+        // Test serde default roundtrip when fields are missing
+        let json_data = r#"{"id":42,"title":"T","feed_title":"F","published_at":"now","reading_time":1,"summary":"S","url":"U","is_read":false,"is_bookmarked":false}"#;
+        let deserialized: EntryViewModel = serde_json::from_str(json_data).expect("deserialize with default category and image");
+        assert_eq!(deserialized.category_title, None);
+        assert_eq!(deserialized.image_url, None);
+    }
+
+    #[test]
+    fn test_entry_list_template_renders_magazine_view_and_cards() {
+        let mut entries = Vec::new();
+        // Entry 0: Priority 1 (Hero)
+        entries.push(EntryViewModel {
+            id: 101,
+            title: "Hero Article Title".into(),
+            suggested_title: Some("Hero Suggested Headline".into()),
+            feed_title: "TechCrunch".into(),
+            category_title: Some("Technology".into()),
+            published_at: "10 mins ago".into(),
+            reading_time: 3,
+            summary: "AI summary brief for hero article".into(),
+            image_url: Some("https://example.com/photo1.jpg".into()),
+            url: "https://example.com/101".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        });
+        // Entries 1..5: Priority 2 (Up to 4 standard cards)
+        for i in 1..=4 {
+            entries.push(EntryViewModel {
+                id: 101 + i,
+                title: format!("Standard Article {}", i),
+                suggested_title: None,
+                feed_title: "BBC News".into(),
+                category_title: Some("World".into()),
+                published_at: "1 hour ago".into(),
+                reading_time: 2,
+                summary: format!("Brief for standard article {}", i),
+                image_url: if i % 2 == 0 { Some(format!("https://example.com/photo{}.jpg", i)) } else { None },
+                url: format!("https://example.com/{}", 101 + i),
+                author: None,
+                is_read: i == 1, // entry 102 is read
+                is_bookmarked: false,
+            });
+        }
+        // Entry 5: Priority 3 (Card in right column)
+        entries.push(EntryViewModel {
+            id: 106,
+            title: "Compact Bottom Article".into(),
+            suggested_title: None,
+            feed_title: "Hacker News".into(),
+            category_title: Some("Tech".into()),
+            published_at: "2 hours ago".into(),
+            reading_time: 1,
+            summary: "Summary for Priority 3".into(),
+            image_url: None,
+            url: "https://example.com/106".into(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        });
+
+        let list_tpl = EntryListTemplate {
+            entries,
+            top_executive_brief: Some("Executive brief for the page".to_string()),
+            unread_count: Some(1),
+            current_page: 1,
+            total_pages: 3,
+            has_prev: false,
+            has_next: true,
+            prev_offset: 0,
+            next_offset: 50,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+
+        let html = list_tpl.render().expect("render entry list template");
+
+        // Executive brief as 1 full-width row
+        assert!(html.contains("id=\"page-executive-brief\""), "Must contain executive brief row: {}", html);
+        assert!(html.contains("Executive brief for the page"), "Must render executive brief text: {}", html);
+
+        // Dual views containers
+        assert!(html.contains("id=\"entries-list-view\""), "Must contain list view container: {}", html);
+        assert!(html.contains("id=\"entries-magazine-view\""), "Must contain magazine view container: {}", html);
+
+        let mag_view = html.split("id=\"entries-magazine-view\"").nth(1).unwrap()
+            .split("aria-label=\"Pagination\"").next().unwrap();
+
+        // Assert 3-column editorial magazine layout
+        assert!(mag_view.contains("id=\"mag-col-brief\""), "Must contain left column #mag-col-brief: {}", mag_view);
+        assert!(mag_view.contains("id=\"mag-col-center\""), "Must contain center column #mag-col-center: {}", mag_view);
+        assert!(mag_view.contains("id=\"mag-col-right\""), "Must contain right column #mag-col-right: {}", mag_view);
+
+        // Left column houses Executive Brief
+        let brief_col = mag_view.split("id=\"mag-col-brief\"").nth(1).unwrap()
+            .split("id=\"mag-col-center\"").next().unwrap();
+        assert!(brief_col.contains("id=\"page-executive-brief\""), "Left column must contain #page-executive-brief: {}", brief_col);
+        assert!(brief_col.contains("Executive brief for the page"), "Left column must render executive brief text: {}", brief_col);
+
+        // Center column houses Priority 1 and Priority 2
+        let center_col = mag_view.split("id=\"mag-col-center\"").nth(1).unwrap()
+            .split("id=\"mag-col-right\"").next().unwrap();
+        assert!(center_col.contains("priority-1"), "Center column must contain priority-1: {}", center_col);
+        assert!(center_col.contains("priority-2"), "Center column must contain priority-2: {}", center_col);
+        assert!(!center_col.contains("priority-3"), "Center column must NOT contain priority-3: {}", center_col);
+
+        // Right column houses Priority 3
+        let right_col = mag_view.split("id=\"mag-col-right\"").nth(1).unwrap();
+        assert!(right_col.contains("priority-3"), "Right column must contain priority-3: {}", right_col);
+        assert!(!right_col.contains("priority-1"), "Right column must NOT contain priority-1: {}", right_col);
+        assert!(!right_col.contains("priority-2"), "Right column must NOT contain priority-2: {}", right_col);
+
+        // Rule: Remove news badge!
+        assert!(!mag_view.contains("magazine-topic-badge"), "Magazine view must NOT contain news badge: {}", mag_view);
+        assert!(!mag_view.contains("uppercase tracking-wider text-brand mb-1"), "Must NOT contain category badge in P2");
+        assert!(!mag_view.contains("uppercase tracking-wider text-muted-foreground mb-1"), "Must NOT contain category badge in P3");
+
+        // Priority 1 checks: Hero photo on left (50% width, 100% height self-stretch), title and brief on right
+        assert!(mag_view.contains("src=\"https://example.com/photo1.jpg\""), "Hero must render photo: {}", mag_view);
+        assert!(mag_view.contains("self-stretch"), "Hero photo container must be self-stretch: {}", mag_view);
+        assert!(mag_view.contains("Hero Suggested Headline"), "Hero must render suggested title: {}", mag_view);
+        assert!(mag_view.contains("AI summary brief for hero article"), "Hero must render brief: {}", mag_view);
+
+        // Priority 2 checks: Small photo + brief
+        assert!(mag_view.contains("Brief for standard article 1"), "Priority 2 must render brief: {}", mag_view);
+
+        // Priority 3 checks: Renders title in right column with normal font weight and tooltip brief
+        assert!(mag_view.contains("Compact Bottom Article"), "Priority 3 must render title: {}", mag_view);
+        assert!(mag_view.contains(r#"title="Summary for Priority 3""#), "Priority 3 title must have tooltip brief: {}", mag_view);
+        assert!(!right_col.contains("magazine-brief"), "Priority 3 must NOT render visible brief paragraph: {}", right_col);
+        assert!(mag_view.contains("font-normal"), "Priority 3 title must use normal text font weight: {}", mag_view);
+
+        // Rule: Do NOT show source and date time for all 3 in magazine view!
+        assert!(!mag_view.contains("10 mins ago"), "Magazine view must NOT show date time: {}", mag_view);
+        assert!(!mag_view.contains("1 hour ago"), "Magazine view must NOT show date time: {}", mag_view);
+        assert!(!mag_view.contains("2 hours ago"), "Magazine view must NOT show date time: {}", mag_view);
+        // Note: data-feed-title attribute exists for hot topic tracking, but visible source text is omitted
+        assert!(!mag_view.contains("<span class=\"truncate font-medium\">TechCrunch</span>"), "Must NOT show source text: {}", mag_view);
+
+        // Titles and click handler
+        assert!(mag_view.contains("onclick=\"openEntryFromMagazine(101, 'TechCrunch')\""), "Must wire openEntryFromMagazine: {}", mag_view);
+
+        // Read styling in magazine view: entry 102 is read (opacity-50 grayscale), entry 101 is unread (foreground)
+        assert!(mag_view.contains("id=\"mag-title-101\""), "Must have mag-title-101 id");
+        assert!(mag_view.contains("id=\"mag-title-102\""), "Must have mag-title-102 id");
+        assert!(mag_view.contains("read opacity-50 grayscale"), "Read card must have opacity-50 grayscale: {}", mag_view);
+
+        // Shared bottom pagination
+        assert!(html.contains("aria-label=\"Pagination\""), "Must render pagination nav: {}", html);
+        assert!(html.contains("Page 1 of 3"), "Must display current page: {}", html);
+    }
+
+    #[test]
+    fn test_index_template_renders_ai_toggle_button_and_scripts() {
+        let template = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("render index template with ai toggle");
+
+        // Assert button presence and ordering after theme-toggle-btn
+        let theme_pos = html.find("id=\"theme-toggle-btn\"").expect("must have theme toggle button");
+        let ai_btn_pos = html.find("id=\"ai-toggle-btn\"").expect("must have ai toggle button");
+        assert!(ai_btn_pos > theme_pos, "ai-toggle-btn must be positioned after theme-toggle-btn");
+
+        assert!(html.contains("onclick=\"toggleAiView()\""), "AI toggle button must call toggleAiView()");
+        assert!(html.contains("id=\"view-icon-magazine\""), "Must contain magazine icon: {}", html);
+        assert!(html.contains("id=\"view-icon-list\""), "Must contain list icon: {}", html);
+        assert!(html.contains("toggleAiView"), "Must define toggleAiView in script");
+        assert!(html.contains("applyAiViewMode"), "Must define applyAiViewMode in script");
+        assert!(html.contains("recordSourceClick"), "Must define recordSourceClick in script");
+        assert!(html.contains("updateHotTopicHighlighting"), "Must define updateHotTopicHighlighting in script");
+        assert!(html.contains("openEntryFromMagazine"), "Must define openEntryFromMagazine in script");
+        assert!(html.contains("'my_news_view_mode'"), "Must persist view mode in localStorage");
+        assert!(html.contains("savedMode || 'ai'"), "Must default to 'ai' view on first load");
     }
 }

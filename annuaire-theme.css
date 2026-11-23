@@ -163,6 +163,31 @@
   box-shadow: var(--elevation-overlay);
 }
 
+/* AI Magazine Editorial 3-Column Layout */
+.magazine-container {
+  container-type: inline-size;
+}
+
+.magazine-3col-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@container (min-width: 56rem) {
+  .magazine-3col-grid {
+    grid-template-columns: minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr);
+    gap: 1.5rem;
+  }
+}
+
+.magazine-p2-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.875rem;
+}
+
 /* Reduced Motion Override */
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {

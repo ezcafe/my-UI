@@ -1,9 +1,19 @@
-<div id="page-executive-brief" class="rounded-lg p-3.5 bg-muted/40 border border-border mb-4">
+<div id="page-executive-brief" class="rounded-lg p-4 md:p-5 bg-muted/40 border border-border flex flex-col">
+  <div class="flex items-center gap-2 pb-3 mb-3 border-b border-border/80">
+    <div class="p-1 rounded bg-brand/10 text-brand">
+      <i data-lucide="sparkles" class="w-4 h-4"></i>
+    </div>
+    <span class="text-xs md:text-sm font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
+  </div>
+  <p class="text-xs md:text-sm text-foreground/90 leading-relaxed font-sans">{{ brief }}</p>
+</div>
+
+<div id="list-executive-brief" hx-swap-oob="true" class="rounded-lg p-3.5 bg-muted/40 border border-border mb-3">
   <div class="flex items-center gap-2 mb-1.5">
     <div class="p-1 rounded bg-muted text-foreground">
       <i data-lucide="sparkles" class="w-4 h-4 text-brand"></i>
     </div>
-    <span class="text-xs font-bold uppercase tracking-wider text-brand font-sans">Executive Brief</span>
+    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Executive Brief</span>
   </div>
   <p class="text-xs text-foreground/90 leading-relaxed font-sans">{{ brief }}</p>
 </div>

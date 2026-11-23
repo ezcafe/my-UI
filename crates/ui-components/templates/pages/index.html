@@ -27,6 +27,17 @@
           <i data-lucide="moon" id="theme-icon-moon" class="w-4 h-4"></i>
         </button>
 
+        <!-- Magazine / List View Switcher (Icon Only) -->
+        <button 
+          id="ai-toggle-btn"
+          type="button" 
+          onclick="toggleAiView()" 
+          class="p-2 rounded-full border border-primary bg-primary text-primary-foreground transition-colors cursor-pointer select-none" 
+          title="Switch to List view">
+          <i data-lucide="newspaper" id="view-icon-magazine" class="w-4 h-4 text-brand"></i>
+          <i data-lucide="list" id="view-icon-list" class="w-4 h-4 hidden"></i>
+        </button>
+
         {% if auth_enabled %}
         <button 
           id="mark-page-read-btn"
@@ -164,6 +175,159 @@
   const filterCache = new Map();
   const readSinceLastBriefSet = new Set();
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function initAiViewMode() {
+    const savedMode = localStorage.getItem('my_news_view_mode');
+    const mode = savedMode || 'ai';
+    applyAiViewMode(mode);
+  }
+
+  function toggleAiView() {
+    const current = localStorage.getItem('my_news_view_mode') || 'ai';
+    const next = current === 'ai' ? 'list' : 'ai';
+    localStorage.setItem('my_news_view_mode', next);
+    applyAiViewMode(next);
+  }
+
+  function applyAiViewMode(mode) {
+    const btn = document.getElementById('ai-toggle-btn');
+    const iconMag = document.getElementById('view-icon-magazine');
+    const iconList = document.getElementById('view-icon-list');
+    const listView = document.getElementById('entries-list-view');
+    const magView = document.getElementById('entries-magazine-view');
+
+    if (btn) {
+      if (mode === 'ai') {
+        btn.className = 'p-2 rounded-full border border-primary bg-primary text-primary-foreground transition-colors cursor-pointer select-none';
+        btn.title = 'Switch to List view';
+        if (iconMag) iconMag.classList.remove('hidden');
+        if (iconList) iconList.classList.add('hidden');
+      } else {
+        btn.className = 'p-2 rounded-full border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer select-none';
+        btn.title = 'Switch to Magazine view';
+        if (iconMag) iconMag.classList.add('hidden');
+        if (iconList) iconList.classList.remove('hidden');
+      }
+      if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons({ root: btn });
+      }
+    }
+
+    if (mode === 'ai') {
+      if (listView) listView.classList.add('hidden');
+      if (magView) magView.classList.remove('hidden');
+    } else {
+      if (listView) listView.classList.remove('hidden');
+      if (magView) magView.classList.add('hidden');
+    }
+
+    updateHotTopicHighlighting();
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      const el = document.getElementById('entries-list');
+      if (el) lucide.createIcons({ root: el });
+    }
+  }
+
+  function recordSourceClick(feedTitle) {
+    if (!feedTitle) return;
+    try {
+      const raw = localStorage.getItem('my_news_source_clicks');
+      const clicks = raw ? JSON.parse(raw) : {};
+      clicks[feedTitle] = (clicks[feedTitle] || 0) + 1;
+      localStorage.setItem('my_news_source_clicks', JSON.stringify(clicks));
+    } catch (e) {
+      console.warn('Could not record source click:', e);
+    }
+    updateHotTopicHighlighting();
+  }
+
+  function updateHotTopicHighlighting() {
+    let topFeed = null;
+    let maxClicks = 0;
+    try {
+      const raw = localStorage.getItem('my_news_source_clicks');
+      if (raw) {
+        const clicks = JSON.parse(raw);
+        for (const [source, count] of Object.entries(clicks)) {
+          if (count > maxClicks) {
+            maxClicks = count;
+            topFeed = source;
+          }
+        }
+      }
+    } catch (e) {}
+
+    const cards = document.querySelectorAll('#entries-magazine-view .magazine-card');
+    if (!topFeed && cards.length > 0) {
+      topFeed = cards[0].getAttribute('data-feed-title');
+    }
+
+    cards.forEach(card => {
+      const feed = card.getAttribute('data-feed-title');
+      const isHot = Boolean(topFeed && feed === topFeed);
+      if (isHot) {
+        card.classList.add('border-brand/50');
+      } else {
+        card.classList.remove('border-brand/50');
+      }
+
+      const badge = card.querySelector('.magazine-topic-badge');
+      if (badge) {
+        const category = card.getAttribute('data-category') || 'General';
+        if (isHot) {
+          badge.className = 'magazine-topic-badge hot-topic-badge px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-brand/10 text-brand border border-brand/40 inline-flex items-center gap-1';
+          badge.innerHTML = '<i data-lucide="flame" class="w-3 h-3 text-brand shrink-0"></i><span>' + escapeHtml(category) + '</span>';
+        } else {
+          badge.className = 'magazine-topic-badge px-2 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-muted text-muted-foreground border border-border inline-flex items-center gap-1';
+          badge.innerHTML = '<span>' + escapeHtml(category) + '</span>';
+        }
+      }
+    });
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      const magView = document.getElementById('entries-magazine-view');
+      if (magView) lucide.createIcons({ root: magView });
+    }
+  }
+
+  function openEntryFromMagazine(id, feedTitle) {
+    const numId = Number(id);
+    if (feedTitle) {
+      recordSourceClick(feedTitle);
+    }
+    if (numId) {
+      const cardEl = document.getElementById('mag-entry-' + numId);
+      if (cardEl) {
+        cardEl.classList.remove('unread');
+        cardEl.classList.add('read', 'opacity-50', 'grayscale');
+      }
+      const titleEl = document.getElementById('mag-title-' + numId);
+      if (titleEl) {
+        titleEl.classList.remove('text-foreground');
+        titleEl.classList.add('text-muted-foreground');
+      }
+      if (typeof markArticleRead === 'function') {
+        markArticleRead(numId);
+      }
+      openEntryDetail(numId);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAiViewMode);
+  } else {
+    initAiViewMode();
+  }
+
   function recordReadArticle(id) {
     const numId = Number(id);
     if (numId) {
@@ -207,6 +371,8 @@
       if (typeof syncDomReadStates === 'function') {
         syncDomReadStates();
       }
+      const savedMode = localStorage.getItem('my_news_view_mode') || 'ai';
+      applyAiViewMode(savedMode);
     }
   }
 
@@ -423,6 +589,12 @@
       dot.innerHTML = '';
     }
 
+    const magTitle = document.getElementById('mag-title-' + numId);
+    if (magTitle) {
+      magTitle.classList.remove('text-foreground');
+      magTitle.classList.add('text-muted-foreground');
+    }
+
     if (typeof markLocallyRead === 'function') {
       markLocallyRead(numId);
     } else if (window.htmx) {
@@ -484,6 +656,12 @@
       const dot = document.getElementById('entry-' + numId + '-dot');
       if (dot) {
         dot.innerHTML = '';
+      }
+
+      const magTitle = document.getElementById('mag-title-' + numId);
+      if (magTitle) {
+        magTitle.classList.remove('text-foreground');
+        magTitle.classList.add('text-muted-foreground');
       }
     } else {
       // Cache miss or expired: show skeleton and fetch via HTMX
@@ -644,6 +822,8 @@
         if (typeof syncDomReadStates === 'function') {
           syncDomReadStates();
         }
+        const currentMode = localStorage.getItem('my_news_view_mode') || 'ai';
+        applyAiViewMode(currentMode);
       } else if (targetId === 'detail-panel' || evt.detail.target.closest('#detail-panel')) {
         invalidateFilterCache();
         const panel = document.getElementById('detail-panel');
@@ -863,6 +1043,30 @@
           visibleUnreadRowCount++;
         }
       }
+    });
+
+    document.querySelectorAll('#entries-magazine-view .magazine-card').forEach(card => {
+      const idStr = card.getAttribute('data-entry-id');
+      const numId = Number(idStr);
+      if (numId) {
+        const titleEl = document.getElementById('mag-title-' + numId);
+        if (readSet.has(numId)) {
+          card.classList.remove('unread');
+          card.classList.add('read', 'opacity-50', 'grayscale');
+          if (titleEl) {
+            titleEl.classList.remove('text-foreground');
+            titleEl.classList.add('text-muted-foreground');
+          }
+        } else {
+          card.classList.remove('read', 'opacity-50', 'grayscale');
+          card.classList.add('unread');
+          if (titleEl) {
+            titleEl.classList.remove('text-muted-foreground');
+            titleEl.classList.add('text-foreground');
+          }
+        }
+      }
+      card.style.display = '';
     });
 
     const filterCount = document.getElementById('filter-unread-count');

@@ -360,6 +360,66 @@
       border-radius: 9999px;
     }
 
+    /* AI Magazine 3-Column Editorial Grid */
+    .magazine-container {
+      container-type: inline-size;
+      width: 100%;
+    }
+
+    .magazine-3col-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.25rem;
+      align-items: start;
+      width: 100%;
+    }
+
+    @container (min-width: 48rem) {
+      .magazine-3col-grid {
+        grid-template-columns: minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr);
+        gap: 1.5rem;
+      }
+    }
+
+    @media (min-width: 1024px) {
+      .magazine-3col-grid {
+        grid-template-columns: minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr);
+      }
+    }
+
+    .magazine-p2-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 0.875rem;
+    }
+
+    /* Read Articles Styling (Blur / Gray / Muted) */
+    .ar-list-item.read {
+      opacity: 0.55;
+      filter: grayscale(80%) blur(0.2px);
+      transition: opacity 150ms ease, filter 150ms ease;
+    }
+    .ar-list-item.read .article-title {
+      color: var(--muted-foreground) !important;
+    }
+    .ar-list-item.read:hover {
+      opacity: 0.9;
+      filter: grayscale(0%) blur(0);
+    }
+
+    .magazine-card.read {
+      opacity: 0.45;
+      filter: grayscale(85%) blur(0.25px);
+      transition: opacity 150ms ease, filter 150ms ease;
+    }
+    .magazine-card.read:hover {
+      opacity: 0.9;
+      filter: grayscale(0%) blur(0);
+    }
+    .magazine-card.read .magazine-title {
+      color: var(--muted-foreground) !important;
+    }
+
     /* HTMX Indicator Utility: Opacity-based to prevent layout shift */
     .htmx-indicator {
       display: none;

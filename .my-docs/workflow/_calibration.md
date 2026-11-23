@@ -7,3 +7,5 @@
 - **20261121-ui-filter-read-status-fixes**: Mode OK (simple) · Profile OK (lite) · Biggest friction: mid-run requirement addition handled cleanly via design-backloop.
 - **20261122-docker-compose-local-prod**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (clear user decision choices and clean multi-stage container validation).
 - **20261122-ai-auth-gate-docker-fix**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (smooth TDD cycle covering config matrix and route guards).
+- **20261122-ai-source-grouping-3-sentence-brief**: Mode OK (full) · Profile OK (full) · Biggest friction: none (single-pass hybrid prompt with existing brief reuse cleanly solved whole-page synthesis without duplicate LLM calls).
+- **20261123-ai-view-3-column-editorial-layout**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (iterative editorial design refinements aligned with screenshot reference and robust container queries).

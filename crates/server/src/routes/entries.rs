@@ -38,6 +38,16 @@ pub struct MarkPageReadForm {
     pub category_id: Option<i64>,
 }
 
+pub fn extract_first_image_url(html: &str) -> Option<String> {
+    static IMG_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::RegexBuilder::new(r#"<img[^>]+src=["']([^"']+)["']"#)
+            .case_insensitive(true)
+            .build()
+            .unwrap()
+    });
+    IMG_REGEX.captures(html).and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+}
+
 pub fn is_brief_eligible_filter(status: Option<&str>, search: Option<&str>) -> bool {
     let has_search = search.is_some_and(|s| !s.trim().is_empty());
     match status {
@@ -152,11 +162,18 @@ pub async fn render_entries_list(
                             id
                             title
                             summary
+                            content
                             publishedAt
                             readingTime
                             status
                             isBookmarked
                             url
+                            feed {{
+                                title
+                                category {{
+                                    title
+                                }}
+                            }}
                         }}
                     }}
                     {counter_field}
@@ -184,11 +201,18 @@ pub async fn render_entries_list(
                         id
                         title
                         summary
+                        content
                         publishedAt
                         readingTime
                         status
                         isBookmarked
                         url
+                        feed {{
+                            title
+                            category {{
+                                title
+                            }}
+                        }}
                     }}
                 }}
                 {counter_field}
@@ -242,14 +266,32 @@ pub async fn render_entries_list(
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| {
+                    let content_str = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    let summary_str = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    let image_url = extract_first_image_url(content_str)
+                        .or_else(|| extract_first_image_url(summary_str));
+                    let feed_obj = item.get("feed");
+                    let feed_title = feed_obj
+                        .and_then(|f| f.get("title"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Feed")
+                        .to_string();
+                    let category_title = feed_obj
+                        .and_then(|f| f.get("category"))
+                        .and_then(|c| c.get("title"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
                     Some(EntryViewModel {
                         id: item.get("id")?.as_str()?.parse().ok()?,
                         title: item.get("title")?.as_str()?.to_string(),
                         suggested_title: None,
-                        feed_title: "Feed".to_string(),
+                        feed_title,
+                        category_title,
                         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
-                        summary: item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        summary: summary_str.to_string(),
+                        image_url,
                         url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         author: None,
                         is_read: if auth_enabled {
@@ -284,6 +326,9 @@ pub async fn render_entries_list(
     for entry in &mut entries {
         if let Some(record) = ai_summaries.get(&entry.id) {
             entry.suggested_title = record.suggested_title.clone();
+            if !record.summary.is_empty() {
+                entry.summary = record.summary.clone();
+            }
         }
     }
 
@@ -397,9 +442,11 @@ pub async fn render_ai_entries_list(
                         title: item.get("title")?.as_str()?.to_string(),
                         suggested_title: None,
                         feed_title,
+                        category_title: None,
                         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
                         summary: item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        image_url: None,
                         url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         author: None,
                         is_read: item.get("status").and_then(|v| v.as_str()) == Some("READ"),
@@ -998,9 +1045,11 @@ pub async fn get_entry_detail_htmx(
         title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         suggested_title,
         feed_title,
+        category_title: None,
         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
         summary: summary.clone(),
+        image_url: None,
         url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         author: item.get("author").and_then(|v| v.as_str()).map(|s| s.to_string()),
         is_read: true,
@@ -1173,8 +1222,10 @@ pub async fn mark_entry_read_htmx(
                 .unwrap_or("Feed")
                 .to_string(),
             published_at: e.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("Just now").to_string(),
+            category_title: None,
             reading_time: e.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
             summary: e.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            image_url: None,
             url: e.get("url").and_then(|v| v.as_str()).unwrap_or("#").to_string(),
             author: e.get("author").and_then(|v| v.as_str()).map(|s| s.to_string()),
             is_read,
@@ -1186,9 +1237,11 @@ pub async fn mark_entry_read_htmx(
             title: format!("Article {}", id),
             suggested_title: None,
             feed_title: "Feed".to_string(),
+            category_title: None,
             published_at: "Just now".to_string(),
             reading_time: 2,
             summary: "Article marked status.".to_string(),
+            image_url: None,
             url: "#".to_string(),
             author: None,
             is_read,
@@ -1960,5 +2013,25 @@ mod tests {
 
         assert!(html.contains("Existing Latest Executive Brief"), "Must render latest saved page brief: {}", html);
         assert!(!html.contains("hx-trigger=\"load\""), "Must not trigger brief generation when request_brief is false: {}", html);
+    }
+
+    #[test]
+    fn test_extract_first_image_url() {
+        assert_eq!(
+            extract_first_image_url(r#"<p>Some text</p><img src="https://example.com/banner.png" alt="test"/><p>more</p>"#),
+            Some("https://example.com/banner.png".to_string())
+        );
+        assert_eq!(
+            extract_first_image_url(r#"<figure><IMG class="hero" SRC='https://example.com/hero.jpg'></figure>"#),
+            Some("https://example.com/hero.jpg".to_string())
+        );
+        assert_eq!(
+            extract_first_image_url("<p>No image here</p>"),
+            None
+        );
+        assert_eq!(
+            extract_first_image_url(""),
+            None
+        );
     }
 }

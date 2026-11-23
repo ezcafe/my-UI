@@ -3,6 +3,7 @@ use crate::auth::AuthenticatedUser;
 use crate::cache::MinifluxCache;
 use crate::config::Config;
 use crate::error::AppError;
+use crate::routes::entries::extract_first_image_url;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use miniflux_client::schema::AppSchema;
@@ -43,11 +44,18 @@ pub async fn index_page(
                         id
                         title
                         summary
+                        content
                         publishedAt
                         readingTime
                         isBookmarked
                         url
                         status
+                        feed {
+                            title
+                            category {
+                                title
+                            }
+                        }
                     }
                 }
             }"#;
@@ -69,11 +77,18 @@ pub async fn index_page(
                         id
                         title
                         summary
+                        content
                         publishedAt
                         readingTime
                         isBookmarked
                         url
                         status
+                        feed {{
+                            title
+                            category {{
+                                title
+                            }}
+                        }}
                     }}
                 }}
             }}"#);
@@ -128,14 +143,32 @@ pub async fn index_page(
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| {
+                    let content_str = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    let summary_str = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    let image_url = extract_first_image_url(content_str)
+                        .or_else(|| extract_first_image_url(summary_str));
+                    let feed_obj = item.get("feed");
+                    let feed_title = feed_obj
+                        .and_then(|f| f.get("title"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Feed")
+                        .to_string();
+                    let category_title = feed_obj
+                        .and_then(|f| f.get("category"))
+                        .and_then(|c| c.get("title"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
                     Some(ui_components::templates::EntryViewModel {
                         id: item.get("id")?.as_str()?.parse().ok()?,
                         title: item.get("title")?.as_str()?.to_string(),
                         suggested_title: None,
-                        feed_title: "Feed".to_string(),
+                        feed_title,
+                        category_title,
                         published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
-                        summary: item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        summary: summary_str.to_string(),
+                        image_url,
                         url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         author: None,
                         is_read: if config.auth_enabled {
@@ -162,6 +195,9 @@ pub async fn index_page(
     for entry in &mut view_models {
         if let Some(record) = ai_summaries.get(&entry.id) {
             entry.suggested_title = record.suggested_title.clone();
+            if !record.summary.is_empty() {
+                entry.summary = record.summary.clone();
+            }
         }
     }
 

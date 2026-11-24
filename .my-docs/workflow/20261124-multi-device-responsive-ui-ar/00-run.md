@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** full
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** test-full
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 0
 - **Gate B approved:** yes
 - **Build armed:** yes
@@ -36,3 +36,4 @@
 - **14:36** · review · Result clean
 - **14:37** · test-full · Result success · gate-c presented
 - **16:06** · Gate C approved: commit, push
+- **16:07** · pushed 87053ce to origin/main · Status done

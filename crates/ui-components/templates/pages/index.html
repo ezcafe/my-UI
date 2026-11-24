@@ -641,6 +641,8 @@
       // Instant render from cache - zero network request, zero skeleton flicker
       panel.innerHTML = cached.html;
       panel.classList.add('has-content');
+      alignDetailPanelWidth();
+      panel.classList.add('animate-slide-in-right');
       panel.classList.remove('hidden');
 
       if (window.lucide && typeof lucide.createIcons === 'function') {
@@ -782,13 +784,40 @@
       lucide.createIcons({ root: panel });
     }
     panel.classList.add('has-content');
+    alignDetailPanelWidth();
+    panel.classList.add('animate-slide-in-right');
     panel.classList.remove('hidden');
+  }
+
+  function alignDetailPanelWidth() {
+    const panel = document.getElementById('detail-panel');
+    const colCenter = document.getElementById('mag-col-center');
+    if (!panel) return;
+    if (colCenter && window.matchMedia('(min-width: 48rem)').matches) {
+      const workspace = panel.parentElement;
+      if (workspace) {
+        const wsRect = workspace.getBoundingClientRect();
+        const centerRect = colCenter.getBoundingClientRect();
+        const leftOffset = Math.max(0, centerRect.left - wsRect.left);
+        panel.style.left = leftOffset + 'px';
+        panel.style.right = '0px';
+        panel.style.width = (wsRect.right - centerRect.left) + 'px';
+        return;
+      }
+    }
+    panel.style.left = '';
+    panel.style.right = '';
+    panel.style.width = '';
   }
 
   function closeDetailPanel() {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
+    panel.style.left = '';
+    panel.style.right = '';
+    panel.style.width = '';
     panel.classList.remove('has-content');
+    panel.classList.remove('animate-slide-in-right');
     panel.classList.add('hidden');
     panel.innerHTML = `
       <div id="detail-empty-placeholder" class="hidden h-full flex-col items-center justify-center text-center text-muted-foreground p-8 select-none">
@@ -842,6 +871,13 @@
       openEntryDetail(entryId);
     } else {
       closeDetailPanel();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    const panel = document.getElementById('detail-panel');
+    if (panel && !panel.classList.contains('hidden')) {
+      alignDetailPanelWidth();
     }
   });
 

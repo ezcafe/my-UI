@@ -70,6 +70,16 @@ mod tests {
     }
 
     #[test]
+    fn test_extractive_summary_returns_three_sentences() {
+        let text = "First sentence. Second sentence. Third sentence. Fourth sentence.";
+        let summary = extract_summary(text, 3);
+        assert_eq!(
+            summary,
+            "First sentence. Second sentence. Third sentence."
+        );
+    }
+
+    #[test]
     fn test_summary_extractor_strips_html_tags() {
         let html_text = "<p>First sentence with <b>bold</b> and <a href=\"https://example.com\">link</a>. Second sentence contains &amp; entity.</p><p>Third sentence.</p>";
         let summary = extract_summary(html_text, 2);

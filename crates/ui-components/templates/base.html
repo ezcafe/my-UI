@@ -259,29 +259,29 @@
       overflow: hidden;
     }
 
-    @container workspace (min-width: 58rem) {
-      .workspace-layout {
-        grid-template-columns: minmax(20rem, 24rem) 1fr;
+    @keyframes slideInFromRight {
+      from {
+        transform: translateX(100%);
+        opacity: 0.9;
       }
-
-      .workspace-layout .detail-pane {
-        position: relative !important;
-        inset: auto !important;
-        z-index: 10 !important;
-        display: flex !important;
-        border-left: 1px solid var(--border);
-      }
-
-      /* When detail-pane does not have content loaded, show empty placeholder */
-      .workspace-layout .detail-pane:not(.has-content) #detail-empty-placeholder {
-        display: flex !important;
-      }
-
-      /* Hide back button on desktop split view */
-      .workspace-layout .detail-pane #detail-back-btn {
-        display: none !important;
+      to {
+        transform: translateX(0);
+        opacity: 1;
       }
     }
+    .animate-slide-in-right {
+      animation: slideInFromRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* Wide Desktop: Detail panel width = Column 2 + Column 3 in list page */
+    @container workspace (min-width: 48rem) {
+      #detail-panel {
+        left: auto;
+        right: 0;
+        width: calc((3.6 / 4.6) * 100%);
+      }
+    }
+
 
     /* AR Optical Waveguide & Gaze Target Ergonomics */
     [data-theme="dark"] .spatial-window,

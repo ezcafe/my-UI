@@ -66,15 +66,33 @@
 
   <!-- Detail Body: smaller scrollbar, capped at max-w-[44rem] mx-auto -->
   <div class="detail-scrollbar detail-body flex-1 overflow-y-auto pr-2 w-full max-w-[44rem] mx-auto">
-    <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
-      <span class="font-medium text-foreground">{{ entry.feed_title }}</span>
-      <span>•</span>
-      <span>{{ entry.published_at }}</span>
+    {% if let Some(hero) = hero_image %}
+    <div class="relative w-full rounded-xl overflow-hidden mb-6 bg-muted min-h-[220px] md:min-h-[280px] flex items-end">
+      <img src="{{ hero }}" alt="{{ entry.title }}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="absolute inset-0 w-full h-full object-cover">
+      <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent"></div>
+      <div class="relative z-10 p-5 md:p-6 w-full">
+        <div class="flex items-center gap-2 text-xs text-white/80 mb-2 font-sans tabular drop-shadow-sm">
+          <span class="font-medium text-white">{{ entry.feed_title }}</span>
+          <span>•</span>
+          <span>{{ entry.published_at }}</span>
+        </div>
+        <h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">
+          {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
+        </h1>
+      </div>
     </div>
-
-    <h1 class="text-2xl font-bold font-sans text-foreground mb-6 leading-snug">
-      {{ entry.title }}
-    </h1>
+    {% else %}
+    <div class="mb-6">
+      <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
+        <span class="font-medium text-foreground">{{ entry.feed_title }}</span>
+        <span>•</span>
+        <span>{{ entry.published_at }}</span>
+      </div>
+      <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">
+        {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
+      </h1>
+    </div>
+    {% endif %}
 
     <div id="ai-rewrite-box" class="space-y-6">
       <!-- Inverted Pyramid Rewrite Content -->
@@ -82,6 +100,17 @@
         {{ rewrite }}
       </div>
     </div>
+
+    {% if !body_images.is_empty() %}
+    <!-- Body Images Gallery -->
+    <div class="my-6 space-y-4">
+      {% for img_url in body_images %}
+      <figure class="rounded-xl overflow-hidden border border-border bg-muted/30">
+        <img src="{{ img_url }}" alt="Article photo" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="w-full h-auto object-cover max-h-[480px]">
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     {% if has_analysis %}
     {% include "analysis_cards.html" %}

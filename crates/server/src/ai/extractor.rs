@@ -40,7 +40,7 @@ impl ArticleExtractor {
 
         // 3. If still empty or too short, fallback to teaser
         if extracted_text.len() < 50 {
-            extracted_text = miniflux_client::summary::extract_summary(teaser, 2);
+            extracted_text = miniflux_client::summary::extract_summary(teaser, 3);
             if extracted_text.is_empty() {
                 extracted_text = teaser.trim().to_string();
             }
@@ -51,7 +51,7 @@ impl ArticleExtractor {
 
     pub async fn extract_content(&self, url: &str, _title: &str, teaser: &str) -> String {
         // Fast-path: If teaser has >= 50 words, return immediately without network fetch
-        let clean_teaser = miniflux_client::summary::extract_summary(teaser, 2);
+        let clean_teaser = miniflux_client::summary::extract_summary(teaser, 3);
         let teaser_text = if clean_teaser.is_empty() {
             teaser.trim()
         } else {
@@ -202,14 +202,14 @@ mod tests {
 
         let extractor = ArticleExtractor::new();
         let blocked_url = format!("{}/blocked", mock_server.uri());
-        let teaser = "Teaser sentence 1. Teaser sentence 2. Extra sentence 3 that gets truncated.";
+        let teaser = "Teaser sentence 1. Teaser sentence 2. Teaser sentence 3. Extra sentence 4 that gets truncated.";
         let content = extractor
             .extract_content(&blocked_url, "Blocked News", teaser)
             .await;
 
-        assert!(content.contains("Teaser sentence 1. Teaser sentence 2."));
+        assert!(content.contains("Teaser sentence 1. Teaser sentence 2. Teaser sentence 3."));
         assert!(!content.contains("Title:"));
-        assert!(!content.contains("Extra sentence 3"));
+        assert!(!content.contains("Extra sentence 4"));
     }
 
     #[test]

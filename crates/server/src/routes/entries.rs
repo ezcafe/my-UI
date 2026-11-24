@@ -50,6 +50,41 @@ pub fn extract_first_image_url(html: &str) -> Option<String> {
         .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
 }
 
+/// Extracts all valid image URLs from HTML content, filtering out tracking pixels.
+pub fn extract_article_images(html: &str) -> (Option<String>, Vec<String>) {
+    static IMG_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::RegexBuilder::new(r#"<img[^>]+src=["']([^"']+)["']"#)
+            .case_insensitive(true)
+            .build()
+            .unwrap()
+    });
+
+    let mut images = Vec::new();
+    for cap in IMG_REGEX.captures_iter(html) {
+        if let Some(src) = cap.get(1).map(|m| m.as_str().trim().to_string()) {
+            let lower = src.to_lowercase();
+            // Filter out common tracking pixels, 1x1 gifs, and empty src
+            if !src.is_empty()
+                && !lower.contains("1x1")
+                && !lower.contains("pixel")
+                && !lower.contains("feedburner.com/~r")
+                && !lower.starts_with("data:image/svg+xml")
+                && !images.contains(&src)
+            {
+                images.push(src);
+            }
+        }
+    }
+
+    let hero_image = if !images.is_empty() {
+        Some(images.remove(0))
+    } else {
+        None
+    };
+
+    (hero_image, images)
+}
+
 pub fn is_brief_eligible_filter(status: Option<&str>, search: Option<&str>) -> bool {
     let has_search = search.is_some_and(|s| !s.trim().is_empty());
     match status {
@@ -1380,6 +1415,13 @@ pub async fn get_entry_detail_htmx(
             .unwrap_or(false),
     };
 
+    let (mut hero_image, mut body_images) = extract_article_images(content);
+    if hero_image.is_none() && !summary.is_empty() {
+        let (s_hero, s_body) = extract_article_images(&summary);
+        hero_image = s_hero;
+        body_images = s_body;
+    }
+
     let template = EntryDetailTemplate {
         entry,
         summary,
@@ -1388,6 +1430,8 @@ pub async fn get_entry_detail_htmx(
         fallacies,
         has_analysis,
         auth_enabled: config.auth_enabled,
+        hero_image,
+        body_images,
     };
 
     let mut html = match template.render() {
@@ -2720,6 +2764,43 @@ mod tests {
         );
         assert_eq!(extract_first_image_url("<p>No image here</p>"), None);
         assert_eq!(extract_first_image_url(""), None);
+    }
+
+    #[test]
+    fn test_extract_article_images_hero_and_body() {
+        let html = r#"
+            <div>
+                <p>Intro text</p>
+                <img src="https://example.com/hero.jpg" alt="Hero photo">
+                <img src="https://tracker.example.com/1x1.gif">
+                <p>Middle text</p>
+                <img src="https://example.com/photo2.png" alt="Body photo 1">
+                <img src="https://feedburner.com/~r/test/~4/abc" alt="pixel">
+                <img src="https://example.com/photo3.webp" alt="Body photo 2">
+            </div>
+        "#;
+        let (hero, body) = extract_article_images(html);
+        assert_eq!(hero, Some("https://example.com/hero.jpg".to_string()));
+        assert_eq!(
+            body,
+            vec![
+                "https://example.com/photo2.png".to_string(),
+                "https://example.com/photo3.webp".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_article_images_empty_and_no_images() {
+        assert_eq!(extract_article_images(""), (None, vec![]));
+        assert_eq!(
+            extract_article_images("<p>Text only, no images here.</p>"),
+            (None, vec![])
+        );
+        assert_eq!(
+            extract_article_images(r#"<img src="https://example.com/pixel.png">"#),
+            (None, vec![])
+        );
     }
 
     #[test]

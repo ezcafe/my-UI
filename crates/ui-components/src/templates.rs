@@ -112,6 +112,8 @@ pub struct EntryDetailTemplate {
     pub impact: String,
     pub fallacies: String,
     pub has_analysis: bool,
+    pub hero_image: Option<String>,
+    pub body_images: Vec<String>,
 }
 
 #[derive(Template)]
@@ -597,6 +599,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
 
         let html = template
@@ -642,6 +646,8 @@ mod tests {
             fallacies: "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
                 .to_string(),
             has_analysis: true,
+            hero_image: None,
+            body_images: vec![],
         };
 
         let html = template.render().expect("render detail template");
@@ -695,6 +701,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
 
         let html = template.render().expect("render detail template");
@@ -734,6 +742,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
 
         let html = template
@@ -791,6 +801,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
 
         let html = template
@@ -841,6 +853,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
 
         let html = template
@@ -1142,6 +1156,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
         let html = template
             .render()
@@ -1570,6 +1586,8 @@ mod tests {
             impact: String::new(),
             fallacies: String::new(),
             has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
         };
         let detail_html = detail_template
             .render()
@@ -2887,18 +2905,10 @@ mod tests {
         };
         let html = index_tmpl.render().expect("render index template");
 
-        // Container query master-detail rules
+        // Container query workspace context
         assert!(
             html.contains("container-name: workspace") || html.contains("container: workspace / inline-size"),
             "base.html must define workspace container query context"
-        );
-        assert!(
-            html.contains("@container workspace (min-width: 58rem)"),
-            "base.html must define @container workspace (min-width: 58rem) master-detail split"
-        );
-        assert!(
-            html.contains("minmax(20rem, 24rem) 1fr"),
-            "base.html must split master (20-24rem) and detail (1fr)"
         );
 
         // Optical waveguide and gaze target tokens
@@ -2909,6 +2919,45 @@ mod tests {
         assert!(
             html.contains("min-height: 48px") || html.contains("min-h-[48px]"),
             "Must define 48px minimum gaze target height for ar-list-item"
+        );
+    }
+
+    #[test]
+    fn test_detail_panel_slide_in_animation_and_no_split_on_load() {
+        let index_tmpl = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = index_tmpl.render().expect("render index template");
+
+        // 1. Must define .animate-slide-in-right and keyframes
+        assert!(
+            html.contains("slideInFromRight") && html.contains("animate-slide-in-right"),
+            "base.html must define slideInFromRight keyframes and .animate-slide-in-right"
+        );
+
+        // 2. Must not force desktop split on load
+        assert!(
+            !html.contains("minmax(20rem, 24rem) 1fr"),
+            "base.html must not force two-column desktop split on initial load"
+        );
+        assert!(
+            !html.contains(".workspace-layout .detail-pane #detail-back-btn { display: none !important; }")
+                && !html.contains("#detail-back-btn {\n        display: none !important;"),
+            "detail back button must remain accessible on all screen sizes"
+        );
+
+        // 3. Wide desktop detail panel width equals Column 2 + Column 3
+        assert!(
+            html.contains("alignDetailPanelWidth") && html.contains("mag-col-center"),
+            "index.html must dynamically align detail panel width with mag-col-center (col 2 + col 3)"
+        );
+        assert!(
+            html.contains("(3.6 / 4.6)"),
+            "base.html must define CSS fallback for detail panel matching col 2 + col 3 proportion"
         );
     }
 
@@ -2934,6 +2983,174 @@ mod tests {
         assert!(
             !raw_entry_list.contains("md:text-xl"),
             "entry_list.html must not use md:text-xl viewport breakpoint"
+        );
+    }
+
+    #[test]
+    fn test_magazine_view_brief_line_clamping() {
+        let raw_entry_list = include_str!("../templates/partials/entry_list.html");
+        assert!(
+            raw_entry_list.contains("line-clamp-6"),
+            "entry_list.html Priority 1 card brief must use line-clamp-6"
+        );
+        assert!(
+            raw_entry_list.contains("line-clamp-4 leading-relaxed font-sans flex-1"),
+            "entry_list.html Priority 2 card brief must use line-clamp-4"
+        );
+    }
+
+    #[test]
+    fn test_entry_detail_template_renders_hero_image_with_overlaid_title() {
+        let entry = EntryViewModel {
+            id: 201,
+            title: "Magazine Cover Story".to_string(),
+            suggested_title: Some("Overlaid Punchy Headline".to_string()),
+            feed_title: "Vogue Tech".to_string(),
+            published_at: "Just now".to_string(),
+            reading_time: 3,
+            summary: "Summary text.".to_string(),
+            url: "https://example.com/201".to_string(),
+            author: None,
+            is_read: false,
+            category_title: Some("Design".to_string()),
+            image_url: None,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "Brief".to_string(),
+            auth_enabled: false,
+            rewrite: "Inverted pyramid rewrite content here.".to_string(),
+            impact: "Impact text.".to_string(),
+            fallacies: "Fallacies text.".to_string(),
+            has_analysis: true,
+            hero_image: Some("https://example.com/hero.jpg".to_string()),
+            body_images: vec![],
+        };
+
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate with hero image");
+
+        assert!(
+            html.contains("bg-gradient-to-t"),
+            "Hero image container must have bg-gradient-to-t scrim"
+        );
+        assert!(
+            html.contains("relative z-10"),
+            "Title and metadata overlay must have relative z-10"
+        );
+        assert!(
+            html.contains("https://example.com/hero.jpg"),
+            "Hero image src must be rendered"
+        );
+        assert!(
+            html.contains("Overlaid Punchy Headline"),
+            "Hero image overlay must render suggested title"
+        );
+        assert!(
+            html.contains("text-white"),
+            "Overlay text must use text-white for high contrast"
+        );
+    }
+
+    #[test]
+    fn test_entry_detail_template_renders_without_hero_image() {
+        let entry = EntryViewModel {
+            id: 202,
+            title: "Clean Typography Story".to_string(),
+            suggested_title: None,
+            feed_title: "Ars Technica".to_string(),
+            published_at: "30 mins ago".to_string(),
+            reading_time: 2,
+            summary: "Summary text.".to_string(),
+            url: "https://example.com/202".to_string(),
+            author: None,
+            is_read: false,
+            category_title: None,
+            image_url: None,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "Brief".to_string(),
+            auth_enabled: false,
+            rewrite: "Inverted pyramid rewrite content here.".to_string(),
+            impact: "Impact text.".to_string(),
+            fallacies: "Fallacies text.".to_string(),
+            has_analysis: true,
+            hero_image: None,
+            body_images: vec![],
+        };
+
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate without hero image");
+
+        assert!(
+            !html.contains("bg-gradient-to-t"),
+            "Detail view without hero must not render hero gradient scrim"
+        );
+        assert!(
+            html.contains("text-foreground"),
+            "Clean typography title must use text-foreground"
+        );
+        assert!(
+            html.contains("Clean Typography Story"),
+            "Clean typography title must render entry.title"
+        );
+    }
+
+    #[test]
+    fn test_entry_detail_template_renders_body_images() {
+        let entry = EntryViewModel {
+            id: 203,
+            title: "Multi Photo Story".to_string(),
+            suggested_title: None,
+            feed_title: "National Geographic".to_string(),
+            published_at: "1 hour ago".to_string(),
+            reading_time: 5,
+            summary: "Summary text.".to_string(),
+            url: "https://example.com/203".to_string(),
+            author: None,
+            is_read: false,
+            category_title: None,
+            image_url: None,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "Brief".to_string(),
+            auth_enabled: false,
+            rewrite: "Rewrite content.".to_string(),
+            impact: "Impact text.".to_string(),
+            fallacies: "Fallacies text.".to_string(),
+            has_analysis: true,
+            hero_image: Some("https://example.com/hero.jpg".to_string()),
+            body_images: vec![
+                "https://example.com/photo1.jpg".to_string(),
+                "https://example.com/photo2.jpg".to_string(),
+            ],
+        };
+
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate with body images");
+
+        assert!(
+            html.contains("https://example.com/photo1.jpg"),
+            "Body image 1 must be rendered in body gallery"
+        );
+        assert!(
+            html.contains("https://example.com/photo2.jpg"),
+            "Body image 2 must be rendered in body gallery"
+        );
+        assert!(
+            html.contains("loading=\"lazy\""),
+            "Body images must have lazy loading attribute"
         );
     }
 }

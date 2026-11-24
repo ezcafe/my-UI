@@ -74,7 +74,7 @@ impl LlmCliRunner {
 
     pub fn format_prompt(title: &str, content: &str) -> String {
         format!(
-            "Summarize what changed or why this news matters in strictly 3 concise sentences. Do not include introductory filler.\n\nArticle Title: {}\nArticle Content:\n{}",
+            "Summarize what changed or why this news matters in strictly 3 to 5 concise sentences. Do not include introductory filler.\n\nArticle Title: {}\nArticle Content:\n{}",
             title.trim(),
             content.trim()
         )
@@ -83,10 +83,10 @@ impl LlmCliRunner {
     pub fn format_batch_prompt_structured(items: &[BatchArticleInput<'_>]) -> String {
         let mut prompt = String::from(
             "You are an executive news editor. For the articles below, provide:\n\
-             1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page.\n\
-             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"r\" (inverted pyramid rewrite: lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context). Do not regenerate items for existing articles.\n\n\
+             1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page (strictly 3 to 5 sentences).\n\
+             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"r\" (inverted pyramid rewrite in strictly 3 to 5 sentences: lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context). Do not regenerate items for existing articles.\n\n\
              REWRITE RULES FOR \"r\":\n\
-             - Length: Strictly under 110 words total (sweet spot 30-60 words).\n\
+             - Length: Strictly 3 to 5 sentences, under 110 words total (sweet spot 30-60 words).\n\
              - Structure: Inverted pyramid structure — lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context.\n\
              - Tone & Style: Plain and simple language. Strictly omit introductory filler or closing boilerplate.\n\n\
              CRITICAL MULTILINGUAL RULE:\n\
@@ -1512,7 +1512,7 @@ Some outro text
 
         let prompt =
             LlmCliRunner::format_prompt("Rust 2026 Released", "Exciting new features landed.");
-        assert!(prompt.contains("strictly 3 concise sentences"));
+        assert!(prompt.contains("strictly 3 to 5 concise sentences"));
         assert!(prompt.contains("Article Title: Rust 2026 Released"));
         assert!(prompt.contains("Article Content:\nExciting new features landed."));
 
@@ -1604,16 +1604,27 @@ Some outro text
     }
 
     #[test]
-    fn test_format_prompt_strictly_3_sentences() {
+    fn test_format_prompt_requires_strictly_3_to_5_sentences() {
         let prompt = LlmCliRunner::format_prompt("Rust 2026", "Content of the article.");
         assert!(
-            prompt.contains("strictly 3 concise sentences"),
-            "Prompt should require strictly 3 concise sentences: {}",
+            prompt.contains("strictly 3 to 5 concise sentences"),
+            "Prompt should require strictly 3 to 5 concise sentences: {}",
             prompt
         );
         assert!(
             !prompt.contains("1 to 2"),
             "Prompt should not contain 1 to 2 sentences"
+        );
+    }
+
+    #[test]
+    fn test_format_batch_prompt_requires_strictly_3_to_5_sentences() {
+        let articles = [(1, "Title", "Content")];
+        let prompt = LlmCliRunner::format_batch_prompt(&articles);
+        assert!(
+            prompt.contains("strictly 3 to 5 sentences"),
+            "Batch prompt should require strictly 3 to 5 sentences: {}",
+            prompt
         );
     }
 

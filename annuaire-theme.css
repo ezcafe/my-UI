@@ -163,6 +163,54 @@
   box-shadow: var(--elevation-overlay);
 }
 
+/* Container Query Master-Detail Workspace */
+.workspace-layout {
+  container-type: inline-size;
+  container-name: workspace;
+  display: grid;
+  grid-template-columns: 1fr;
+  height: 100%;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+@container workspace (min-width: 58rem) {
+  .workspace-layout {
+    grid-template-columns: minmax(20rem, 24rem) 1fr;
+  }
+
+  .workspace-layout .detail-pane {
+    position: relative !important;
+    inset: auto !important;
+    z-index: 10 !important;
+    display: flex !important;
+    border-left: 1px solid var(--border);
+  }
+
+  /* When detail-pane does not have content loaded, show empty placeholder */
+  .workspace-layout .detail-pane:not(.has-content) #detail-empty-placeholder {
+    display: flex !important;
+  }
+
+  /* Hide back button on desktop split view */
+  .workspace-layout .detail-pane #detail-back-btn {
+    display: none !important;
+  }
+}
+
+/* AR Optical Waveguide & Gaze Target Ergonomics */
+[data-theme="dark"] .spatial-window,
+:root.dark .spatial-window {
+  background: rgba(18, 19, 22, 0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.ar-list-item {
+  min-height: 48px; /* Gaze & pinch touch target size */
+}
+
 /* AI Magazine Editorial 3-Column Layout */
 .magazine-container {
   container-type: inline-size;

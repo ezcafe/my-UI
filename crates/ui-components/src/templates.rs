@@ -2849,4 +2849,91 @@ mod tests {
         assert!(html.contains("toast-container"));
         assert!(html.contains("5000"));
     }
+
+    #[test]
+    fn test_workspace_layout_and_empty_placeholder_rendered() {
+        let index_tmpl = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div id=\"test-entry\">Item</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = index_tmpl.render().expect("render index template");
+
+        // Workspace must use container query layout
+        assert!(
+            html.contains("workspace-layout"),
+            "index.html must render .workspace-layout container"
+        );
+        assert!(
+            html.contains("id=\"detail-empty-placeholder\""),
+            "detail panel must contain #detail-empty-placeholder for desktop empty state"
+        );
+        assert!(
+            html.contains("Select an article to read"),
+            "placeholder must contain 'Select an article to read' text"
+        );
+    }
+
+    #[test]
+    fn test_workspace_layout_container_queries_and_ar_tokens_in_css() {
+        let index_tmpl = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = index_tmpl.render().expect("render index template");
+
+        // Container query master-detail rules
+        assert!(
+            html.contains("container-name: workspace") || html.contains("container: workspace / inline-size"),
+            "base.html must define workspace container query context"
+        );
+        assert!(
+            html.contains("@container workspace (min-width: 58rem)"),
+            "base.html must define @container workspace (min-width: 58rem) master-detail split"
+        );
+        assert!(
+            html.contains("minmax(20rem, 24rem) 1fr"),
+            "base.html must split master (20-24rem) and detail (1fr)"
+        );
+
+        // Optical waveguide and gaze target tokens
+        assert!(
+            html.contains("rgba(18, 19, 22, 0.92)"),
+            "base.html dark mode must provide waveguide-safe backdrop"
+        );
+        assert!(
+            html.contains("min-height: 48px") || html.contains("min-h-[48px]"),
+            "Must define 48px minimum gaze target height for ar-list-item"
+        );
+    }
+
+    #[test]
+    fn test_entry_list_no_hardcoded_viewport_media_queries() {
+        let raw_entry_list = include_str!("../templates/partials/entry_list.html");
+        assert!(
+            !raw_entry_list.contains("lg:grid-cols"),
+            "entry_list.html must not use lg:grid-cols viewport breakpoint"
+        );
+        assert!(
+            !raw_entry_list.contains("sm:flex-row"),
+            "entry_list.html must not use sm:flex-row viewport breakpoint"
+        );
+        assert!(
+            !raw_entry_list.contains("sm:w-1/2"),
+            "entry_list.html must not use sm:w-1/2 viewport breakpoint"
+        );
+        assert!(
+            !raw_entry_list.contains("md:p-6"),
+            "entry_list.html must not use md:p-6 viewport breakpoint"
+        );
+        assert!(
+            !raw_entry_list.contains("md:text-xl"),
+            "entry_list.html must not use md:text-xl viewport breakpoint"
+        );
+    }
 }

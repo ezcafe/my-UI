@@ -157,15 +157,24 @@
     </div>
 
     <!-- Main Content Area: Entries List + Detail Panel Container -->
-    <div class="flex-1 flex overflow-hidden relative">
+    <div class="workspace-layout flex-1 overflow-hidden relative">
       <!-- Loading Indicator: Absolute zero-height overlay to prevent layout shift / pushing content -->
       <div id="entries-loading-bar" class="htmx-indicator h-0.5 bg-brand animate-pulse absolute top-0 left-0 right-0 z-20 pointer-events-none"></div>
-      <div id="entries-list" class="flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card">
+      <div id="entries-list" class="entries-pane flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card min-w-0">
         {{ entries_list_html|safe }}
       </div>
 
       <!-- Detail Slide-Over / Modal Panel (Annuaire: zero shadow, border-l border-border) -->
-      <div id="detail-panel" class="detail-scrollbar hidden absolute inset-0 z-30 bg-card border-l border-border flex flex-col p-6 overflow-y-auto"></div>
+      <div id="detail-panel" class="detail-pane detail-scrollbar hidden absolute inset-0 z-30 bg-card border-l border-border flex flex-col p-6 overflow-y-auto">
+        <!-- Desktop Empty Placeholder (visible when wide and no entry selected) -->
+        <div id="detail-empty-placeholder" class="hidden h-full flex-col items-center justify-center text-center text-muted-foreground p-8 select-none">
+          <div class="p-4 rounded-full bg-muted/60 mb-3 text-muted-foreground/80">
+            <i data-lucide="newspaper" class="w-8 h-8 stroke-1"></i>
+          </div>
+          <p class="text-sm font-semibold font-sans text-foreground/80">Select an article to read</p>
+          <p class="text-xs text-muted-foreground mt-1 max-w-xs font-sans">Choose an item from the feed on the left to view the inverted pyramid summary and insights.</p>
+        </div>
+      </div>
     </div>
   </main>
 </div>
@@ -631,6 +640,7 @@
     if (isCacheValid) {
       // Instant render from cache - zero network request, zero skeleton flicker
       panel.innerHTML = cached.html;
+      panel.classList.add('has-content');
       panel.classList.remove('hidden');
 
       if (window.lucide && typeof lucide.createIcons === 'function') {
@@ -771,14 +781,27 @@
     if (window.lucide && typeof lucide.createIcons === 'function') {
       lucide.createIcons({ root: panel });
     }
+    panel.classList.add('has-content');
     panel.classList.remove('hidden');
   }
 
   function closeDetailPanel() {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
+    panel.classList.remove('has-content');
     panel.classList.add('hidden');
-    panel.innerHTML = '';
+    panel.innerHTML = `
+      <div id="detail-empty-placeholder" class="hidden h-full flex-col items-center justify-center text-center text-muted-foreground p-8 select-none">
+        <div class="p-4 rounded-full bg-muted/60 mb-3 text-muted-foreground/80">
+          <i data-lucide="newspaper" class="w-8 h-8 stroke-1"></i>
+        </div>
+        <p class="text-sm font-semibold font-sans text-foreground/80">Select an article to read</p>
+        <p class="text-xs text-muted-foreground mt-1 max-w-xs font-sans">Choose an item from the feed on the left to view the inverted pyramid summary and insights.</p>
+      </div>
+    `;
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: panel });
+    }
     const url = new URL(window.location);
     if (url.searchParams.has('entry')) {
       url.searchParams.delete('entry');

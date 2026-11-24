@@ -62,7 +62,7 @@
 </div>
 
 <div id="entries-magazine-view" class="hidden magazine-container pt-1 pb-6 w-full">
-  <div class="magazine-3col-grid grid grid-cols-1 lg:grid-cols-[minmax(220px,1fr)_minmax(380px,2.5fr)_minmax(220px,1.1fr)] gap-5 items-start w-full">
+  <div class="magazine-3col-grid w-full">
     
     <!-- Left Column: Executive Brief ("SPOTLIGHT" style) -->
     <div id="mag-col-brief" class="w-full flex flex-col">
@@ -71,12 +71,12 @@
            hx-get="/hx/executive-brief?offset={{ offset }}&limit={{ limit }}&status={{ status }}{% if let Some(fid) = feed_id %}&feed_id={{ fid }}{% endif %}{% if let Some(cid) = category_id %}&category_id={{ cid }}{% endif %}"
            hx-trigger="load"
            hx-swap="outerHTML"
-           class="rounded-lg p-4 md:p-5 bg-muted/40 border border-border flex flex-col animate-pulse">
+           class="rounded-lg p-5 bg-muted/40 border border-border flex flex-col animate-pulse">
         <div class="flex items-center gap-2 pb-3 mb-3 border-b border-border/80">
           <div class="p-1 rounded bg-brand/10 text-brand">
             <i data-lucide="sparkles" class="w-4 h-4"></i>
           </div>
-          <span class="text-xs md:text-sm font-bold tracking-wider uppercase text-muted-foreground font-sans">Generating Executive Brief...</span>
+          <span class="text-xs font-bold tracking-wider uppercase text-muted-foreground font-sans">Generating Executive Brief...</span>
         </div>
         <div class="space-y-2">
           <div class="h-2.5 bg-muted rounded w-5/6"></div>
@@ -85,14 +85,14 @@
         </div>
       </div>
       {% else if let Some(brief) = top_executive_brief %}
-      <div id="page-executive-brief" class="rounded-lg p-4 md:p-5 bg-muted/40 border border-border flex flex-col">
+      <div id="page-executive-brief" class="rounded-lg p-5 bg-muted/40 border border-border flex flex-col">
         <div class="flex items-center gap-2 pb-3 mb-3 border-b border-border/80">
           <div class="p-1 rounded bg-brand/10 text-brand">
             <i data-lucide="sparkles" class="w-4 h-4"></i>
           </div>
-          <span class="text-xs md:text-sm font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
+          <span class="text-xs font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
         </div>
-        <p class="text-xs md:text-sm text-foreground/90 leading-relaxed font-sans">
+        <p class="text-xs text-foreground/90 leading-relaxed font-sans">
           {{ brief }}
         </p>
       </div>
@@ -105,27 +105,27 @@
       <!-- Priority 1: Lead Hero Story (Photo 50% width, 100% height) -->
       {% for entry in entries %}
       {% if loop.index0 == 0 %}
-      <div class="magazine-card priority-1 group rounded-lg border border-border bg-card hover:border-foreground/30 transition-colors flex flex-col sm:flex-row overflow-hidden select-none w-full {% if entry.is_read %}read opacity-50 grayscale{% else %}unread{% endif %}"
+      <div class="magazine-card priority-1 group rounded-lg border border-border bg-card hover:border-foreground/30 transition-colors overflow-hidden select-none w-full {% if entry.is_read %}read opacity-50 grayscale{% else %}unread{% endif %}"
            id="mag-entry-{{ entry.id }}"
            data-entry-id="{{ entry.id }}"
            data-feed-title="{{ entry.feed_title }}"
            data-category="{% if let Some(cat) = entry.category_title %}{{ cat }}{% else %}General{% endif %}">
         
         {% if let Some(img) = entry.image_url %}
-        <div class="w-full sm:w-1/2 shrink-0 bg-muted overflow-hidden relative self-stretch min-h-[220px]">
+        <div class="hero-img-box w-full shrink-0 bg-muted overflow-hidden relative self-stretch min-h-[220px]">
           <img src="{{ img }}" alt="{{ entry.title }}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
         </div>
-        <div class="p-5 md:p-6 flex flex-col justify-center flex-1 w-full sm:w-1/2">
+        <div class="hero-content-box p-5 flex flex-col justify-center flex-1 w-full">
         {% else %}
-        <div class="p-5 md:p-6 flex flex-col justify-center flex-1 w-full">
+        <div class="p-5 flex flex-col justify-center flex-1 w-full">
         {% endif %}
-          <h3 class="magazine-title text-base md:text-xl font-bold font-sans leading-snug line-clamp-3 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
+          <h3 class="magazine-title text-base font-bold font-sans leading-snug line-clamp-3 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
               id="mag-title-{{ entry.id }}"
               onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')">
             {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
           </h3>
 
-          <p class="magazine-brief text-xs md:text-sm text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-4">
+          <p class="magazine-brief text-xs text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-4">
             {{ entry.summary }}
           </p>
         </div>
@@ -150,7 +150,7 @@
           {% endif %}
 
           <div class="p-3.5 flex flex-col flex-1">
-            <h4 class="magazine-title text-xs md:text-sm font-semibold font-sans leading-snug line-clamp-2 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
+            <h4 class="magazine-title text-xs font-semibold font-sans leading-snug line-clamp-2 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
                 id="mag-title-{{ entry.id }}"
                 onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')">
               {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
@@ -177,7 +177,7 @@
            data-category="{% if let Some(cat) = entry.category_title %}{{ cat }}{% else %}General{% endif %}"
            title="{{ entry.summary }}">
         
-        <h5 class="magazine-title text-xs md:text-sm font-normal font-sans leading-snug line-clamp-2 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
+        <h5 class="magazine-title text-xs font-normal font-sans leading-snug line-clamp-2 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
             id="mag-title-{{ entry.id }}"
             title="{{ entry.summary }}"
             onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')">

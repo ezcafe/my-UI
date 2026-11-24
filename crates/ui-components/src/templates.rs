@@ -2834,4 +2834,19 @@ mod tests {
             "Must reference list-executive-brief in sync script"
         );
     }
+
+    #[test]
+    fn test_base_template_toast_auto_dismiss_and_icon_init() {
+        let index_tmpl = IndexTemplate {
+            unread_count: 0,
+            today_count: 0,
+            entries_list_html: "".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = index_tmpl.render().expect("render index template");
+        assert!(html.contains("htmx:oobAfterSwap"));
+        assert!(html.contains("toast-container"));
+        assert!(html.contains("5000"));
+    }
 }

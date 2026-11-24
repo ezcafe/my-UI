@@ -520,6 +520,20 @@
         lucide.createIcons({ root: evt.detail.target });
       }
     });
+    document.body.addEventListener("htmx:oobAfterSwap", (evt) => {
+      if (evt.detail.target && evt.detail.target.id === 'toast-container') {
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+          lucide.createIcons({ root: evt.detail.target });
+        }
+        evt.detail.target.querySelectorAll('.pointer-events-auto:not([data-auto-dismiss])').forEach((toast) => {
+          toast.setAttribute('data-auto-dismiss', 'true');
+          setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+          }, 5000);
+        });
+      }
+    });
   </script>
 </body>
 </html>

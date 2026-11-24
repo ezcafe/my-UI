@@ -866,10 +866,13 @@ pub async fn executive_brief_htmx(
 
     // Failure contract
     if batch_res.top.is_empty() && batch_res.items.is_empty() {
+        let toast = crate::error::render_llm_error_toast();
         return (
             StatusCode::OK,
             headers,
-            Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+            Html(format!(
+                r#"<div id="page-executive-brief" class="hidden"></div>{toast}"#
+            )),
         )
             .into_response();
     }
@@ -928,7 +931,8 @@ pub async fn executive_brief_htmx(
         .render()
         .unwrap_or_default()
     } else {
-        r#"<div id="page-executive-brief" class="hidden"></div>"#.to_string()
+        let toast = crate::error::render_llm_error_toast();
+        format!(r#"<div id="page-executive-brief" class="hidden"></div>{toast}"#)
     };
 
     let mut full_html = card_html;
@@ -1589,8 +1593,9 @@ pub async fn get_entry_analysis_htmx(
             Html(html).into_response()
         }
         Err(_) => {
-            let html = r#"<div id="ai-analysis-box" class="hidden"></div>"#.to_string();
-            Html(html).into_response()
+            let primary_html = r#"<div id="ai-analysis-box" class="hidden"></div>"#;
+            let toast_html = crate::error::render_llm_error_toast();
+            Html(format!("{primary_html}{toast_html}")).into_response()
         }
     }
 }
@@ -1683,8 +1688,9 @@ pub async fn get_entry_rewrite_htmx(
             } else {
                 teaser
             };
-            let html = render_analysis_fragment("", "", &fallback);
-            Html(html).into_response()
+            let primary_html = render_analysis_fragment("", "", &fallback);
+            let toast_html = crate::error::render_llm_error_toast();
+            Html(format!("{primary_html}{toast_html}")).into_response()
         }
     }
 }
@@ -2218,8 +2224,8 @@ mod tests {
                     "status": "unread",
                     "starred": false,
                     "reading_time": 2,
-                    "created_at": "2026-11-22T08:00:00Z",
-                    "published_at": "2026-11-22T08:00:00Z",
+                    "created_at": chrono::Utc::now().to_rfc3339(),
+                    "published_at": chrono::Utc::now().to_rfc3339(),
                     "feed": {
                         "id": 10,
                         "user_id": 1,
@@ -3253,5 +3259,187 @@ mod tests {
 
         assert!(html.contains("id=\"ai-rewrite-box\""));
         assert!(html.contains("Graceful fallback executive brief."));
+        assert!(html.contains("id=\"toast-container\""));
+        assert!(html.contains("hx-swap-oob=\"beforeend\""));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_analysis_htmx_fallback_on_llm_failure() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/504"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 504,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Failing LLM Story 504",
+                "url": "https://example.com/504",
+                "comments_url": "",
+                "author": "Reporter",
+                "content": "<p>Content for 504</p>",
+                "hash": "hash504",
+                "published_at": "2026-11-24T00:00:00Z",
+                "created_at": "2026-11-24T00:00:00Z",
+                "status": "unread",
+                "starred": false,
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "feed_url": "https://example.com/feed",
+                    "site_url": "https://example.com",
+                    "title": "Tech Source"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:entry_analysis_504";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/nonexistent/binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/504/analysis")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains(r#"<div id="ai-analysis-box" class="hidden"></div>"#));
+        assert!(html.contains("id=\"toast-container\""));
+        assert!(html.contains("hx-swap-oob=\"beforeend\""));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+    }
+
+    #[tokio::test]
+    async fn test_render_executive_brief_htmx_toast_on_failure() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 1,
+                "entries": [{
+                    "id": 999,
+                    "user_id": 1,
+                    "feed_id": 10,
+                    "title": "Uncached Item for Brief",
+                    "url": "http://example.com/999",
+                    "comments_url": "",
+                    "author": "Author",
+                    "content": "Full article content",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 2,
+                    "created_at": chrono::Utc::now().to_rfc3339(),
+                    "published_at": chrono::Utc::now().to_rfc3339(),
+                    "feed": {
+                        "id": 10,
+                        "user_id": 1,
+                        "title": "Tech Feed",
+                        "checked_at": "2026-11-22T08:00:00Z",
+                        "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db = Arc::new(crate::ai::AiDb::new_mock());
+        db.save_summary_and_title(999, Some("Title 999"), "Cached summary 999", "test-model")
+            .await
+            .unwrap();
+
+        let llm = crate::ai::llm::LlmCliRunner::new(
+            "/nonexistent/binary".to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+        let ai_service = Arc::new(crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/nonexistent/binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: "mock:db".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            limit: Some(15),
+            offset: Some(0),
+            feed_id: None,
+            category_id: None,
+            search: None,
+            request_brief: None,
+        };
+
+        let response = executive_brief_htmx(
+            Query(query),
+            State(schema),
+            State(config),
+            State(ai_service),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains(r#"<div id="page-executive-brief" class="hidden"></div>"#));
+        assert!(html.contains("id=\"toast-container\""));
+        assert!(html.contains("hx-swap-oob=\"beforeend\""));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
     }
 }

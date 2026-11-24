@@ -4,6 +4,18 @@ use axum::response::{Html, IntoResponse, Response};
 use thiserror::Error;
 use ui_components::templates::ToastTemplate;
 
+pub const LLM_HIGH_DEMAND_ERROR_MESSAGE: &str =
+    "Error: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.";
+
+pub fn render_llm_error_toast() -> String {
+    ToastTemplate {
+        message: LLM_HIGH_DEMAND_ERROR_MESSAGE.to_string(),
+        is_error: true,
+    }
+    .render()
+    .unwrap_or_default()
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("Internal error: {0}")]
@@ -107,5 +119,18 @@ mod tests {
         );
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers().get("HX-Reswap").unwrap(), "none");
+    }
+
+    #[test]
+    fn test_llm_error_toast_constant_and_helper() {
+        assert_eq!(
+            LLM_HIGH_DEMAND_ERROR_MESSAGE,
+            "Error: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later."
+        );
+        let toast_html = render_llm_error_toast();
+        assert!(toast_html.contains("id=\"toast-container\""));
+        assert!(toast_html.contains("hx-swap-oob=\"beforeend\""));
+        assert!(toast_html.contains("data-lucide=\"alert-circle\""));
+        assert!(toast_html.contains(LLM_HIGH_DEMAND_ERROR_MESSAGE));
     }
 }

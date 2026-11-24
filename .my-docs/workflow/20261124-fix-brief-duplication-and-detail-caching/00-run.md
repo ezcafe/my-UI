@@ -10,14 +10,14 @@
 - **Gate B settle gen:** 0
 - **Gate B approved:** gen:0
 - **Build armed:** none
-- **Gate C approved:** commit, push
+- **Gate C approved:** commit
 - **Last Verify:** verify-pass
 - **Last verify-pass at:** 2026-11-24T12:50:00+07:00
 - **Last verify settle-gen:** 0
 - **Lens plan:** api|db
 - **Pending parallel:** none
-- **Notes:** ideation-confirmed; smoke-pass
-- **Provenance:** ideation-confirmed: user: "Update the requirement: For Style, remove 1 opening sentence, 1 closing sentence. We just need the essential details. Proceed"; gate-b-approved: user: "(Recommended) Proceed with TDD Build"; gate-c-approved: user: "Commit and push only"
+- **Notes:** ideation-confirmed; smoke-pass; push-declined
+- **Provenance:** ideation-confirmed: user: "Update the requirement: For Style, remove 1 opening sentence, 1 closing sentence. We just need the essential details. Proceed"; gate-b-approved: user: "(Recommended) Proceed with TDD Build"; gate-c-approved: user: "Commit and push only" (push permission denied by user)
 - **Test path last run:** full
 
 ## Run log
@@ -43,4 +43,5 @@
 - **13:01** · lens-db · clean · 05-lens-db.md clean
 - **13:02** · merge-findings · clean · 05-review-log.md merged clean
 - **13:06** · test-full · success · 221 tests pass (full suite)
-- **13:08** · gate-c · approved · Gate C approved: commit, push
+- **13:08** · gate-c · approved · Gate C approved: commit
+- **13:08** · commit · done · commit 20074a8 created locally; push denied by user

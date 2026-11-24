@@ -1171,7 +1171,8 @@ mod tests {
             "Index template must define openEntryDetail helper function"
         );
         assert!(
-            html.contains("function openDetailWithSkeleton()"),
+            html.contains("function openDetailWithSkeleton(")
+                || html.contains("function openDetailWithSkeleton"),
             "Index template must define openDetailWithSkeleton helper function"
         );
         assert!(
@@ -2779,6 +2780,58 @@ mod tests {
         assert!(
             html.contains("savedMode || 'ai'"),
             "Must default to 'ai' view on first load"
+        );
+    }
+
+    #[test]
+    fn test_executive_brief_card_has_single_container() {
+        let card = ExecutiveBriefCardTemplate {
+            brief: "Unified executive summary text.",
+        };
+        let html = card.render().expect("render executive brief card");
+        assert!(
+            html.contains("id=\"page-executive-brief\""),
+            "Must contain page-executive-brief"
+        );
+        assert!(
+            !html.contains("id=\"list-executive-brief\""),
+            "Must NOT contain duplicate list-executive-brief"
+        );
+        assert!(
+            !html.contains("hx-swap-oob"),
+            "Must NOT contain hx-swap-oob attribute"
+        );
+    }
+
+    #[test]
+    fn test_index_template_instant_detail_title_and_cache_validation() {
+        let template = IndexTemplate {
+            unread_count: 3,
+            today_count: 1,
+            entries_list_html: "<div>test entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        };
+        let html = template.render().expect("render index template");
+
+        // Verify cache validation does not require obsolete 'Executive Brief' string
+        assert!(
+            !html.contains("cached.html.includes('Executive Brief')"),
+            "Must not require obsolete Executive Brief check in cache"
+        );
+        assert!(html.contains("isCacheValid"), "Must check isCacheValid");
+
+        // Verify openEntryDetail extracts title and passes to openDetailWithSkeleton
+        assert!(html.contains("entry-title-"), "Must look up entry title");
+        assert!(
+            html.contains("openDetailWithSkeleton"),
+            "Must call openDetailWithSkeleton"
+        );
+
+        // Verify afterSwap synchronizes brief to list-executive-brief
+        assert!(
+            html.contains("list-executive-brief"),
+            "Must reference list-executive-brief in sync script"
         );
     }
 }

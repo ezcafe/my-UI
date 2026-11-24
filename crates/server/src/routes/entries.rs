@@ -1290,7 +1290,8 @@ pub async fn get_entry_detail_htmx(
         content
     };
 
-    let (suggested_title, summary, rewrite, impact, fallacies, has_analysis) = if config.ai_enabled {
+    let (suggested_title, summary, rewrite, impact, fallacies, has_analysis) = if config.ai_enabled
+    {
         if let Some(record) = ai_service.db.get_summary_and_title(id).await {
             let rewrite = match record.rewrite {
                 Some(ref r) if !r.trim().is_empty() => r.clone(),
@@ -1527,11 +1528,11 @@ pub async fn get_entry_analysis_htmx(
 
     // 1. Check AiDb cache for impact and fallacies
     if let Some(record) = ai_service.db.get_summary_and_title(id).await {
-        if let (Some(ref imp), Some(ref fal)) = (&record.impact, &record.fallacies) {
-            if !imp.trim().is_empty() && !fal.trim().is_empty() {
-                let html = render_analysis_cards_fragment(imp, fal);
-                return Html(html).into_response();
-            }
+        let imp = record.impact.as_deref().unwrap_or("").trim();
+        let fal = record.fallacies.as_deref().unwrap_or("").trim();
+        if !imp.is_empty() || !fal.is_empty() {
+            let html = render_analysis_cards_fragment(imp, fal);
+            return Html(html).into_response();
         }
     }
 
@@ -1667,11 +1668,8 @@ pub async fn get_entry_rewrite_htmx(
         .await
     {
         Ok(analysis) => {
-            let html = render_analysis_fragment(
-                &analysis.impact,
-                &analysis.fallacies,
-                &analysis.rewrite,
-            );
+            let html =
+                render_analysis_fragment(&analysis.impact, &analysis.fallacies, &analysis.rewrite);
             Html(html).into_response()
         }
         Err(_) => {
@@ -3026,6 +3024,69 @@ mod tests {
         assert!(html.contains("Direct impact on global logistics."));
         assert!(html.contains("Logical Fallacy & Objectivity Check"));
         assert!(html.contains("Không phát hiện lỗi ngụy biện"));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_analysis_htmx_reuses_database_without_llm() {
+        let db_path = "mock:entry_analysis_507";
+        let db = AiDb::new(db_path).await.unwrap();
+        // Seed only impact (fallacies is None)
+        db.save_summary_and_title_with_analysis(
+            507,
+            Some("Suggested Title 507"),
+            "Summary 507.",
+            Some("Rewrite lead 507."),
+            Some("Isolated impact without fallacies."),
+            None,
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            // Intentionally broken Miniflux and LLM to ensure no network or LLM calls are made
+            miniflux_base_url: "http://127.0.0.1:9999".to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/bin/nonexistent_llm_binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client =
+            MinifluxClient::new("http://127.0.0.1:9999".to_string(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/507/analysis")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("id=\"ai-analysis-box\""));
+        assert!(html.contains("Impact Analysis"));
+        assert!(html.contains("Isolated impact without fallacies."));
     }
 
     #[tokio::test]

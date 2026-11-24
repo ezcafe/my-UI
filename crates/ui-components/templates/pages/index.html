@@ -626,8 +626,7 @@
       history.pushState(null, '', currentUrl.pathname + '?' + currentUrl.searchParams.toString());
     }
 
-    const hasAiEnabled = {% if ai_enabled %}true{% else %}false{% endif %};
-    const isCacheValid = cached && cached.html && (!hasAiEnabled || cached.html.includes('Executive Brief'));
+    const isCacheValid = Boolean(cached && cached.html);
 
     if (isCacheValid) {
       // Instant render from cache - zero network request, zero skeleton flicker
@@ -663,8 +662,21 @@
         magTitle.classList.add('text-muted-foreground');
       }
     } else {
+      // Extract entry title and brief from DOM to render instantly
+      const titleEl = document.getElementById('entry-title-' + numId) || document.getElementById('mag-title-' + numId);
+      const title = titleEl ? titleEl.textContent.trim() : '';
+
+      let brief = '';
+      const rowEl = document.getElementById('entry-' + numId);
+      if (rowEl) {
+        const briefEl = rowEl.querySelector('.magazine-brief');
+        if (briefEl) {
+          brief = briefEl.textContent.trim();
+        }
+      }
+
       // Cache miss or expired: show skeleton and fetch via HTMX
-      openDetailWithSkeleton();
+      openDetailWithSkeleton(title, brief);
       htmx.ajax('GET', '/hx/entries/' + encodeURIComponent(numId), {
         target: '#detail-panel',
         swap: 'innerHTML'
@@ -672,10 +684,45 @@
     }
   }
 
-  function openDetailWithSkeleton() {
+  function openDetailWithSkeleton(title, brief) {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
     
+    const safeTitle = title ? escapeHtml(title) : '';
+    const safeBrief = brief ? escapeHtml(brief) : '';
+
+    const titleBlock = safeTitle
+      ? `<h1 class="text-2xl font-bold font-sans text-foreground mb-6 leading-snug">${safeTitle}</h1>`
+      : `
+        <div class="space-y-2 mb-6">
+          <div class="h-6 bg-muted rounded w-4/5"></div>
+          <div class="h-6 bg-muted rounded w-2/3"></div>
+        </div>
+      `;
+
+    const briefBlock = safeBrief
+      ? `
+        <div class="rounded-lg border border-border bg-muted/40 p-4 space-y-2.5 mb-4">
+          <div class="flex items-center gap-2 mb-1.5">
+            <div class="p-1 rounded bg-brand/10 text-brand">
+              <i data-lucide="sparkles" class="w-4 h-4"></i>
+            </div>
+            <span class="text-xs font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
+          </div>
+          <p class="text-xs md:text-sm text-foreground/90 leading-relaxed font-sans">${safeBrief}</p>
+        </div>
+      `
+      : `
+        <div class="rounded-lg border border-border bg-muted/40 p-4 space-y-2.5">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-4 h-4 rounded bg-primary/20"></div>
+            <div class="h-3.5 bg-muted rounded w-24"></div>
+          </div>
+          <div class="h-3 bg-muted rounded w-full"></div>
+          <div class="h-3 bg-muted rounded w-5/6"></div>
+        </div>
+      `;
+
     panel.innerHTML = `
       <div class="flex flex-col h-full animate-pulse select-none w-full">
         <!-- Skeleton Header: fixed h-8 matching real detail header, no vertical jump -->
@@ -704,21 +751,11 @@
             <div class="h-3.5 bg-muted rounded w-16"></div>
           </div>
 
-          <!-- Title placeholder -->
-          <div class="space-y-2 mb-6">
-            <div class="h-6 bg-muted rounded w-4/5"></div>
-            <div class="h-6 bg-muted rounded w-2/3"></div>
-          </div>
+          <!-- Title -->
+          ${titleBlock}
 
           <!-- AI Brief Card Skeleton -->
-          <div class="rounded-lg border border-border bg-muted/40 p-4 space-y-2.5">
-            <div class="flex items-center gap-2 mb-2">
-              <div class="w-4 h-4 rounded bg-primary/20"></div>
-              <div class="h-3.5 bg-muted rounded w-24"></div>
-            </div>
-            <div class="h-3 bg-muted rounded w-full"></div>
-            <div class="h-3 bg-muted rounded w-5/6"></div>
-          </div>
+          ${briefBlock}
 
           <!-- Prose Content Skeleton Lines -->
           <div class="space-y-3 pt-2">
@@ -731,6 +768,9 @@
         </div>
       </div>
     `;
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: panel });
+    }
     panel.classList.remove('hidden');
   }
 
@@ -801,6 +841,26 @@
       const isBriefSwap = targetId === 'page-executive-brief' || (evt.detail.target && evt.detail.target.closest('#entries-list') && evt.detail.target.id !== 'detail-panel');
 
       if (isEntriesSwap || isBriefSwap) {
+        if (isBriefSwap) {
+          const pageBrief = document.querySelector('#page-executive-brief p');
+          const listBrief = document.getElementById('list-executive-brief');
+          if (pageBrief && listBrief) {
+            listBrief.classList.remove('animate-pulse');
+            listBrief.innerHTML = `
+              <div class="flex items-center gap-2 mb-1.5">
+                <div class="p-1 rounded bg-muted text-foreground">
+                  <i data-lucide="sparkles" class="w-4 h-4 text-brand"></i>
+                </div>
+                <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Executive Brief</span>
+              </div>
+              <p class="text-xs text-foreground/90 leading-relaxed font-sans">${escapeHtml(pageBrief.innerText || pageBrief.textContent || '')}</p>
+            `;
+            if (window.lucide && typeof lucide.createIcons === 'function') {
+              lucide.createIcons({ root: listBrief });
+            }
+          }
+        }
+
         let status = null;
         if (evt.detail.elt && typeof evt.detail.elt.getAttribute === 'function') {
           status = evt.detail.elt.getAttribute('data-status');

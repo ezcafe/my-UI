@@ -133,7 +133,16 @@ impl AiService {
         title: &str,
         content: &str,
     ) -> Result<(String, String), String> {
-        let ((impact, fallacies), model) = self.llm.analyze_impact_and_fallacies(title, content).await;
+        if let Some(record) = self.db.get_summary_and_title(entry_id).await {
+            let imp = record.impact.as_deref().unwrap_or("").trim();
+            let fal = record.fallacies.as_deref().unwrap_or("").trim();
+            if !imp.is_empty() || !fal.is_empty() {
+                return Ok((imp.to_string(), fal.to_string()));
+            }
+        }
+
+        let ((impact, fallacies), model) =
+            self.llm.analyze_impact_and_fallacies(title, content).await;
         if (!impact.is_empty() || !fallacies.is_empty()) && model != "error" {
             let existing = self.db.get_summary_and_title(entry_id).await;
             let summary = existing
@@ -263,5 +272,50 @@ mod tests {
             key1, key_diff_status,
             "different status produces different key"
         );
+    }
+
+    #[tokio::test]
+    async fn test_ai_service_analyze_entry_reuses_existing_db_record() {
+        let db = Arc::new(AiDb::new_mock());
+        let extractor = ArticleExtractor::new();
+
+        // Runner points to an invalid binary so if it is called, it would fail
+        let llm = LlmCliRunner::new(
+            "/bin/nonexistent_llm_binary_that_should_not_be_called".to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+
+        let ai = AiService {
+            db: db.clone(),
+            extractor,
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        };
+
+        // Seed DB with existing analysis
+        db.save_summary_and_title_with_analysis(
+            777,
+            Some("Suggested Title 777"),
+            "Summary 777",
+            Some("Rewrite 777"),
+            Some("Existing DB Impact"),
+            Some("Existing DB Fallacies"),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let res = ai
+            .analyze_entry_impact_and_fallacies(777, "Title 777", "Content 777")
+            .await;
+
+        assert!(
+            res.is_ok(),
+            "Should return Ok from DB cache without calling LLM"
+        );
+        let (impact, fallacies) = res.unwrap();
+        assert_eq!(impact, "Existing DB Impact");
+        assert_eq!(fallacies, "Existing DB Fallacies");
     }
 }

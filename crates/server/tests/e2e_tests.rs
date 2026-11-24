@@ -916,7 +916,12 @@ async fn test_e2e_detail_drawer_analysis_flow() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = String::from_utf8(
-        resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        resp.into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
     )
     .unwrap();
 
@@ -925,7 +930,9 @@ async fn test_e2e_detail_drawer_analysis_flow() {
     assert!(body.contains("Impact Analysis"));
     assert!(body.contains("Direct disruption to mobile software ecosystems."));
     assert!(body.contains("Logical Fallacy & Objectivity Check"));
-    assert!(body.contains("Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"));
+    assert!(
+        body.contains("Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu")
+    );
     assert!(body.contains("Detailed inverted pyramid rewrite for 99."));
 
     // Must NEVER show raw original content

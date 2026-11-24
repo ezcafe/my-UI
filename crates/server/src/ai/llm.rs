@@ -85,6 +85,10 @@ impl LlmCliRunner {
             "You are an executive news editor. For the articles below, provide:\n\
              1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page.\n\
              2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"r\" (inverted pyramid rewrite: lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context). Do not regenerate items for existing articles.\n\n\
+             REWRITE RULES FOR \"r\":\n\
+             - Length: Strictly under 110 words total (sweet spot 30-60 words).\n\
+             - Structure: Inverted pyramid structure — lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context.\n\
+             - Tone & Style: Plain and simple language. Strictly omit introductory filler or closing boilerplate.\n\n\
              CRITICAL MULTILINGUAL RULE:\n\
              For each article and for the overall brief, write your response in the EXACT SAME LANGUAGE as the source text.\n\
              If an article is in Vietnamese, its suggested title and rewrite MUST be in Vietnamese.\n\
@@ -163,7 +167,7 @@ impl LlmCliRunner {
         format!(
             "Analyze and rewrite the following article. Output raw JSON only matching this schema:\n\
             {{\n  \
-              \"rewrite\": \"Inverted pyramid style rewrite. Lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context.\",\n  \
+              \"rewrite\": \"Inverted pyramid rewrite: strictly under 110 words total (sweet spot 30-60 words). Lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context. Plain language, no introductory filler, no closing boilerplate.\",\n  \
               \"impact\": \"Analyze the practical consequences and real-world impact of this news (who is affected, industry or social significance, short/long-term stakes).\",\n  \
               \"fallacies\": \"Identify any informal logical fallacies or rhetorical biases in the text (e.g. ad hominem, straw man, false dilemma, hasty generalization, cherry-picking, emotional appeal). If the reporting is objective, factual, and logically sound, strictly output: 'Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu' (for Vietnamese) or 'No logical fallacies detected — Objective and well-supported reporting' (for English).\"\n\
             }}\n\n\
@@ -441,7 +445,8 @@ impl LlmCliRunner {
 
         let mut items = Vec::new();
         for cap in ITEM_REGEX.captures_iter(trimmed) {
-            if let (Some(id_str), Some(title), Some(content)) = (cap.get(1), cap.get(2), cap.get(3)) {
+            if let (Some(id_str), Some(title), Some(content)) = (cap.get(1), cap.get(2), cap.get(3))
+            {
                 if let Ok(id) = id_str.as_str().parse::<i64>() {
                     let t = title.as_str().replace(r#"\""#, "\"");
                     let c = content.as_str().replace(r#"\""#, "\"");
@@ -837,13 +842,19 @@ impl LlmCliRunner {
             Ok(Ok(output)) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if text.is_empty() {
-                    (Self::parse_impact_and_fallacies_response(""), "error".to_string())
+                    (
+                        Self::parse_impact_and_fallacies_response(""),
+                        "error".to_string(),
+                    )
                 } else {
                     let parsed = Self::parse_impact_and_fallacies_response(&text);
                     (parsed, self.model.clone())
                 }
             }
-            _ => (Self::parse_impact_and_fallacies_response(""), "error".to_string()),
+            _ => (
+                Self::parse_impact_and_fallacies_response(""),
+                "error".to_string(),
+            ),
         }
     }
 
@@ -1827,10 +1838,7 @@ Some outro text
         assert_eq!(parsed.items.len(), 1);
         assert_eq!(parsed.items[0].id, 202);
         assert_eq!(parsed.items[0].suggested_title, "Regex Title");
-        assert_eq!(
-            parsed.items[0].rewrite,
-            "Extracted rewrite text via regex."
-        );
+        assert_eq!(parsed.items[0].rewrite, "Extracted rewrite text via regex.");
     }
 
     #[test]
@@ -1844,5 +1852,88 @@ Some outro text
         let parsed = LlmCliRunner::parse_impact_and_fallacies_response(raw);
         assert_eq!(parsed.0, "Major supply chain shift.");
         assert!(parsed.1.contains("No logical fallacies detected"));
+    }
+
+    #[test]
+    fn test_batch_prompt_rewrite_rules_word_count_and_inverted_pyramid() {
+        let articles = [(1, "Title", "Content")];
+        let prompt = LlmCliRunner::format_batch_prompt(&articles);
+
+        assert!(
+            prompt.contains("under 110 words"),
+            "Prompt must specify under 110 words: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("30-60 words") || prompt.contains("30–60 words"),
+            "Prompt must specify 30-60 words sweet spot: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("inverted pyramid"),
+            "Prompt must specify inverted pyramid: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("lead with outcome and key impacts in first 2 sentences")
+                || prompt.contains("first 2 sentences"),
+            "Prompt must require outcome in first 2 sentences: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("2-3 bullet points"),
+            "Prompt must require 2-3 bullet points: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("no introductory filler")
+                || prompt.contains("omit introductory filler"),
+            "Prompt must forbid intro filler: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("closing") || prompt.contains("boilerplate"),
+            "Prompt must forbid closing boilerplate: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn test_rewrite_and_analyze_prompt_rules() {
+        let prompt = LlmCliRunner::format_rewrite_and_analyze_prompt("Test Title", "Test Content");
+        let prompt_lower = prompt.to_lowercase();
+
+        assert!(
+            prompt_lower.contains("under 110 words"),
+            "Prompt must specify under 110 words: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("30-60 words") || prompt_lower.contains("30–60 words"),
+            "Prompt must specify 30-60 words sweet spot: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("inverted pyramid"),
+            "Prompt must specify inverted pyramid: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("2-3 bullet points"),
+            "Prompt must require 2-3 bullet points: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("no introductory filler")
+                || prompt_lower.contains("omit introductory filler")
+                || prompt_lower.contains("no filler"),
+            "Prompt must forbid intro filler: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("closing") || prompt_lower.contains("boilerplate"),
+            "Prompt must forbid closing boilerplate: {}",
+            prompt
+        );
     }
 }

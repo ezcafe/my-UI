@@ -166,13 +166,18 @@ impl AiPrefetchService {
             } else {
                 Some(item.suggested_title.as_str())
             };
+            let rewrite_opt = if item.rewrite.is_empty() {
+                None
+            } else {
+                Some(item.rewrite.as_str())
+            };
             let _ = ai
                 .db
                 .save_summary_and_title_with_rewrite(
                     item.id,
                     suggested_title,
                     &item.brief,
-                    item.rewrite.as_deref(),
+                    rewrite_opt,
                     &model,
                 )
                 .await;

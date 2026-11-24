@@ -880,15 +880,20 @@ pub async fn executive_brief_htmx(
             .get(&item.id)
             .is_some_and(|r| r.model != "extractive-fallback");
         if !is_already_cached {
+            let rewrite_val = if item.rewrite.is_empty() {
+                None
+            } else {
+                Some(item.rewrite.clone())
+            };
             summary_inputs.push(crate::ai::db::ArticleSummaryInput {
                 entry_id: item.id,
-                summary: item.brief.clone(),
+                summary: item.rewrite.clone(),
                 suggested_title: if item.suggested_title.is_empty() {
                     None
                 } else {
                     Some(item.suggested_title.clone())
                 },
-                rewrite: item.rewrite.clone(),
+                rewrite: rewrite_val,
                 impact: None,
                 fallacies: None,
                 model: model.clone(),
@@ -1285,21 +1290,23 @@ pub async fn get_entry_detail_htmx(
         content
     };
 
-    let (suggested_title, summary, rewrite, impact, fallacies, is_rewrite) = if config.ai_enabled {
+    let (suggested_title, summary, rewrite, impact, fallacies, has_analysis) = if config.ai_enabled {
         if let Some(record) = ai_service.db.get_summary_and_title(id).await {
-            let (rewrite, is_rewrite) = match record.rewrite {
-                Some(ref r) if !r.trim().is_empty() => (r.clone(), true),
-                _ => (String::new(), false),
+            let rewrite = match record.rewrite {
+                Some(ref r) if !r.trim().is_empty() => r.clone(),
+                _ if !record.summary.trim().is_empty() => record.summary.clone(),
+                _ => teaser_str.to_string(),
             };
             let impact = record.impact.unwrap_or_default();
             let fallacies = record.fallacies.unwrap_or_default();
+            let has_analysis = !impact.trim().is_empty() && !fallacies.trim().is_empty();
             (
                 record.suggested_title,
                 record.summary,
                 rewrite,
                 impact,
                 fallacies,
-                is_rewrite,
+                has_analysis,
             )
         } else {
             let fallback_teaser = if !teaser_str.is_empty() {
@@ -1310,7 +1317,7 @@ pub async fn get_entry_detail_htmx(
             (
                 None,
                 fallback_teaser.clone(),
-                String::new(),
+                fallback_teaser,
                 String::new(),
                 String::new(),
                 false,
@@ -1320,7 +1327,11 @@ pub async fn get_entry_detail_htmx(
         (
             None,
             summary.clone(),
-            String::new(),
+            if !teaser_str.is_empty() {
+                teaser_str.to_string()
+            } else {
+                summary.clone()
+            },
             String::new(),
             String::new(),
             false,
@@ -1370,7 +1381,7 @@ pub async fn get_entry_detail_htmx(
         rewrite,
         impact,
         fallacies,
-        is_rewrite,
+        has_analysis,
         auth_enabled: config.auth_enabled,
     };
 
@@ -1459,6 +1470,128 @@ fn render_analysis_fragment(impact: &str, fallacies: &str, rewrite: &str) -> Str
 
     html.push_str("</div>");
     html
+}
+
+fn render_analysis_cards_fragment(impact: &str, fallacies: &str) -> String {
+    let mut html = String::from(r#"<div id="ai-analysis-box" class="space-y-6 mt-6">"#);
+
+    if !impact.is_empty() {
+        html.push_str(&format!(
+            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
+  <div class="flex items-center gap-2 mb-2">
+    <div class="p-1 rounded bg-muted text-foreground">
+      <i data-lucide="trending-up" class="w-4 h-4 text-brand"></i>
+    </div>
+    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Impact Analysis</span>
+  </div>
+  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
+    {}
+  </p>
+</div>"#,
+            escape_html(impact)
+        ));
+    }
+
+    if !fallacies.is_empty() {
+        html.push_str(&format!(
+            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
+  <div class="flex items-center gap-2 mb-2">
+    <div class="p-1 rounded bg-muted text-foreground">
+      <i data-lucide="shield-alert" class="w-4 h-4 text-brand"></i>
+    </div>
+    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Logical Fallacy & Objectivity Check</span>
+  </div>
+  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
+    {}
+  </p>
+</div>"#,
+            escape_html(fallacies)
+        ));
+    }
+
+    html.push_str("</div>");
+    html
+}
+
+pub async fn get_entry_analysis_htmx(
+    State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
+    State(ai_service): State<Arc<AiService>>,
+    _headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if !config.ai_enabled {
+        let html = r#"<div id="ai-analysis-box" class="hidden"></div>"#.to_string();
+        return Html(html).into_response();
+    }
+
+    // 1. Check AiDb cache for impact and fallacies
+    if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+        if let (Some(ref imp), Some(ref fal)) = (&record.impact, &record.fallacies) {
+            if !imp.trim().is_empty() && !fal.trim().is_empty() {
+                let html = render_analysis_cards_fragment(imp, fal);
+                return Html(html).into_response();
+            }
+        }
+    }
+
+    // 2. Query Miniflux via GraphQL to get entry details
+    let gql = format!(
+        r#"query {{
+            entry(id: "{id}") {{
+                id
+                title
+                summary
+                content
+                url
+            }}
+        }}"#
+    );
+
+    let res = schema.execute(&gql).await;
+    let data = res.data.into_json().ok();
+    let entry_data = data
+        .as_ref()
+        .and_then(|d| d.get("entry"))
+        .filter(|v| !v.is_null());
+
+    let (title, url, teaser) = if let Some(item) = entry_data {
+        let t = item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let u = item
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let s = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+        let c = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let tz = if !s.is_empty() { s } else { c }.to_string();
+        (t, u, tz)
+    } else {
+        (String::new(), String::new(), String::new())
+    };
+
+    // 3. Extract content and generate impact & fallacies
+    let content = ai_service
+        .extractor
+        .extract_content(&url, &title, &teaser)
+        .await;
+    match ai_service
+        .analyze_entry_impact_and_fallacies(id, &title, &content)
+        .await
+    {
+        Ok((impact, fallacies)) => {
+            let html = render_analysis_cards_fragment(&impact, &fallacies);
+            Html(html).into_response()
+        }
+        Err(_) => {
+            let html = r#"<div id="ai-analysis-box" class="hidden"></div>"#.to_string();
+            Html(html).into_response()
+        }
+    }
 }
 
 pub async fn get_entry_rewrite_htmx(
@@ -2691,6 +2824,8 @@ mod tests {
         assert!(html.contains("• Key insight A"));
         // Must NOT render raw article HTML
         assert!(!html.contains("Raw article body 777 that should not appear"));
+        // Must NOT render Executive Brief
+        assert!(!html.contains("Executive Brief"));
         // Must contain original link button
         assert!(html.contains("Original"));
         assert!(html.contains("href=\"https://example.com/777\""));
@@ -2828,6 +2963,69 @@ mod tests {
         assert!(html.contains("Logical Fallacy & Objectivity Check"));
         assert!(html.contains("Không phát hiện lỗi ngụy biện"));
         assert!(html.contains("Cached rewrite lead sentence for 505."));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_analysis_htmx_serves_impact_and_fallacies() {
+        let db_path = "mock:entry_analysis_506";
+        let db = AiDb::new(db_path).await.unwrap();
+        db.save_summary_and_title_with_analysis(
+            506,
+            Some("Suggested Title 506"),
+            "Summary 506.",
+            Some("Rewrite lead 506."),
+            Some("Direct impact on global logistics."),
+            Some("Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: "http://127.0.0.1:8080".to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client =
+            MinifluxClient::new("http://127.0.0.1:8080".to_string(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/506/analysis")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("id=\"ai-analysis-box\""));
+        assert!(html.contains("Impact Analysis"));
+        assert!(html.contains("Direct impact on global logistics."));
+        assert!(html.contains("Logical Fallacy & Objectivity Check"));
+        assert!(html.contains("Không phát hiện lỗi ngụy biện"));
     }
 
     #[tokio::test]

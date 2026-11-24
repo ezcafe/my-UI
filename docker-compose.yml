@@ -9,7 +9,7 @@ services:
       POSTGRES_DB: my_ui
       PGDATA: /var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - my_ui_postgres_data:/var/lib/postgresql/data
     healthcheck:

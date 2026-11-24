@@ -111,7 +111,14 @@ pub struct EntryDetailTemplate {
     pub rewrite: String,
     pub impact: String,
     pub fallacies: String,
-    pub is_rewrite: bool,
+    pub has_analysis: bool,
+}
+
+#[derive(Template)]
+#[template(path = "partials/analysis_cards.html")]
+pub struct AnalysisCardsTemplate<'a> {
+    pub impact: &'a str,
+    pub fallacies: &'a str,
 }
 
 #[derive(Template)]
@@ -589,7 +596,7 @@ mod tests {
             rewrite: String::new(),
             impact: String::new(),
             fallacies: String::new(),
-            is_rewrite: false,
+            has_analysis: false,
         };
 
         let html = template
@@ -634,19 +641,20 @@ mod tests {
             impact: "Substantial economic impact across software sector.".to_string(),
             fallacies: "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
                 .to_string(),
-            is_rewrite: true,
+            has_analysis: true,
         };
 
         let html = template.render().expect("render detail template");
 
-        assert!(html.contains("Executive Brief"));
-        assert!(html.contains("Executive brief text."));
+        assert!(!html.contains("Executive Brief"));
+        assert!(!html.contains("Executive brief text."));
         assert!(html.contains("Impact Analysis"));
         assert!(html.contains("Substantial economic impact across software sector."));
         assert!(html.contains("Logical Fallacy & Objectivity Check"));
         assert!(html.contains("Không phát hiện lỗi ngụy biện"));
         assert!(html.contains("Inverted pyramid rewrite text."));
         assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains("id=\"ai-analysis-box\""));
 
         let pos_rewrite = html.find("Inverted pyramid rewrite text.").unwrap();
         let pos_impact = html.find("Impact Analysis").unwrap();
@@ -659,6 +667,45 @@ mod tests {
             pos_impact < pos_fallacy,
             "Impact Analysis must appear before Fallacy Check"
         );
+    }
+
+    #[test]
+    fn test_entry_detail_template_shows_rewrite_and_analysis_trigger_when_not_cached() {
+        let entry = EntryViewModel {
+            id: 106,
+            title: "Article Awaiting Analysis".to_string(),
+            suggested_title: None,
+            feed_title: "Tech Wire".to_string(),
+            published_at: "10 mins ago".to_string(),
+            reading_time: 2,
+            summary: "Brief text.".to_string(),
+            url: "https://example.com/article".to_string(),
+            author: None,
+            is_read: false,
+            category_title: None,
+            image_url: None,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "Teaser text.".to_string(),
+            auth_enabled: true,
+            rewrite: "Immediate rewrite text loaded instantly.".to_string(),
+            impact: String::new(),
+            fallacies: String::new(),
+            has_analysis: false,
+        };
+
+        let html = template.render().expect("render detail template");
+
+        assert!(!html.contains("Executive Brief"));
+        assert!(html.contains("Immediate rewrite text loaded instantly."));
+        assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains("id=\"ai-analysis-box\""));
+        assert!(html.contains("hx-get=\"/hx/entries/106/analysis\""));
+        assert!(html.contains("hx-trigger=\"load\""));
+        assert!(html.contains("hx-swap=\"outerHTML\""));
     }
 
     #[test]
@@ -686,7 +733,7 @@ mod tests {
             rewrite: String::new(),
             impact: String::new(),
             fallacies: String::new(),
-            is_rewrite: false,
+            has_analysis: false,
         };
 
         let html = template
@@ -743,7 +790,7 @@ mod tests {
             rewrite: String::new(),
             impact: String::new(),
             fallacies: String::new(),
-            is_rewrite: false,
+            has_analysis: false,
         };
 
         let html = template
@@ -793,7 +840,7 @@ mod tests {
             rewrite: String::new(),
             impact: String::new(),
             fallacies: String::new(),
-            is_rewrite: false,
+            has_analysis: false,
         };
 
         let html = template
@@ -1094,7 +1141,7 @@ mod tests {
             rewrite: String::new(),
             impact: String::new(),
             fallacies: String::new(),
-            is_rewrite: false,
+            has_analysis: false,
         };
         let html = template
             .render()
@@ -1521,7 +1568,7 @@ mod tests {
             rewrite: String::new(),
             impact: String::new(),
             fallacies: String::new(),
-            is_rewrite: false,
+            has_analysis: false,
         };
         let detail_html = detail_template
             .render()

@@ -1,0 +1,51 @@
+# Run card
+
+- **Slug:** 20261124-perf-loading-token-optimization
+- **Mode:** full
+- **Review profile:** full
+- **Has UI / API / DB / auth/PII/schema:** yes | yes | yes | yes
+- **Status:** running
+- **Last stage:** test-full
+- **Next:** gate-c
+- **Gate B settle gen:** 0
+- **Gate B approved:** gen:0
+- **Build armed:** none
+- **Gate C approved:** none
+- **Last Verify:** verify-pass
+- **Last verify-pass at:** 2026-11-24T07:45:17+07:00
+- **Last verify settle-gen:** 0
+- **Lens plan:** api|db
+- **Pending parallel:** none
+- **Notes:** ideation-confirmed, smoke-pass
+- **Provenance:** ideation-confirmed: user: "load on-demand"; gate-b-approved: user: "Proceed with TDD Build"; smoke-pass-rerun: evidence: Smoke-Task in 06-test-log.md
+- **Test path last run:** full
+
+## Run log
+
+- **06:33** · seed · step-0 · card created
+- **06:35** · ideation · ideation-drafted · idea framed in 01-idea.md, awaiting confirmation
+- **06:38** · ideation · ideation-confirmed · user confirmed load on-demand, ideation paid
+- **06:40** · gate-a · ok · 01a-gate-a.md approved
+- **06:41** · skim · done · 02-skim.md completed
+- **06:42** · analyze · done · 02-analysis.md completed
+- **06:43** · grill · needs-round · frontier round 1 prepared in 02b-grill.md
+- **06:53** · grill · frontier-empty · frontier round 1 settled with user (1A variant, 2B, 3A)
+- **06:54** · clarity-check · ok · clarity-check ok — design
+- **06:56** · design · done · 03-design.md and 04-tasks.md created
+- **06:57** · clarity-check · ok · clarity-check ok — api|db
+- **06:58** · db-design-review · clean · 03a-db-design-review.md clean
+- **06:58** · api-contract-review · clean · 03a-api-contract-review.md clean
+- **06:59** · clarity-check · ok · clarity-check ok — design-review
+- **07:00** · design-review · clean · 03a-design-review-log.md clean
+- **07:01** · clarity-check · ok · clarity-check ok — tdd-review
+- **07:02** · tdd-review · clean · 04a-tdd-plan-review.md clean
+- **07:29** · gate-b · approved · Gate B approved — gen:0
+- **07:29** · clarity-check · ok · clarity-check ok — build
+- **07:45** · build · verify-pass · 215 tests passing, 0 clippy warnings
+- **07:46** · finalize-lens-plan · done · Lens plan finalized to api|db
+- **07:47** · smoke · smoke-pass · 06-test-log.md Smoke source: Smoke-Task
+- **07:48** · clarity-check · ok · clarity-check ok — adversarial
+- **07:51** · merge-findings · clean · 05-review-log.md Adv/Quality/Merged and lenses clean
+- **07:51** · clarity-check · ok · clarity-check ok — test-full
+- **07:52** · test-full · success · 06-test-log.md Result: success (full path)
+- **08:18** · fix · css-restored · restored Tailwind CDN script with preload and annuaire-theme.css in base.html

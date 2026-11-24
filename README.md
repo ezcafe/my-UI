@@ -257,6 +257,8 @@ docker-compose exec -T db psql -U my_ui -d my_ui -c "SELECT count(*) FROM page_e
   ```bash
   docker-compose exec db pg_isready -U my_ui -d my_ui
   ```
+- **Port 5432 already allocated error (e.g. Raspberry Pi OS)**:
+  If the host already runs PostgreSQL or another service on port 5432, Docker Compose defaults to host port `5433` (`${POSTGRES_PORT:-5433}:5432`). To customize or change the host port, set `POSTGRES_PORT` in your `.env` file.
 - **Web service health endpoint**:
   Verify web application responsiveness:
   ```bash

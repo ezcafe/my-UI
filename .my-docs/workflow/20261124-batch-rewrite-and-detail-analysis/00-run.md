@@ -1,0 +1,52 @@
+# Run card
+
+- **Slug:** 20261124-batch-rewrite-and-detail-analysis
+- **Mode:** full
+- **Review profile:** full
+- **Has UI / API / DB / auth/PII/schema:** yes | yes | yes | no
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
+- **Gate B settle gen:** 0
+- **Gate B approved:** gen:0
+- **Build armed:** none
+- **Gate C approved:** commit, push
+- **Last Verify:** verify-pass
+- **Last verify-pass at:** 2026-11-24T11:50:30+07:00
+- **Last verify settle-gen:** 0
+- **Lens plan:** api|db
+- **Pending parallel:** none
+- **Notes:** ideation-confirmed; smoke-pass
+- **Provenance:** ideation-confirmed: user: "a1, b1" (confirming Option A1 and Option B1); gate-b-approved: user: "Proceed with TDD Build"; smoke-pass-rerun: cargo test --test e2e_tests (8 passed); gate-c-approved: user: "commit and push"
+- **Test path last run:** full
+
+## Run log
+
+- **11:05** · seed · step-0 · card created
+- **11:06** · ideation · ideation-drafted · idea drafted, awaiting user confirmation
+- **11:28** · ideation · ideation-confirmed · user confirmed Option A1 and Option B1
+- **11:28** · gate-a · ok · framing approved
+- **11:28** · skim · done · codebase skim complete
+- **11:29** · analyze · done · context & architecture analyzed
+- **11:29** · grill · frontier-empty · all frontier decisions confirmed
+- **11:29** · clarity-check · ok · clarity-check ok — design
+- **11:30** · design · done · 03-design.md and 04-tasks.md created
+- **11:30** · clarity-check · ok · clarity-check ok — api|db
+- **11:30** · db-design-review · clean · 03a-db-design-review.md clean
+- **11:31** · api-contract-review · clean · 03a-api-contract-review.md clean
+- **11:31** · clarity-check · ok · clarity-check ok — design-review
+- **11:31** · design-review · clean · 03a-design-review-log.md clean
+- **11:31** · tdd-review · clean · 04a-tdd-plan-review.md clean
+- **11:33** · gate-b · approved · Gate B approved — gen:0
+- **11:33** · clarity-check · ok · clarity-check ok — build
+- **11:50** · build · verify-pass · TDD build complete & 215 tests pass (verify-pass)
+- **11:51** · finalize-lens-plan · done · Lens plan set to api|db
+- **11:51** · smoke · smoke-pass · e2e smoke tests passing (Smoke source: Smoke-Task)
+- **11:52** · adversarial · clean · 05-review-log.md clean
+- **11:52** · quality · clean · 05-review-log.md clean
+- **11:52** · lens-api · clean · 05-lens-api.md clean
+- **11:52** · lens-db · clean · 05-lens-db.md clean
+- **11:53** · merge-findings · clean · 05-review-log.md merged clean
+- **11:53** · test-full · success · 215 tests pass (full suite)
+- **11:53** · gate-c · approved · user approved commit and push
+- **12:00** · merge · success · changes committed and pushed to main

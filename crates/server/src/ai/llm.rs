@@ -12,7 +12,7 @@ static TOP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 static ITEM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"\{[^{}]*?"i"\s*:\s*(\d+)[^{}]*?"t"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[^{}]*?"b"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[^{}]*?\}"#,
+        r#"\{[^{}]*?"i"\s*:\s*(\d+)[^{}]*?"t"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[^{}]*?(?:"r"|"b")\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[^{}]*?\}"#,
     )
     .expect("valid item regex")
 });
@@ -23,10 +23,10 @@ pub struct BatchAiItem {
     pub id: i64,
     #[serde(rename = "t")]
     pub suggested_title: String,
-    #[serde(rename = "b")]
+    #[serde(rename = "b", default)]
     pub brief: String,
-    #[serde(rename = "r", default, skip_serializing_if = "Option::is_none")]
-    pub rewrite: Option<String>,
+    #[serde(rename = "r", default)]
+    pub rewrite: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -84,14 +84,14 @@ impl LlmCliRunner {
         let mut prompt = String::from(
             "You are an executive news editor. For the articles below, provide:\n\
              1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page.\n\
-             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"b\" (executive brief, strictly 3 sentences, what changed/why it matters). Do not regenerate items for existing briefs.\n\n\
+             2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"r\" (inverted pyramid rewrite: lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context). Do not regenerate items for existing articles.\n\n\
              CRITICAL MULTILINGUAL RULE:\n\
              For each article and for the overall brief, write your response in the EXACT SAME LANGUAGE as the source text.\n\
-             If an article is in Vietnamese, its suggested title and brief MUST be in Vietnamese.\n\
-             If an article is in English, its suggested title and brief MUST be in English.\n\
+             If an article is in Vietnamese, its suggested title and rewrite MUST be in Vietnamese.\n\
+             If an article is in English, its suggested title and rewrite MUST be in English.\n\
              Do NOT translate articles into a different language.\n\n\
              Output raw JSON only using this compact schema:\n\
-             {\"top\":\"...\",\"items\":[{\"i\":101,\"t\":\"...\",\"b\":\"...\"}]}\n\n\
+             {\"top\":\"...\",\"items\":[{\"i\":101,\"t\":\"...\",\"r\":\"...\"}]}\n\n\
              Articles by Source:\n\n",
         );
 
@@ -130,7 +130,7 @@ impl LlmCliRunner {
                 }
                 if item.is_cached {
                     prompt.push_str(&format!(
-                        "[ID {}] (Existing Brief) Title: {}\nBrief:\n{}\n\n",
+                        "[ID {}] (Existing Brief) Title: {}\nRewrite:\n{}\n\n",
                         item.id, trimmed_title, clean_content
                     ));
                 } else {
@@ -240,6 +240,88 @@ impl LlmCliRunner {
         result
     }
 
+    pub fn format_impact_and_fallacies_prompt(title: &str, content: &str) -> String {
+        format!(
+            "Analyze the following article for real-world impact and logical fallacies. Output raw JSON only matching this schema:\n\
+            {{\n  \
+              \"impact\": \"Analyze the practical consequences and real-world impact of this news (who is affected, industry or social significance, short/long-term stakes).\",\n  \
+              \"fallacies\": \"Identify any informal logical fallacies or rhetorical biases in the text (e.g. ad hominem, straw man, false dilemma, hasty generalization, cherry-picking, emotional appeal). If the reporting is objective, factual, and logically sound, strictly output: 'Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu' (for Vietnamese) or 'No logical fallacies detected — Objective and well-supported reporting' (for English).\"\n\
+            }}\n\n\
+            CRITICAL MULTILINGUAL RULE:\n\
+            Write your response in the EXACT SAME LANGUAGE as the source article text.\n\
+            If an article is in Vietnamese, all fields MUST be in Vietnamese.\n\
+            If an article is in English, all fields MUST be in English.\n\
+            Do NOT translate articles into a different language.\n\n\
+            Output raw JSON only.\n\n\
+            Title: {}\n\
+            Content:\n{}",
+            title.trim(),
+            content.trim()
+        )
+    }
+
+    pub fn parse_impact_and_fallacies_response(raw_output: &str) -> (String, String) {
+        #[derive(Deserialize)]
+        struct RawAnalysis {
+            #[serde(default)]
+            impact: String,
+            #[serde(default)]
+            fallacies: String,
+        }
+
+        let trimmed = raw_output.trim();
+        let mut parsed: Option<RawAnalysis> = serde_json::from_str(trimmed).ok();
+
+        if parsed.is_none() {
+            if let Some(start) = trimmed.find("```") {
+                let after_start = &trimmed[start + 3..];
+                let code_content = if let Some(first_newline) = after_start.find('\n') {
+                    &after_start[first_newline + 1..]
+                } else {
+                    after_start
+                };
+                if let Some(end) = code_content.rfind("```") {
+                    let candidate = code_content[..end].trim();
+                    parsed = serde_json::from_str(candidate).ok();
+                }
+            }
+        }
+
+        let raw = parsed.unwrap_or(RawAnalysis {
+            impact: String::new(),
+            fallacies: String::new(),
+        });
+
+        let impact = raw.impact;
+        let mut fallacies = raw.fallacies;
+
+        let f_lower = fallacies.to_lowercase();
+        let is_no_fallacy = f_lower.is_empty()
+            || f_lower.contains("không phát hiện")
+            || f_lower.contains("không có")
+            || f_lower == "none"
+            || f_lower.starts_with("none")
+            || f_lower.contains("no fallacy")
+            || f_lower.contains("no logical fallacies")
+            || f_lower.contains("objective");
+
+        if is_no_fallacy {
+            let is_vietnamese = impact.chars().any(|c| matches!(c, 'à'..='ỹ' | 'À'..='Ỹ'))
+                || f_lower.contains("không");
+            if is_vietnamese {
+                fallacies =
+                    "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
+                        .to_string();
+            } else {
+                fallacies =
+                    "No logical fallacies detected — Objective and well-supported reporting"
+                        .to_string();
+            }
+        }
+
+        (impact, fallacies)
+    }
+
     pub fn build_args(&self) -> Vec<String> {
         let mut args = vec!["-m".to_string(), self.model.clone()];
         args.extend(self.extra_args.clone());
@@ -297,7 +379,14 @@ impl LlmCliRunner {
         let trimmed = raw_output.trim();
 
         // 1. Try direct serde_json parse
-        if let Ok(res) = serde_json::from_str::<BatchAiResponse>(trimmed) {
+        if let Ok(mut res) = serde_json::from_str::<BatchAiResponse>(trimmed) {
+            for item in &mut res.items {
+                if item.brief.is_empty() && !item.rewrite.is_empty() {
+                    item.brief = item.rewrite.clone();
+                } else if item.rewrite.is_empty() && !item.brief.is_empty() {
+                    item.rewrite = item.brief.clone();
+                }
+            }
             tracing::info!(
                 target: "ai::batch",
                 "[AI_SUCCESS] batch_size={} top_brief={}",
@@ -317,7 +406,14 @@ impl LlmCliRunner {
             };
             if let Some(end) = code_content.rfind("```") {
                 let candidate = code_content[..end].trim();
-                if let Ok(res) = serde_json::from_str::<BatchAiResponse>(candidate) {
+                if let Ok(mut res) = serde_json::from_str::<BatchAiResponse>(candidate) {
+                    for item in &mut res.items {
+                        if item.brief.is_empty() && !item.rewrite.is_empty() {
+                            item.brief = item.rewrite.clone();
+                        } else if item.rewrite.is_empty() && !item.brief.is_empty() {
+                            item.rewrite = item.brief.clone();
+                        }
+                    }
                     tracing::info!(
                         target: "ai::batch",
                         "[AI_SUCCESS] (fenced) batch_size={} top_brief={}",
@@ -345,13 +441,15 @@ impl LlmCliRunner {
 
         let mut items = Vec::new();
         for cap in ITEM_REGEX.captures_iter(trimmed) {
-            if let (Some(id_str), Some(title), Some(brief)) = (cap.get(1), cap.get(2), cap.get(3)) {
+            if let (Some(id_str), Some(title), Some(content)) = (cap.get(1), cap.get(2), cap.get(3)) {
                 if let Ok(id) = id_str.as_str().parse::<i64>() {
+                    let t = title.as_str().replace(r#"\""#, "\"");
+                    let c = content.as_str().replace(r#"\""#, "\"");
                     items.push(BatchAiItem {
                         id,
-                        suggested_title: title.as_str().replace(r#"\""#, "\""),
-                        brief: brief.as_str().replace(r#"\""#, "\""),
-                        rewrite: None,
+                        suggested_title: t,
+                        rewrite: c.clone(),
+                        brief: c,
                     });
                 }
             }
@@ -504,8 +602,8 @@ impl LlmCliRunner {
                 items.push(BatchAiItem {
                     id: item.id,
                     suggested_title: String::new(),
+                    rewrite: item.content_or_brief.to_string(),
                     brief: item.content_or_brief.to_string(),
-                    rewrite: None,
                 });
             } else {
                 let fallback = miniflux_client::summary::extract_summary(item.content_or_brief, 3);
@@ -517,8 +615,8 @@ impl LlmCliRunner {
                 items.push(BatchAiItem {
                     id: item.id,
                     suggested_title: String::new(),
+                    rewrite: fallback_text.clone(),
                     brief: fallback_text,
-                    rewrite: None,
                 });
             }
         }
@@ -709,6 +807,46 @@ impl LlmCliRunner {
         }
     }
 
+    pub async fn analyze_impact_and_fallacies(
+        &self,
+        title: &str,
+        content: &str,
+    ) -> ((String, String), String) {
+        let _permit = self.semaphore.acquire().await.ok();
+        let prompt = Self::format_impact_and_fallacies_prompt(title, content);
+        let args = self.build_args();
+        const TIMEOUT_SECS: u64 = 30;
+        let prompt_bytes = prompt.into_bytes();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(TIMEOUT_SECS), async {
+            let mut cmd = tokio::process::Command::new(&self.cli_cmd);
+            cmd.args(&args)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            let mut child = cmd.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(&prompt_bytes).await;
+            }
+            child.wait_with_output().await
+        })
+        .await;
+
+        match result {
+            Ok(Ok(output)) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if text.is_empty() {
+                    (Self::parse_impact_and_fallacies_response(""), "error".to_string())
+                } else {
+                    let parsed = Self::parse_impact_and_fallacies_response(&text);
+                    (parsed, self.model.clone())
+                }
+            }
+            _ => (Self::parse_impact_and_fallacies_response(""), "error".to_string()),
+        }
+    }
+
     pub async fn rewrite(&self, title: &str, content: &str) -> (String, String) {
         let (res, model) = self.rewrite_and_analyze(title, content).await;
         (res.rewrite, model)
@@ -881,6 +1019,17 @@ impl LlmHttpClient {
         let raw_output = self.request_chat_completion(&prompt).await?;
         Ok((raw_output.trim().to_string(), self.model.clone()))
     }
+
+    pub async fn analyze_impact_and_fallacies(
+        &self,
+        title: &str,
+        content: &str,
+    ) -> Result<((String, String), String), String> {
+        let prompt = LlmCliRunner::format_impact_and_fallacies_prompt(title, content);
+        let raw_output = self.request_chat_completion(&prompt).await?;
+        let parsed = LlmCliRunner::parse_impact_and_fallacies_response(&raw_output);
+        Ok((parsed, self.model.clone()))
+    }
 }
 
 #[derive(Clone)]
@@ -961,6 +1110,25 @@ impl LlmBackend {
         match self {
             Self::Cli(cli) => cli.rewrite(title, content).await,
             Self::Http { fallback, .. } => fallback.rewrite(title, content).await,
+        }
+    }
+
+    pub async fn analyze_impact_and_fallacies(
+        &self,
+        title: &str,
+        content: &str,
+    ) -> ((String, String), String) {
+        match self {
+            Self::Cli(cli) => cli.analyze_impact_and_fallacies(title, content).await,
+            Self::Http { client, fallback } => {
+                match client.analyze_impact_and_fallacies(title, content).await {
+                    Ok(res) => res,
+                    Err(err) => {
+                        tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
+                        fallback.analyze_impact_and_fallacies(title, content).await
+                    }
+                }
+            }
         }
     }
 
@@ -1199,7 +1367,7 @@ mod tests {
             (102, "Article 2", "Content of second article"),
         ];
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
-        assert!(prompt.contains(r#"{"top":"...","items":[{"i":101,"t":"...","b":"..."}]"#));
+        assert!(prompt.contains(r#"{"top":"...","items":[{"i":101,"t":"...","r":"..."}]}"#));
         assert!(prompt.contains("[ID 101] (New Article) Title: Article 1"));
         assert!(prompt.contains("[ID 102] (New Article) Title: Article 2"));
         assert!(prompt.contains("Content of first article"));
@@ -1233,7 +1401,7 @@ mod tests {
         assert!(prompt.contains("CRITICAL MULTILINGUAL RULE:"));
         assert!(prompt.contains("EXACT SAME LANGUAGE as the source text"));
         assert!(prompt.contains(
-            "If an article is in Vietnamese, its suggested title and brief MUST be in Vietnamese."
+            "If an article is in Vietnamese, its suggested title and rewrite MUST be in Vietnamese."
         ));
         assert!(prompt.contains("Do NOT translate articles into a different language."));
 
@@ -1439,12 +1607,12 @@ Some outro text
     }
 
     #[test]
-    fn test_format_batch_prompt_strictly_3_sentences() {
+    fn test_format_batch_prompt_strictly_rewrite_structure() {
         let articles = [(1, "Title", "Content")];
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
         assert!(
-            prompt.contains("strictly 3 sentences"),
-            "Batch prompt should require strictly 3 sentences for items: {}",
+            prompt.contains("inverted pyramid rewrite"),
+            "Batch prompt should require inverted pyramid rewrite: {}",
             prompt
         );
     }
@@ -1533,14 +1701,17 @@ Some outro text
         assert!(prompt.contains("[ID 101] (New Article) Title: New Post"));
         assert!(prompt.contains("Content:\nFull text of new post"));
 
-        assert!(prompt.contains("[ID 102] (Existing Brief) Title: Cached Post"));
         assert!(
-            prompt.contains("Brief:\nBrief already in db")
-                || prompt.contains("Brief: Brief already in db")
+            prompt.contains("[ID 102] (Existing Brief) Title: Cached Post")
+                || prompt.contains("[ID 102] (Existing Article) Title: Cached Post")
+        );
+        assert!(
+            prompt.contains("Rewrite:\nBrief already in db")
+                || prompt.contains("Rewrite: Brief already in db")
         );
 
         assert!(
-            prompt.contains("Do not regenerate items for existing briefs")
+            prompt.contains("Do not regenerate items for existing articles")
                 || prompt.contains("For each NEW article id")
         );
     }
@@ -1610,5 +1781,68 @@ Some outro text
         let res3 = LlmCliRunner::parse_rewrite_and_analyze_response(english_json);
         assert!(res3.fallacies.contains("No logical fallacies detected"));
         assert!(res3.fallacies.contains("Objective"));
+    }
+
+    #[test]
+    fn test_format_batch_prompt_requires_rewrite_r() {
+        let articles = [(1, "Title", "Content")];
+        let prompt = LlmCliRunner::format_batch_prompt(&articles);
+        assert!(
+            prompt.contains(r#"{"top":"...","items":[{"i":101,"t":"...","r":"..."}]}"#),
+            "Batch prompt compact schema must use 'r': {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("inverted pyramid rewrite") || prompt.contains("rewrite"),
+            "Batch prompt must require rewrite instead of brief: {}",
+            prompt
+        );
+        assert!(
+            !prompt.contains(r#"{"top":"...","items":[{"i":101,"t":"...","b":"..."}]}"#),
+            "Batch prompt must NOT specify 'b' in schema: {}",
+            prompt
+        );
+    }
+
+    #[test]
+    fn test_parse_batch_response_parses_rewrite_field() {
+        let json = r#"{"top":"Synthesized overview","items":[{"i":101,"t":"AI Headline","r":"Lead sentence 1. Impact sentence 2.\n\n• Bullet 1"}]}"#;
+        let parsed = LlmCliRunner::parse_batch_response(json);
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].id, 101);
+        assert_eq!(parsed.items[0].suggested_title, "AI Headline");
+        assert_eq!(
+            parsed.items[0].rewrite,
+            "Lead sentence 1. Impact sentence 2.\n\n• Bullet 1"
+        );
+    }
+
+    #[test]
+    fn test_parse_batch_response_fallback_regex_captures_rewrite() {
+        let raw = r#"Here is the requested output:
+        {"top": "Page synthesis", "items": [
+            {"i": 202, "t": "Regex Title", "r": "Extracted rewrite text via regex."}
+        ]}"#;
+        let parsed = LlmCliRunner::parse_batch_response(raw);
+        assert_eq!(parsed.items.len(), 1);
+        assert_eq!(parsed.items[0].id, 202);
+        assert_eq!(parsed.items[0].suggested_title, "Regex Title");
+        assert_eq!(
+            parsed.items[0].rewrite,
+            "Extracted rewrite text via regex."
+        );
+    }
+
+    #[test]
+    fn test_format_impact_and_fallacies_prompt_and_parser() {
+        let prompt = LlmCliRunner::format_impact_and_fallacies_prompt("Test Title", "Test Content");
+        assert!(prompt.contains("\"impact\""));
+        assert!(prompt.contains("\"fallacies\""));
+        assert!(!prompt.contains("\"rewrite\""));
+
+        let raw = r#"{"impact": "Major supply chain shift.", "fallacies": "None"}"#;
+        let parsed = LlmCliRunner::parse_impact_and_fallacies_response(raw);
+        assert_eq!(parsed.0, "Major supply chain shift.");
+        assert!(parsed.1.contains("No logical fallacies detected"));
     }
 }

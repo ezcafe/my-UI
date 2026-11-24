@@ -126,6 +126,40 @@ impl AiService {
             .await
             .map(|a| a.rewrite)
     }
+
+    pub async fn analyze_entry_impact_and_fallacies(
+        &self,
+        entry_id: i64,
+        title: &str,
+        content: &str,
+    ) -> Result<(String, String), String> {
+        let ((impact, fallacies), model) = self.llm.analyze_impact_and_fallacies(title, content).await;
+        if (!impact.is_empty() || !fallacies.is_empty()) && model != "error" {
+            let existing = self.db.get_summary_and_title(entry_id).await;
+            let summary = existing
+                .as_ref()
+                .map(|r| r.summary.clone())
+                .unwrap_or_else(|| title.to_string());
+            let suggested_title = existing.as_ref().and_then(|r| r.suggested_title.as_deref());
+            let rewrite = existing.as_ref().and_then(|r| r.rewrite.as_deref());
+
+            let _ = self
+                .db
+                .save_summary_and_title_with_analysis(
+                    entry_id,
+                    suggested_title,
+                    &summary,
+                    rewrite,
+                    Some(&impact),
+                    Some(&fallacies),
+                    &model,
+                )
+                .await;
+            Ok((impact, fallacies))
+        } else {
+            Err("Failed to generate impact and fallacies".to_string())
+        }
+    }
 }
 
 #[cfg(test)]

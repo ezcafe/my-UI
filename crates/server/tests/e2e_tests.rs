@@ -778,7 +778,7 @@ async fn test_e2e_page_load_and_detail_drawer_rewrite_flow() {
         "Cached rewrite must not load skeleton"
     );
 
-    // 2. Open drawer for Story 2 -> renders executive brief and skeleton loader with hx-get
+    // 2. Open drawer for Story 2 -> renders rewrite on load and analysis skeleton loader with hx-get
     let req2 = Request::builder()
         .uri("/hx/entries/2")
         .header("HX-Request", "true")
@@ -797,12 +797,12 @@ async fn test_e2e_page_load_and_detail_drawer_rewrite_flow() {
     )
     .unwrap();
     assert!(body2.contains("Executive brief for story 2."));
-    assert!(body2.contains("hx-get=\"/hx/entries/2/rewrite\""));
+    assert!(body2.contains("hx-get=\"/hx/entries/2/analysis\""));
     assert!(body2.contains("animate-pulse"));
 
-    // 3. Trigger HTMX lazy-load route for Story 2 -> generates on-demand rewrite
+    // 3. Trigger HTMX lazy-load route for Story 2 analysis
     let req3 = Request::builder()
-        .uri("/hx/entries/2/rewrite")
+        .uri("/hx/entries/2/analysis")
         .header("HX-Request", "true")
         .body(Body::empty())
         .unwrap();
@@ -818,8 +818,7 @@ async fn test_e2e_page_load_and_detail_drawer_rewrite_flow() {
             .to_vec(),
     )
     .unwrap();
-    assert!(body3.contains("id=\"ai-rewrite-box\""));
-    assert!(body3.contains("Lazy loaded rewrite for story 2 lead."));
+    assert!(body3.contains("id=\"ai-analysis-box\""));
 
     // 4. Verify static CSS route
     let req4 = Request::builder()
@@ -921,9 +920,8 @@ async fn test_e2e_detail_drawer_analysis_flow() {
     )
     .unwrap();
 
-    // Must show Executive Brief, Impact Card, Fallacy Card, and Rewrite
-    assert!(body.contains("Executive Brief"));
-    assert!(body.contains("Executive brief 99."));
+    // Must show Impact Card, Fallacy Card, and Rewrite (Executive Brief heading removed)
+    assert!(!body.contains("Executive Brief"));
     assert!(body.contains("Impact Analysis"));
     assert!(body.contains("Direct disruption to mobile software ecosystems."));
     assert!(body.contains("Logical Fallacy & Objectivity Check"));

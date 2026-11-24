@@ -379,6 +379,42 @@ impl AiDb {
         }
     }
 
+    pub async fn save_analysis(
+        &self,
+        entry_id: i64,
+        impact: &str,
+        fallacies: &str,
+        model: &str,
+    ) -> Result<(), AiDbError> {
+        match &self.inner {
+            Backend::Pg(pool) => {
+                sqlx::query(
+                    r#"
+                    UPDATE article_ai_summaries
+                    SET impact = $2, fallacies = $3, model = $4
+                    WHERE entry_id = $1
+                    "#,
+                )
+                .bind(entry_id)
+                .bind(impact)
+                .bind(fallacies)
+                .bind(model)
+                .execute(pool)
+                .await?;
+                Ok(())
+            }
+            Backend::Mock(data) => {
+                let mut guard = data.write().await;
+                if let Some((rec, _)) = guard.summaries.get_mut(&entry_id) {
+                    rec.impact = Some(impact.to_string());
+                    rec.fallacies = Some(fallacies.to_string());
+                    rec.model = model.to_string();
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub async fn save_batch_results(
         &self,
         page_key: Option<(&str, &str)>,
@@ -861,6 +897,37 @@ mod tests {
         assert_eq!(rec.impact.as_deref(), Some("Impact 200"));
         assert_eq!(rec.fallacies.as_deref(), Some("Fallacy 200"));
         assert_eq!(rec.model, "test-model");
+    }
+
+    #[tokio::test]
+    async fn test_ai_db_save_analysis_updates_existing_record() {
+        let db = AiDb::new_mock();
+        db.save_summary_and_title_with_rewrite(
+            201,
+            Some("Title 201"),
+            "Summary 201",
+            Some("Rewrite 201"),
+            "batch-model",
+        )
+        .await
+        .expect("save batch rewrite");
+
+        db.save_analysis(
+            201,
+            "Real-world impact 201",
+            "No fallacies detected",
+            "analysis-model",
+        )
+        .await
+        .expect("save analysis");
+
+        let rec = db.get_summary_and_title(201).await.expect("must exist");
+        assert_eq!(rec.entry_id, 201);
+        assert_eq!(rec.summary, "Summary 201");
+        assert_eq!(rec.rewrite.as_deref(), Some("Rewrite 201"));
+        assert_eq!(rec.impact.as_deref(), Some("Real-world impact 201"));
+        assert_eq!(rec.fallacies.as_deref(), Some("No fallacies detected"));
+        assert_eq!(rec.model, "analysis-model");
     }
 
     #[tokio::test]

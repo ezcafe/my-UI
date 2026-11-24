@@ -4,7 +4,7 @@ use crate::cache::MinifluxCache;
 use crate::config::{mask_database_url, Config};
 use crate::rate_limit::{rate_limit_middleware, RateLimiter};
 use crate::routes::entries::{
-    executive_brief_htmx, get_entry_ai_summary_htmx, get_entry_detail_htmx, get_entry_rewrite_htmx,
+    executive_brief_htmx, get_entry_ai_summary_htmx, get_entry_analysis_htmx, get_entry_detail_htmx, get_entry_rewrite_htmx,
     list_entries_htmx, mark_all_read_htmx, mark_entry_read_htmx, mark_feed_read_htmx,
     mark_page_read_htmx, toggle_bookmark_htmx,
 };
@@ -98,6 +98,7 @@ pub fn build_app_with_ai(
         .route("/auth/logout", get(logout_handler))
         .route("/hx/entries", get(list_entries_htmx))
         .route("/hx/entries/{id}", get(get_entry_detail_htmx))
+        .route("/hx/entries/{id}/analysis", get(get_entry_analysis_htmx))
         .route("/hx/entries/{id}/rewrite", get(get_entry_rewrite_htmx))
         .route("/hx/entries/{id}/bookmark", post(toggle_bookmark_htmx))
         .route("/hx/entries/{id}/read", post(mark_entry_read_htmx))

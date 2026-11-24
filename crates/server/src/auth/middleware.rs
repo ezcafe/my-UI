@@ -22,14 +22,19 @@ impl IntoResponse for AuthRedirect {
 }
 
 pub fn extract_cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers.get(header::COOKIE)?.to_str().ok()?.split(';').find_map(|s| {
-        let (key, val) = s.trim().split_once('=')?;
-        if key == name {
-            Some(val)
-        } else {
-            None
-        }
-    })
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|s| {
+            let (key, val) = s.trim().split_once('=')?;
+            if key == name {
+                Some(val)
+            } else {
+                None
+            }
+        })
 }
 
 impl<S> FromRequestParts<S> for AuthenticatedUser
@@ -82,10 +87,11 @@ where
             None => return Err(unauth_response()),
         };
 
-        let session: SessionData = match extract_session_cookie_value(cookie_val, &config.session_secret) {
-            Ok(s) => s,
-            Err(_) => return Err(unauth_response()),
-        };
+        let session: SessionData =
+            match extract_session_cookie_value(cookie_val, &config.session_secret) {
+                Ok(s) => s,
+                Err(_) => return Err(unauth_response()),
+            };
 
         let now = chrono::Utc::now().timestamp();
         if session.expires_at <= now {

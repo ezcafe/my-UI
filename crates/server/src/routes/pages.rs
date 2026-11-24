@@ -4,13 +4,13 @@ use crate::cache::MinifluxCache;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::routes::entries::extract_first_image_url;
+use askama::Template;
 use axum::extract::State;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use miniflux_client::schema::AppSchema;
 use std::sync::Arc;
 use std::time::Duration;
 use ui_components::templates::{IndexTemplate, LoginTemplate};
-use askama::Template;
 
 pub async fn login_page(State(config): State<Arc<Config>>) -> Response {
     if !config.auth_enabled {
@@ -68,7 +68,8 @@ pub async fn index_page(
                 .unwrap()
                 .and_utc()
                 .timestamp();
-            let gql = format!(r#"query {{
+            let gql = format!(
+                r#"query {{
                 unreadCounter
                 todayCounter
                 entriesResult(filter: {{ limit: 50, publishedAfter: {start_of_today} }}) {{
@@ -91,11 +92,14 @@ pub async fn index_page(
                         }}
                     }}
                 }}
-            }}"#);
+            }}"#
+            );
             let res = schema.execute(&gql).await;
             res.data.into_json().unwrap_or_default()
         };
-        cache.insert_with_ttl(cache_key.to_string(), d.clone(), Duration::from_secs(30)).await;
+        cache
+            .insert_with_ttl(cache_key.to_string(), d.clone(), Duration::from_secs(30))
+            .await;
         d
     };
 
@@ -165,18 +169,32 @@ pub async fn index_page(
                         suggested_title: None,
                         feed_title,
                         category_title,
-                        published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
+                        published_at: item
+                            .get("publishedAt")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        reading_time: item
+                            .get("readingTime")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1) as i32,
                         summary: summary_str.to_string(),
                         image_url,
-                        url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        url: item
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         author: None,
                         is_read: if config.auth_enabled {
                             item.get("status").and_then(|v| v.as_str()) == Some("READ")
                         } else {
                             false
                         },
-                        is_bookmarked: item.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
+                        is_bookmarked: item
+                            .get("isBookmarked")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
                     })
                 })
                 .collect()
@@ -214,8 +232,12 @@ pub async fn index_page(
                 published_at: e.published_at.clone(),
             })
             .collect();
-        crate::ai::prefetch::AiPrefetchService::new(ai_service.clone())
-            .spawn_prefetch_job(candidates);
+        let page_entry_ids: Vec<i64> = view_models.iter().map(|e| e.id).collect();
+        crate::ai::prefetch::AiPrefetchService::new(ai_service.clone()).spawn_prefetch_job(
+            "unread".to_string(),
+            page_entry_ids,
+            candidates,
+        );
     }
 
     let list_template = ui_components::templates::EntryListTemplate {
@@ -246,6 +268,15 @@ pub async fn index_page(
         auth_enabled: config.auth_enabled,
     };
 
-    let html = template.render().map_err(|e| AppError::Internal(e.to_string()))?;
+    let html = template
+        .render()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(Html(html))
+}
+
+pub async fn serve_annuaire_theme_css() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        ":root { --background: 0 0% 100%; }\n.magazine-container { width: 100%; }\n.magazine-3col-grid { display: grid; }",
+    )
 }

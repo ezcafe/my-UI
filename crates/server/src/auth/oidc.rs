@@ -1,8 +1,8 @@
 use crate::config::Config;
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient};
 use openidconnect::{
-    AuthUrl, ClientId, ClientSecret, CsrfToken, IssuerUrl, JsonWebKeySet, Nonce,
-    PkceCodeChallenge, RedirectUrl, Scope, TokenUrl,
+    AuthUrl, ClientId, ClientSecret, CsrfToken, IssuerUrl, JsonWebKeySet, Nonce, PkceCodeChallenge,
+    RedirectUrl, Scope, TokenUrl,
 };
 use thiserror::Error;
 
@@ -30,12 +30,16 @@ pub struct DiscoveryDocument {
 }
 
 pub async fn discover_endpoints(issuer_url: &str) -> Option<DiscoveryDocument> {
-    let discovery_url = format!("{}/.well-known/openid-configuration", issuer_url.trim_end_matches('/'));
+    let discovery_url = format!(
+        "{}/.well-known/openid-configuration",
+        issuer_url.trim_end_matches('/')
+    );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .ok()?;
-    let resp = client.get(&discovery_url)
+    let resp = client
+        .get(&discovery_url)
         .header("Accept", "application/json")
         .send()
         .await
@@ -50,15 +54,22 @@ pub async fn discover_endpoints(issuer_url: &str) -> Option<DiscoveryDocument> {
 pub fn generate_auth_request(config: &Config) -> Result<OidcAuthRequest, OidcError> {
     let client_id = ClientId::new(config.oidc_client_id.clone());
     let client_secret = Some(ClientSecret::new(config.oidc_client_secret.clone()));
-    let issuer_url = IssuerUrl::new(config.oidc_issuer_url.clone()).map_err(|e| OidcError::Url(e.to_string()))?;
-    let redirect_url =
-        RedirectUrl::new(config.oidc_redirect_url.clone()).map_err(|e| OidcError::Url(e.to_string()))?;
-
-    let auth_url = AuthUrl::new(format!("{}/authorize", config.oidc_issuer_url.trim_end_matches('/')))
+    let issuer_url = IssuerUrl::new(config.oidc_issuer_url.clone())
         .map_err(|e| OidcError::Url(e.to_string()))?;
+    let redirect_url = RedirectUrl::new(config.oidc_redirect_url.clone())
+        .map_err(|e| OidcError::Url(e.to_string()))?;
+
+    let auth_url = AuthUrl::new(format!(
+        "{}/authorize",
+        config.oidc_issuer_url.trim_end_matches('/')
+    ))
+    .map_err(|e| OidcError::Url(e.to_string()))?;
     let token_url = Some(
-        TokenUrl::new(format!("{}/api/oidc/token", config.oidc_issuer_url.trim_end_matches('/')))
-            .map_err(|e| OidcError::Url(e.to_string()))?,
+        TokenUrl::new(format!(
+            "{}/api/oidc/token",
+            config.oidc_issuer_url.trim_end_matches('/')
+        ))
+        .map_err(|e| OidcError::Url(e.to_string()))?,
     );
 
     let client = CoreClient::new(
@@ -196,10 +207,17 @@ pub async fn exchange_token(
 
     // Resolve token URL: first query discovery, fallback to /api/oidc/token (Pocket-ID), then /token
     let token_url = if let Some(doc) = discover_endpoints(&config.oidc_issuer_url).await {
-        doc.token_endpoint
-            .unwrap_or_else(|| format!("{}/api/oidc/token", config.oidc_issuer_url.trim_end_matches('/')))
+        doc.token_endpoint.unwrap_or_else(|| {
+            format!(
+                "{}/api/oidc/token",
+                config.oidc_issuer_url.trim_end_matches('/')
+            )
+        })
     } else {
-        format!("{}/api/oidc/token", config.oidc_issuer_url.trim_end_matches('/'))
+        format!(
+            "{}/api/oidc/token",
+            config.oidc_issuer_url.trim_end_matches('/')
+        )
     };
 
     let params = [
@@ -230,7 +248,11 @@ pub async fn exchange_token(
                 return Err(OidcError::Token(format!(
                     "Token endpoint HTTP {}: {}",
                     status,
-                    if body_text.len() > 300 { &body_text[..300] } else { &body_text }
+                    if body_text.len() > 300 {
+                        &body_text[..300]
+                    } else {
+                        &body_text
+                    }
                 )));
             }
 
@@ -238,7 +260,11 @@ pub async fn exchange_token(
                 OidcError::Token(format!(
                     "Failed to decode token JSON: {} (Response: {})",
                     e,
-                    if body_text.len() > 300 { &body_text[..300] } else { &body_text }
+                    if body_text.len() > 300 {
+                        &body_text[..300]
+                    } else {
+                        &body_text
+                    }
                 ))
             })?;
 

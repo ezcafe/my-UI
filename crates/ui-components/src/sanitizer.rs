@@ -3,17 +3,15 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-static RE_ANCHOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"<a(\s+[^>]*)?>"#).expect("Valid anchor regex")
-});
-static RE_TARGET: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"target="[^"]*""#).expect("Valid target regex")
-});
+static RE_ANCHOR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"<a(\s+[^>]*)?>"#).expect("Valid anchor regex"));
+static RE_TARGET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"target="[^"]*""#).expect("Valid target regex"));
 
 pub fn sanitize_html(input: &str) -> String {
     let mut builder = Builder::default();
     builder.link_rel(Some("noopener noreferrer"));
-    
+
     let mut tags = HashSet::new();
     tags.insert("p");
     tags.insert("b");
@@ -42,14 +40,16 @@ pub fn sanitize_html(input: &str) -> String {
     let cleaned = builder.clean(input).to_string();
 
     // Ensure all <a> tags have target="_blank"
-    RE_ANCHOR.replace_all(&cleaned, |caps: &regex::Captures| {
-        let tag = caps.get(0).unwrap().as_str();
-        if tag.contains("target=") {
-            RE_TARGET.replace(tag, r#"target="_blank""#).to_string()
-        } else {
-            tag.replacen("<a", "<a target=\"_blank\"", 1)
-        }
-    }).to_string()
+    RE_ANCHOR
+        .replace_all(&cleaned, |caps: &regex::Captures| {
+            let tag = caps.get(0).unwrap().as_str();
+            if tag.contains("target=") {
+                RE_TARGET.replace(tag, r#"target="_blank""#).to_string()
+            } else {
+                tag.replacen("<a", "<a target=\"_blank\"", 1)
+            }
+        })
+        .to_string()
 }
 
 #[cfg(test)]
@@ -63,7 +63,10 @@ mod tests {
         assert!(!clean.contains("<script>"), "Must strip <script>");
         assert!(!clean.contains("<iframe"), "Must strip <iframe>");
         assert!(!clean.contains("onerror"), "Must strip onerror attribute");
-        assert!(clean.contains("<p>Safe content</p>"), "Must preserve safe tags");
+        assert!(
+            clean.contains("<p>Safe content</p>"),
+            "Must preserve safe tags"
+        );
     }
 
     #[test]
@@ -79,9 +82,15 @@ mod tests {
     fn test_sanitizer_multiple_links_all_receive_target_blank() {
         let dirty = r#"<p><a target="_blank" href="https://a.com">A</a> and <a href="https://b.com">B</a> and <a target="_self" href="https://c.com">C</a></p>"#;
         let clean = sanitize_html(dirty);
-        assert!(clean.contains(r#"<a target="_blank" href="https://a.com" rel="noopener noreferrer">A</a>"#));
-        assert!(clean.contains(r#"<a target="_blank" href="https://b.com" rel="noopener noreferrer">B</a>"#));
-        assert!(clean.contains(r#"<a target="_blank" href="https://c.com" rel="noopener noreferrer">C</a>"#));
+        assert!(clean.contains(
+            r#"<a target="_blank" href="https://a.com" rel="noopener noreferrer">A</a>"#
+        ));
+        assert!(clean.contains(
+            r#"<a target="_blank" href="https://b.com" rel="noopener noreferrer">B</a>"#
+        ));
+        assert!(clean.contains(
+            r#"<a target="_blank" href="https://c.com" rel="noopener noreferrer">C</a>"#
+        ));
     }
 
     #[test]

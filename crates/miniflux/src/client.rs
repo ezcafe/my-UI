@@ -110,7 +110,10 @@ impl MinifluxClient {
             return Err(MinifluxError::Api { status, body });
         }
 
-        let mut feeds: Vec<Feed> = feeds_resp.json().await.map_err(MinifluxError::from_reqwest)?;
+        let mut feeds: Vec<Feed> = feeds_resp
+            .json()
+            .await
+            .map_err(MinifluxError::from_reqwest)?;
 
         let counters: FeedCounters = if counters_resp.status().is_success() {
             counters_resp.json().await.unwrap_or(FeedCounters {
@@ -134,7 +137,10 @@ impl MinifluxClient {
         Ok(feeds)
     }
 
-    pub async fn get_entries(&self, filter: &EntriesFilter) -> Result<EntryResultSet, MinifluxError> {
+    pub async fn get_entries(
+        &self,
+        filter: &EntriesFilter,
+    ) -> Result<EntryResultSet, MinifluxError> {
         let url = format!("{}/v1/entries", self.base_url);
         let mut req = self.http_client.get(&url);
 
@@ -183,7 +189,11 @@ impl MinifluxClient {
         Ok(result)
     }
 
-    pub async fn update_entry_status(&self, entry_ids: Vec<i64>, status: &str) -> Result<(), MinifluxError> {
+    pub async fn update_entry_status(
+        &self,
+        entry_ids: Vec<i64>,
+        status: &str,
+    ) -> Result<(), MinifluxError> {
         let url = format!("{}/v1/entries", self.base_url);
         let payload = EntriesStatusUpdateRequest {
             entry_ids,
@@ -346,7 +356,10 @@ mod tests {
         assert_eq!(me.id, 42);
         assert_eq!(me.username, "alice");
 
-        let cached = client.get_cached_user_id().await.expect("Expected cached id");
+        let cached = client
+            .get_cached_user_id()
+            .await
+            .expect("Expected cached id");
         assert_eq!(cached, 42);
     }
 
@@ -370,7 +383,10 @@ mod tests {
             .await;
 
         let client = MinifluxClient::new(server.uri(), "secret-token".to_string());
-        client.mark_all_as_read().await.expect("Failed to mark all as read");
+        client
+            .mark_all_as_read()
+            .await
+            .expect("Failed to mark all as read");
     }
 
     #[tokio::test]
@@ -451,7 +467,10 @@ mod tests {
             limit: Some(10),
             ..Default::default()
         };
-        let res = client.get_entries(&filter).await.expect("Failed to fetch entries");
+        let res = client
+            .get_entries(&filter)
+            .await
+            .expect("Failed to fetch entries");
         assert_eq!(res.total, 1);
         assert_eq!(res.entries.len(), 1);
         assert_eq!(res.entries[0].id, 101);
@@ -464,7 +483,10 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/v1/entries"))
-            .and(wiremock::matchers::query_param("published_after", "1732000000"))
+            .and(wiremock::matchers::query_param(
+                "published_after",
+                "1732000000",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "total": 1,
                 "entries": [
@@ -490,7 +512,10 @@ mod tests {
             published_after: Some(1732000000),
             ..Default::default()
         };
-        let res = client.get_entries(&filter).await.expect("Failed to fetch entries");
+        let res = client
+            .get_entries(&filter)
+            .await
+            .expect("Failed to fetch entries");
         assert_eq!(res.total, 1);
         assert_eq!(res.entries[0].id, 105);
         assert_eq!(res.entries[0].title, "Today's Rust Post");
@@ -524,7 +549,10 @@ mod tests {
             .await;
 
         let client = MinifluxClient::new(server.uri(), "secret-token".to_string());
-        client.toggle_bookmark(101).await.expect("Failed to toggle bookmark");
+        client
+            .toggle_bookmark(101)
+            .await
+            .expect("Failed to toggle bookmark");
     }
 
     #[tokio::test]
@@ -541,7 +569,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = MinifluxClient::with_timeout(server.uri(), "secret".to_string(), Duration::from_millis(50));
+        let client = MinifluxClient::with_timeout(
+            server.uri(),
+            "secret".to_string(),
+            Duration::from_millis(50),
+        );
         let res = client.get_me().await;
         assert!(res.is_err(), "Expected timeout error");
         match res.unwrap_err() {
@@ -591,6 +623,9 @@ mod tests {
             .await;
 
         let client = MinifluxClient::new(server.uri(), "secret-token".to_string());
-        client.mark_feed_as_read(5).await.expect("Failed to mark feed as read");
+        client
+            .mark_feed_as_read(5)
+            .await
+            .expect("Failed to mark feed as read");
     }
 }

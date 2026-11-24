@@ -15,7 +15,7 @@ use ui_components::sanitizer::sanitize_html;
 use ui_components::templates::{
     AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate, EntryItemTemplate,
     EntryListTemplate, EntryViewModel, ErrorCardTemplate, ExecutiveBriefCardTemplate,
-    FeedSummaryGroupViewModel,
+    FeedSummaryGroupViewModel, ToastTemplate,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -36,6 +36,7 @@ pub struct MarkPageReadForm {
     pub search: Option<String>,
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 pub fn extract_first_image_url(html: &str) -> Option<String> {
@@ -45,7 +46,9 @@ pub fn extract_first_image_url(html: &str) -> Option<String> {
             .build()
             .unwrap()
     });
-    IMG_REGEX.captures(html).and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+    IMG_REGEX
+        .captures(html)
+        .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
 }
 
 pub fn is_brief_eligible_filter(status: Option<&str>, search: Option<&str>) -> bool {
@@ -57,17 +60,22 @@ pub fn is_brief_eligible_filter(status: Option<&str>, search: Option<&str>) -> b
     }
 }
 
-pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_val: i64, auth_enabled: bool) -> String {
+pub fn build_graphql_filter(
+    query: &EntriesFilterQuery,
+    limit_val: i64,
+    offset_val: i64,
+    auth_enabled: bool,
+) -> String {
     let mut filter_parts = Vec::new();
 
     // Status & Filter mapping
     match query.status.as_deref() {
-        Some("all") => {},
+        Some("all") => {}
         Some("read") => {
             if auth_enabled {
                 filter_parts.push("status: READ".to_string());
             }
-        },
+        }
         Some("starred") => filter_parts.push("starred: true".to_string()),
         Some("today") => {
             let start_of_today = chrono::Utc::now()
@@ -78,7 +86,7 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
                 .timestamp();
             // User decision 1B: show all published today (both read and unread)
             filter_parts.push(format!("publishedAfter: {}", start_of_today));
-        },
+        }
         Some("unread") => {
             if auth_enabled {
                 filter_parts.push("status: UNREAD".to_string());
@@ -91,10 +99,10 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
                     .timestamp();
                 filter_parts.push(format!("publishedAfter: {}", start_of_today));
             }
-        },
+        }
         None if query.search.as_ref().is_some_and(|s| !s.trim().is_empty()) => {
             // Default to all entries when search is provided without explicit status
-        },
+        }
         _ => {
             if auth_enabled {
                 filter_parts.push("status: UNREAD".to_string());
@@ -132,14 +140,14 @@ pub fn build_graphql_filter(query: &EntriesFilterQuery, limit_val: i64, offset_v
     filter_parts.join(", ")
 }
 
-pub async fn render_entries_list(
+pub async fn render_entries_list_html(
     schema: &AppSchema,
     cache: Option<&MinifluxCache>,
     ai_service: Option<&AiService>,
     headers: &HeaderMap,
     query: &EntriesFilterQuery,
     auth_enabled: bool,
-) -> Response {
+) -> Result<String, Box<Response>> {
     let limit_val = query.limit.unwrap_or(50);
     let offset_val = query.offset.unwrap_or(0);
     let filter_str = build_graphql_filter(query, limit_val, offset_val, auth_enabled);
@@ -182,14 +190,24 @@ pub async fn render_entries_list(
 
             let res = schema.execute(&gql).await;
             if !res.errors.is_empty() {
-                return handle_htmx_error(headers, AppError::Upstream(format!("{:?}", res.errors)));
+                return Err(Box::new(handle_htmx_error(
+                    headers,
+                    AppError::Upstream(format!("{:?}", res.errors)),
+                )));
             }
 
             let d = match res.data.into_json() {
                 Ok(d) => d,
-                Err(e) => return handle_htmx_error(headers, AppError::Internal(e.to_string())),
+                Err(e) => {
+                    return Err(Box::new(handle_htmx_error(
+                        headers,
+                        AppError::Internal(e.to_string()),
+                    )))
+                }
             };
-            cache.insert_with_ttl(cache_key, d.clone(), Duration::from_secs(30)).await;
+            cache
+                .insert_with_ttl(cache_key, d.clone(), Duration::from_secs(30))
+                .await;
             d
         }
     } else {
@@ -221,19 +239,31 @@ pub async fn render_entries_list(
 
         let res = schema.execute(&gql).await;
         if !res.errors.is_empty() {
-            return handle_htmx_error(headers, AppError::Upstream(format!("{:?}", res.errors)));
+            return Err(Box::new(handle_htmx_error(
+                headers,
+                AppError::Upstream(format!("{:?}", res.errors)),
+            )));
         }
 
         match res.data.into_json() {
             Ok(d) => d,
-            Err(e) => return handle_htmx_error(headers, AppError::Internal(e.to_string())),
+            Err(e) => {
+                return Err(Box::new(handle_htmx_error(
+                    headers,
+                    AppError::Internal(e.to_string()),
+                )))
+            }
         }
     };
 
     let mut unread_count = if auth_enabled {
-        data.get("unreadCounter").and_then(|v| v.as_i64()).map(|c| c as i32)
+        data.get("unreadCounter")
+            .and_then(|v| v.as_i64())
+            .map(|c| c as i32)
     } else {
-        data.get("todayCounter").and_then(|v| v.as_i64()).map(|c| c as i32)
+        data.get("todayCounter")
+            .and_then(|v| v.as_i64())
+            .map(|c| c as i32)
     };
 
     let entries_result = data.get("entriesResult");
@@ -288,25 +318,41 @@ pub async fn render_entries_list(
                         suggested_title: None,
                         feed_title,
                         category_title,
-                        published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
+                        published_at: item
+                            .get("publishedAt")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        reading_time: item
+                            .get("readingTime")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1) as i32,
                         summary: summary_str.to_string(),
                         image_url,
-                        url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        url: item
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         author: None,
                         is_read: if auth_enabled {
-                            item.get("status").and_then(|v| v.as_str()) == Some("READ") || query.status.as_deref() == Some("read")
+                            item.get("status").and_then(|v| v.as_str()) == Some("READ")
+                                || query.status.as_deref() == Some("read")
                         } else {
                             false
                         },
-                        is_bookmarked: item.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
+                        is_bookmarked: item
+                            .get("isBookmarked")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
                     })
                 })
                 .collect()
         })
         .unwrap_or_default();
 
-    let filter_eligible = is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref());
+    let filter_eligible =
+        is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref());
     let request_brief = query.request_brief.unwrap_or(true);
     let is_eligible = filter_eligible && request_brief;
 
@@ -346,8 +392,10 @@ pub async fn render_entries_list(
                     published_at: e.published_at.clone(),
                 })
                 .collect();
+            let page_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            let status_str = query.status.clone().unwrap_or_else(|| "unread".to_string());
             crate::ai::prefetch::AiPrefetchService::new(Arc::new(ai.clone()))
-                .spawn_prefetch_job(candidates);
+                .spawn_prefetch_job(status_str, page_ids, candidates);
         }
     }
 
@@ -369,9 +417,25 @@ pub async fn render_entries_list(
         feed_id: query.feed_id,
         category_id: query.category_id,
     };
-    match template.render() {
+    template.render().map_err(|e| {
+        Box::new(handle_htmx_error(
+            headers,
+            AppError::Internal(e.to_string()),
+        ))
+    })
+}
+
+pub async fn render_entries_list(
+    schema: &AppSchema,
+    cache: Option<&MinifluxCache>,
+    ai_service: Option<&AiService>,
+    headers: &HeaderMap,
+    query: &EntriesFilterQuery,
+    auth_enabled: bool,
+) -> Response {
+    match render_entries_list_html(schema, cache, ai_service, headers, query, auth_enabled).await {
         Ok(html) => Html(html).into_response(),
-        Err(e) => handle_htmx_error(headers, AppError::Internal(e.to_string())),
+        Err(resp) => *resp,
     }
 }
 
@@ -431,7 +495,8 @@ pub async fn render_ai_entries_list(
         .map(|arr| {
             arr.iter()
                 .filter_map(|item| {
-                    let feed_title = item.get("feed")
+                    let feed_title = item
+                        .get("feed")
                         .and_then(|f| f.get("title"))
                         .and_then(|t| t.as_str())
                         .unwrap_or("Feed")
@@ -443,14 +508,32 @@ pub async fn render_ai_entries_list(
                         suggested_title: None,
                         feed_title,
                         category_title: None,
-                        published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
-                        summary: item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        published_at: item
+                            .get("publishedAt")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        reading_time: item
+                            .get("readingTime")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(1) as i32,
+                        summary: item
+                            .get("summary")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         image_url: None,
-                        url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        url: item
+                            .get("url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         author: None,
                         is_read: item.get("status").and_then(|v| v.as_str()) == Some("READ"),
-                        is_bookmarked: item.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
+                        is_bookmarked: item
+                            .get("isBookmarked")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
                     })
                 })
                 .collect()
@@ -487,12 +570,27 @@ pub async fn list_entries_htmx(
 ) -> Response {
     if query.status.as_deref() == Some("ai") {
         if !config.ai_enabled {
-            return handle_htmx_error(&headers, AppError::NotFound("AI digest is disabled".to_string()));
+            return handle_htmx_error(
+                &headers,
+                AppError::NotFound("AI digest is disabled".to_string()),
+            );
         }
         return render_ai_entries_list(&schema, &headers, &query).await;
     }
-    let ai_ref = if config.ai_enabled { Some(ai_service.as_ref()) } else { None };
-    render_entries_list(&schema, Some(&cache), ai_ref, &headers, &query, config.auth_enabled).await
+    let ai_ref = if config.ai_enabled {
+        Some(ai_service.as_ref())
+    } else {
+        None
+    };
+    render_entries_list(
+        &schema,
+        Some(&cache),
+        ai_ref,
+        &headers,
+        &query,
+        config.auth_enabled,
+    )
+    .await
 }
 
 pub fn escape_html(input: &str) -> String {
@@ -527,11 +625,16 @@ pub async fn executive_brief_htmx(
 ) -> Response {
     let headers = [
         (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
-        (axum::http::header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+        (
+            axum::http::header::CACHE_CONTROL,
+            "no-cache, no-store, must-revalidate",
+        ),
     ];
 
     // 1. Guard: Check is_brief_eligible_filter and config.ai_enabled
-    if !config.ai_enabled || !is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref()) {
+    if !config.ai_enabled
+        || !is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref())
+    {
         return (StatusCode::OK, headers, Html("")).into_response();
     }
 
@@ -559,7 +662,14 @@ pub async fn executive_brief_htmx(
     let res = schema.execute(&gql).await;
     let data = match res.data.into_json() {
         Ok(d) => d,
-        Err(_) => return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response(),
+        Err(_) => {
+            return (
+                StatusCode::OK,
+                headers,
+                Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+            )
+                .into_response()
+        }
     };
 
     struct PageBriefEntry {
@@ -580,9 +690,21 @@ pub async fn executive_brief_htmx(
                 .filter_map(|item| {
                     let id: i64 = item.get("id")?.as_str()?.parse().ok()?;
                     let title = item.get("title")?.as_str()?.to_string();
-                    let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let published_at = item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let summary = item
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let url = item
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let published_at = item
+                        .get("publishedAt")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let feed_title = item
                         .get("feed")
                         .and_then(|f| f.get("title"))
@@ -645,14 +767,23 @@ pub async fn executive_brief_htmx(
                     for entry in &entries {
                         if let Some(rec) = cached_map.get(&entry.id) {
                             if let Some(suggested) = &rec.suggested_title {
-                                full_html.push_str(&render_title_oob_span(entry.id, &entry.title, suggested));
+                                full_html.push_str(&render_title_oob_span(
+                                    entry.id,
+                                    &entry.title,
+                                    suggested,
+                                ));
                             }
                         }
                     }
                     return (StatusCode::OK, headers, Html(full_html)).into_response();
                 }
             }
-            return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+            return (
+                StatusCode::OK,
+                headers,
+                Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+            )
+                .into_response();
         }
         in_flight.insert(page_key.clone());
     }
@@ -678,11 +809,9 @@ pub async fn executive_brief_htmx(
     // 5. Uncached extraction and batch synthesis
     let uncached_entries: Vec<&PageBriefEntry> = entries
         .iter()
-        .filter(|e| {
-            match cached_map.get(&e.id) {
-                Some(rec) => rec.model == "extractive-fallback",
-                None => true,
-            }
+        .filter(|e| match cached_map.get(&e.id) {
+            Some(rec) => rec.model == "extractive-fallback",
+            None => true,
         })
         .collect();
 
@@ -731,11 +860,19 @@ pub async fn executive_brief_htmx(
         })
         .collect();
 
-    let (batch_res, model) = ai_service.llm.summarize_batch_structured(&batch_inputs).await;
+    let (batch_res, model) = ai_service
+        .llm
+        .summarize_batch_structured(&batch_inputs)
+        .await;
 
     // Failure contract
     if batch_res.top.is_empty() && batch_res.items.is_empty() {
-        return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+        return (
+            StatusCode::OK,
+            headers,
+            Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+        )
+            .into_response();
     }
 
     let mut summary_inputs = Vec::new();
@@ -752,6 +889,7 @@ pub async fn executive_brief_htmx(
                 } else {
                     Some(item.suggested_title.clone())
                 },
+                rewrite: item.rewrite.clone(),
                 model: model.clone(),
             });
         }
@@ -763,14 +901,26 @@ pub async fn executive_brief_htmx(
         None
     };
 
-    if ai_service.db.save_batch_results(brief_text, &summary_inputs).await.is_err() {
-        return (StatusCode::OK, headers, Html(r#"<div id="page-executive-brief" class="hidden"></div>"#)).into_response();
+    if ai_service
+        .db
+        .save_batch_results(brief_text, &summary_inputs)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::OK,
+            headers,
+            Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+        )
+            .into_response();
     }
 
     let card_html = if !batch_res.top.is_empty() {
-        ExecutiveBriefCardTemplate { brief: &batch_res.top }
-            .render()
-            .unwrap_or_default()
+        ExecutiveBriefCardTemplate {
+            brief: &batch_res.top,
+        }
+        .render()
+        .unwrap_or_default()
     } else {
         r#"<div id="page-executive-brief" class="hidden"></div>"#.to_string()
     };
@@ -783,7 +933,9 @@ pub async fn executive_brief_htmx(
             .find(|i| i.id == entry.id && !i.suggested_title.is_empty())
             .map(|i| i.suggested_title.as_str())
             .or_else(|| {
-                cached_map.get(&entry.id).and_then(|r| r.suggested_title.as_deref())
+                cached_map
+                    .get(&entry.id)
+                    .and_then(|r| r.suggested_title.as_deref())
             });
         if let Some(sug) = suggested {
             full_html.push_str(&render_title_oob_span(entry.id, &entry.title, sug));
@@ -802,7 +954,10 @@ pub async fn get_entry_ai_summary_htmx(
     Path(id): Path<i64>,
 ) -> Response {
     if !config.ai_enabled {
-        return handle_htmx_error(&headers, AppError::NotFound("AI digest is disabled".to_string()));
+        return handle_htmx_error(
+            &headers,
+            AppError::NotFound("AI digest is disabled".to_string()),
+        );
     }
 
     let gql = format!(
@@ -819,15 +974,32 @@ pub async fn get_entry_ai_summary_htmx(
     );
 
     let res = schema.execute(&gql).await;
-    let entry_data = res.data.into_json().ok().and_then(|d| d.get("entry").cloned());
+    let entry_data = res
+        .data
+        .into_json()
+        .ok()
+        .and_then(|d| d.get("entry").cloned());
 
     let (title, url, teaser) = match entry_data {
         Some(item) if !item.is_null() => {
-            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let title = item
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let url = item
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
             let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let teaser = if !summary.is_empty() { summary } else { content }.to_string();
+            let teaser = if !summary.is_empty() {
+                summary
+            } else {
+                content
+            }
+            .to_string();
             (title, url, teaser)
         }
         _ => {
@@ -836,7 +1008,9 @@ pub async fn get_entry_ai_summary_htmx(
         }
     };
 
-    let summary = ai_service.get_or_create_summary(id, &url, &title, &teaser).await;
+    let summary = ai_service
+        .get_or_create_summary(id, &url, &title, &teaser)
+        .await;
 
     let template = AiSummaryCardTemplate { summary };
     match template.render() {
@@ -902,17 +1076,92 @@ pub async fn mark_page_read_htmx(
     cache.invalidate("entries:").await;
     cache.invalidate("index_page_entries").await;
 
+    let current_offset = form.offset.unwrap_or(0);
+    let limit = 50;
+    let is_unread = form.status.as_deref() == Some("unread") || form.status.is_none();
+
+    let (target_offset, show_last_page_toast) = if is_unread {
+        (0, false)
+    } else {
+        // Count total items under current filter
+        let count_filter = build_graphql_filter(
+            &EntriesFilterQuery {
+                status: form.status.clone(),
+                search: form.search.clone(),
+                feed_id: form.feed_id,
+                category_id: form.category_id,
+                limit: Some(1),
+                offset: Some(0),
+                request_brief: None,
+            },
+            1,
+            0,
+            config.auth_enabled,
+        );
+        let gql = format!(
+            r#"query {{
+                entriesResult(filter: {{ {count_filter} }}) {{
+                    total
+                }}
+            }}"#
+        );
+        let res = schema.execute(&gql).await;
+        if !res.errors.is_empty() {
+            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
+        }
+        let total = res
+            .data
+            .into_json()
+            .ok()
+            .and_then(|d| {
+                d.get("entriesResult")
+                    .and_then(|r| r.get("total"))
+                    .and_then(|v| v.as_i64())
+            })
+            .unwrap_or(0);
+
+        let next_offset = current_offset + limit;
+        if next_offset < total {
+            (next_offset, false)
+        } else {
+            (current_offset, true)
+        }
+    };
+
     let filter_query = EntriesFilterQuery {
         status: form.status,
         search: form.search,
         feed_id: form.feed_id,
         category_id: form.category_id,
-        limit: Some(50),
-        offset: Some(0),
+        limit: Some(limit),
+        offset: Some(target_offset),
         request_brief: None,
     };
 
-    render_entries_list(&schema, None, None, &headers, &filter_query, config.auth_enabled).await
+    let html = render_entries_list_html(
+        &schema,
+        None,
+        None,
+        &headers,
+        &filter_query,
+        config.auth_enabled,
+    )
+    .await;
+    match html {
+        Ok(entries_html) => {
+            if show_last_page_toast {
+                let toast = ToastTemplate {
+                    message: "Page marked as read. You are on the last page.".to_string(),
+                    is_error: false,
+                };
+                let toast_html = toast.render().unwrap_or_default();
+                Html(format!("{entries_html}{toast_html}")).into_response()
+            } else {
+                Html(entries_html).into_response()
+            }
+        }
+        Err(resp) => *resp,
+    }
 }
 
 pub async fn get_entry_detail_htmx(
@@ -971,17 +1220,15 @@ pub async fn get_entry_detail_htmx(
                 return Html(error_card.render().unwrap_or_default()).into_response();
             }
         };
-        cache.insert_with_ttl(cache_key, d.clone(), Duration::from_secs(300)).await;
+        cache
+            .insert_with_ttl(cache_key, d.clone(), Duration::from_secs(300))
+            .await;
         d
     };
 
-    let item = data.get("entry").and_then(|v| {
-        if v.is_null() {
-            None
-        } else {
-            Some(v.clone())
-        }
-    });
+    let item = data
+        .get("entry")
+        .and_then(|v| if v.is_null() { None } else { Some(v.clone()) });
 
     let item = match item {
         Some(i) => i,
@@ -1008,14 +1255,23 @@ pub async fn get_entry_detail_htmx(
         let _ = schema.execute(&mutation).await;
         // Fetch updated unread counter
         let counter_res = schema.execute("{ unreadCounter }").await;
-        if let Some(c) = counter_res.data.into_json().ok().and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64())) {
+        if let Some(c) = counter_res
+            .data
+            .into_json()
+            .ok()
+            .and_then(|d| d.get("unreadCounter").and_then(|v| v.as_i64()))
+        {
             unread_count_val = Some(c);
         }
     }
 
     let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let sanitized_content = sanitize_html(content);
-    let summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let summary = item
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let feed_title = item
         .get("feed")
         .and_then(|f| f.get("title"))
@@ -1023,43 +1279,74 @@ pub async fn get_entry_detail_htmx(
         .unwrap_or("Feed")
         .to_string();
 
-    let teaser_str = if !summary.is_empty() { summary.as_str() } else { content };
+    let teaser_str = if !summary.is_empty() {
+        summary.as_str()
+    } else {
+        content
+    };
 
-    let (suggested_title, summary) = if config.ai_enabled {
+    let (suggested_title, summary, rewrite, is_rewrite) = if config.ai_enabled {
         if let Some(record) = ai_service.db.get_summary_and_title(id).await {
-            (record.suggested_title, record.summary)
+            let (rewrite, is_rewrite) = match record.rewrite {
+                Some(ref r) if !r.trim().is_empty() => (r.clone(), true),
+                _ => (record.summary.clone(), false),
+            };
+            (record.suggested_title, record.summary, rewrite, is_rewrite)
         } else {
             let fallback_teaser = if !teaser_str.is_empty() {
                 teaser_str.to_string()
             } else {
-                summary
+                summary.clone()
             };
-            (None, fallback_teaser)
+            (None, fallback_teaser.clone(), fallback_teaser, false)
         }
     } else {
-        (None, summary)
+        (None, summary.clone(), summary.clone(), false)
     };
 
     let entry = EntryViewModel {
         id,
-        title: item.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        title: item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         suggested_title,
         feed_title,
         category_title: None,
-        published_at: item.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        reading_time: item.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
+        published_at: item
+            .get("publishedAt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        reading_time: item
+            .get("readingTime")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1) as i32,
         summary: summary.clone(),
         image_url: None,
-        url: item.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-        author: item.get("author").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        url: item
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        author: item
+            .get("author")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         is_read: true,
-        is_bookmarked: item.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
+        is_bookmarked: item
+            .get("isBookmarked")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     };
 
     let template = EntryDetailTemplate {
         entry,
         summary,
         sanitized_content,
+        rewrite,
+        is_rewrite,
         auth_enabled: config.auth_enabled,
     };
 
@@ -1104,6 +1391,103 @@ pub async fn get_entry_detail_htmx(
     Html(html).into_response()
 }
 
+pub async fn get_entry_rewrite_htmx(
+    State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
+    State(ai_service): State<Arc<AiService>>,
+    _headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Response {
+    if !config.ai_enabled {
+        let html = r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line"></div>"#.to_string();
+        return Html(html).into_response();
+    }
+
+    // 1. Check AiDb cache
+    if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+        if let Some(ref r) = record.rewrite {
+            if !r.trim().is_empty() {
+                let html = format!(
+                    r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+                    escape_html(r)
+                );
+                return Html(html).into_response();
+            }
+        }
+    }
+
+    // 2. Query Miniflux via GraphQL to get entry details
+    let gql = format!(
+        r#"query {{
+            entry(id: "{id}") {{
+                id
+                title
+                summary
+                content
+                url
+            }}
+        }}"#
+    );
+
+    let res = schema.execute(&gql).await;
+    let data = res.data.into_json().ok();
+    let entry_data = data
+        .as_ref()
+        .and_then(|d| d.get("entry"))
+        .filter(|v| !v.is_null());
+
+    let (title, url, teaser) = if let Some(item) = entry_data {
+        let t = item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let u = item
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let s = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+        let c = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let tz = if !s.is_empty() { s } else { c }.to_string();
+        (t, u, tz)
+    } else {
+        (String::new(), String::new(), String::new())
+    };
+
+    // 3. Extract content and generate rewrite
+    let content = ai_service
+        .extractor
+        .extract_content(&url, &title, &teaser)
+        .await;
+    match ai_service.generate_rewrite(id, &title, &content).await {
+        Ok(rewrite) => {
+            let html = format!(
+                r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+                escape_html(&rewrite)
+            );
+            Html(html).into_response()
+        }
+        Err(_) => {
+            // Graceful fallback: render existing executive brief (or teaser)
+            let fallback = if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+                if !record.summary.is_empty() {
+                    record.summary
+                } else {
+                    teaser
+                }
+            } else {
+                teaser
+            };
+            let html = format!(
+                r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+                escape_html(&fallback)
+            );
+            Html(html).into_response()
+        }
+    }
+}
+
 pub async fn toggle_bookmark_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
@@ -1128,7 +1512,11 @@ pub async fn toggle_bookmark_htmx(
         .data
         .into_json()
         .ok()
-        .and_then(|d| d.get("entry").and_then(|e| e.get("isBookmarked")).and_then(|v| v.as_bool()))
+        .and_then(|d| {
+            d.get("entry")
+                .and_then(|e| e.get("isBookmarked"))
+                .and_then(|v| v.as_bool())
+        })
         .unwrap_or(true);
 
     let button_html = if is_bookmarked {
@@ -1213,7 +1601,11 @@ pub async fn mark_entry_read_htmx(
     let entry = if let Some(e) = entry_data {
         EntryViewModel {
             id,
-            title: e.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            title: e
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             suggested_title: None,
             feed_title: e
                 .get("feed")
@@ -1221,15 +1613,33 @@ pub async fn mark_entry_read_htmx(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Feed")
                 .to_string(),
-            published_at: e.get("publishedAt").and_then(|v| v.as_str()).unwrap_or("Just now").to_string(),
+            published_at: e
+                .get("publishedAt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Just now")
+                .to_string(),
             category_title: None,
             reading_time: e.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
-            summary: e.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            summary: e
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             image_url: None,
-            url: e.get("url").and_then(|v| v.as_str()).unwrap_or("#").to_string(),
-            author: e.get("author").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            url: e
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("#")
+                .to_string(),
+            author: e
+                .get("author")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             is_read,
-            is_bookmarked: e.get("isBookmarked").and_then(|v| v.as_bool()).unwrap_or(false),
+            is_bookmarked: e
+                .get("isBookmarked")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }
     } else {
         EntryViewModel {
@@ -1355,6 +1765,15 @@ pub async fn mark_all_read_htmx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::AiDb;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use miniflux_client::client::MinifluxClient;
+    use miniflux_client::schema::build_schema;
+    use tower::ServiceExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_entries_filter_query_mapping() {
@@ -1513,9 +1932,18 @@ mod tests {
         assert!(is_brief_eligible_filter(None, None));
 
         // Prohibited: today, read, starred, all, and ANY view with active search
-        assert!(!is_brief_eligible_filter(Some("today"), None), "today view is prohibited from executive brief");
-        assert!(!is_brief_eligible_filter(Some("unread"), Some("search")), "unread with active search is prohibited");
-        assert!(!is_brief_eligible_filter(Some("today"), Some("search")), "today with active search is prohibited");
+        assert!(
+            !is_brief_eligible_filter(Some("today"), None),
+            "today view is prohibited from executive brief"
+        );
+        assert!(
+            !is_brief_eligible_filter(Some("unread"), Some("search")),
+            "unread with active search is prohibited"
+        );
+        assert!(
+            !is_brief_eligible_filter(Some("today"), Some("search")),
+            "today with active search is prohibited"
+        );
         assert!(!is_brief_eligible_filter(Some("read"), None));
         assert!(!is_brief_eligible_filter(Some("starred"), None));
         assert!(!is_brief_eligible_filter(Some("all"), None));
@@ -1548,7 +1976,9 @@ mod tests {
         assert!(span.contains("id=\"entry-title-789\""));
         assert!(span.contains("hx-swap-oob=\"outerHTML\""));
         assert!(span.contains("class=\"article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors\""));
-        assert!(span.contains(r#"title="Original &lt;script&gt;alert(1)&lt;/script&gt; &quot;Quotes&quot;""#));
+        assert!(span.contains(
+            r#"title="Original &lt;script&gt;alert(1)&lt;/script&gt; &quot;Quotes&quot;""#
+        ));
         assert!(span.contains("AI &amp; &quot;Punchy&quot; Title"));
     }
 
@@ -1561,13 +1991,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_executive_brief_synthesizes_from_cached_summaries_when_uncached_empty() {
+        use http_body_util::BodyExt;
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
-        use miniflux_client::client::MinifluxClient;
-        use miniflux_client::schema::build_schema;
-        use http_body_util::BodyExt;
 
         let mock_server = MockServer::start().await;
         // Mock entries endpoint returning entry 888
@@ -1601,15 +2031,20 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let db_file = tempfile::NamedTempFile::new().unwrap();
-        let db = Arc::new(crate::ai::AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        let db = Arc::new(crate::ai::AiDb::new_mock());
         // Save summary in DB for entry 888 beforehand so uncached_set will be empty!
-        db.save_summary_and_title(888, Some("Punchy 888 Title"), "Cached item summary of 888", "test-model")
-            .await
-            .unwrap();
+        db.save_summary_and_title(
+            888,
+            Some("Punchy 888 Title"),
+            "Cached item summary of 888",
+            "test-model",
+        )
+        .await
+        .unwrap();
 
         let mut script_file = tempfile::NamedTempFile::new().unwrap();
-        let script_content = "#!/bin/sh\nprintf '%s' '{\"top\":\"Synthesized From Cached Brief\",\"items\":[]}'\n";
+        let script_content =
+            "#!/bin/sh\nprintf '%s' '{\"top\":\"Synthesized From Cached Brief\",\"items\":[]}'\n";
         script_file.write_all(script_content.as_bytes()).unwrap();
         let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
         perms.set_mode(0o755);
@@ -1644,7 +2079,7 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "test-model".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: db_file.path().to_str().unwrap().to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
@@ -1668,32 +2103,40 @@ mod tests {
             State(schema),
             State(config),
             State(ai_service.clone()),
-        ).await;
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
         // Must NOT be the empty hidden div
-        assert!(!html.contains("class=\"hidden\""), "Must not return hidden div when entries exist: {}", html);
+        assert!(
+            !html.contains("class=\"hidden\""),
+            "Must not return hidden div when entries exist: {}",
+            html
+        );
         assert!(html.contains("Synthesized From Cached Brief"));
         assert!(html.contains("id=\"entry-title-888\""));
 
         // Verify saved in DB with page_key
         let page_key = crate::ai::compute_page_key("unread", &[888]);
         let saved_brief = db.get_page_brief_by_key(&page_key).await;
-        assert_eq!(saved_brief.as_deref(), Some("Synthesized From Cached Brief"));
+        assert_eq!(
+            saved_brief.as_deref(),
+            Some("Synthesized From Cached Brief")
+        );
     }
 
     #[tokio::test]
     async fn test_executive_brief_reuses_db_summaries_and_synthesizes_top() {
+        use http_body_util::BodyExt;
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
-        use miniflux_client::client::MinifluxClient;
-        use miniflux_client::schema::build_schema;
-        use http_body_util::BodyExt;
 
         let mock_server = MockServer::start().await;
         // Mock entries endpoint returning entry 888 and 999
@@ -1751,12 +2194,16 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let db_file = tempfile::NamedTempFile::new().unwrap();
-        let db = Arc::new(crate::ai::AiDb::new(db_file.path().to_str().unwrap()).unwrap());
+        let db = Arc::new(crate::ai::AiDb::new_mock());
         // Save summary in DB for entry 888 beforehand
-        db.save_summary_and_title(888, Some("Existing 888 Title"), "Existing brief 888", "test-model")
-            .await
-            .unwrap();
+        db.save_summary_and_title(
+            888,
+            Some("Existing 888 Title"),
+            "Existing brief 888",
+            "test-model",
+        )
+        .await
+        .unwrap();
 
         let prompt_dump_file = tempfile::NamedTempFile::new().unwrap();
         let prompt_dump_path = prompt_dump_file.path().to_str().unwrap().to_string();
@@ -1800,7 +2247,7 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "test-model".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: db_file.path().to_str().unwrap().to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
@@ -1824,26 +2271,46 @@ mod tests {
             State(schema),
             State(config),
             State(ai_service.clone()),
-        ).await;
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        assert!(html.contains("Whole Page Brief Synthesis"), "Html should contain synthesized top: {}", html);
+        assert!(
+            html.contains("Whole Page Brief Synthesis"),
+            "Html should contain synthesized top: {}",
+            html
+        );
         assert!(html.contains("id=\"entry-title-999\""));
         assert!(html.contains("id=\"entry-title-888\""));
 
         // Verify the prompt piped to LLM contained BOTH existing 888 brief and new 999 article
         let piped_prompt = std::fs::read_to_string(&prompt_dump_path).unwrap_or_default();
-        assert!(piped_prompt.contains("[ID 888] (Existing Brief)"), "Prompt must include cached brief for 888: {}", piped_prompt);
-        assert!(piped_prompt.contains("[ID 999] (New Article)"), "Prompt must include new article for 999: {}", piped_prompt);
-        assert!(piped_prompt.contains("### Source: Tech Feed"), "Prompt must include source header");
+        assert!(
+            piped_prompt.contains("[ID 888] (Existing Brief)"),
+            "Prompt must include cached brief for 888: {}",
+            piped_prompt
+        );
+        assert!(
+            piped_prompt.contains("[ID 999] (New Article)"),
+            "Prompt must include new article for 999: {}",
+            piped_prompt
+        );
+        assert!(
+            piped_prompt.contains("### Source: Tech Feed"),
+            "Prompt must include source header"
+        );
 
         // Verify 999 was saved to DB and 888 was preserved
         let summaries = db.get_batch_summaries(&[888, 999]).await;
         assert_eq!(summaries.get(&888).unwrap().summary, "Existing brief 888");
-        assert!(summaries.get(&999).unwrap().summary.contains("New brief 999"));
+        assert!(summaries
+            .get(&999)
+            .unwrap()
+            .summary
+            .contains("New brief 999"));
 
         // Verify page executive brief was saved
         let page_key = crate::ai::compute_page_key("unread", &[888, 999]);
@@ -1871,11 +2338,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_unread_count_fallback_to_total_in_entries() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use http_body_util::BodyExt;
         use miniflux_client::client::MinifluxClient;
         use miniflux_client::schema::build_schema;
-        use http_body_util::BodyExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1929,17 +2396,25 @@ mod tests {
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        assert!(html.contains(r#"data-base-unread="5""#), "Must fallback unread count to total (5) when counter is 0: {}", html);
-        assert!(html.contains("(5)"), "Must display (5) in unread count span: {}", html);
+        assert!(
+            html.contains(r#"data-base-unread="5""#),
+            "Must fallback unread count to total (5) when counter is 0: {}",
+            html
+        );
+        assert!(
+            html.contains("(5)"),
+            "Must display (5) in unread count span: {}",
+            html
+        );
     }
 
     #[tokio::test]
     async fn test_render_entries_list_request_brief_false_loads_latest_page_brief() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use http_body_util::BodyExt;
         use miniflux_client::client::MinifluxClient;
         use miniflux_client::schema::build_schema;
-        use http_body_util::BodyExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1981,15 +2456,13 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let db_file = tempfile::NamedTempFile::new().unwrap();
-        let db = Arc::new(crate::ai::AiDb::new(db_file.path().to_str().unwrap()).unwrap());
-        db.save_page_brief("Existing Latest Executive Brief").await.unwrap();
+        let db = Arc::new(crate::ai::AiDb::new_mock());
+        db.save_page_brief("Existing Latest Executive Brief")
+            .await
+            .unwrap();
 
-        let llm = crate::ai::llm::LlmCliRunner::new(
-            "llm".to_string(),
-            "test-model".to_string(),
-            vec![],
-        );
+        let llm =
+            crate::ai::llm::LlmCliRunner::new("llm".to_string(), "test-model".to_string(), vec![]);
 
         let ai_service = crate::ai::AiService {
             db: db.clone(),
@@ -2007,31 +2480,385 @@ mod tests {
             ..Default::default()
         };
 
-        let response = render_entries_list(&schema, None, Some(&ai_service), &headers, &query, true).await;
+        let response =
+            render_entries_list(&schema, None, Some(&ai_service), &headers, &query, true).await;
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        assert!(html.contains("Existing Latest Executive Brief"), "Must render latest saved page brief: {}", html);
-        assert!(!html.contains("hx-trigger=\"load\""), "Must not trigger brief generation when request_brief is false: {}", html);
+        assert!(
+            html.contains("Existing Latest Executive Brief"),
+            "Must render latest saved page brief: {}",
+            html
+        );
+        assert!(
+            !html.contains("hx-trigger=\"load\""),
+            "Must not trigger brief generation when request_brief is false: {}",
+            html
+        );
     }
 
     #[test]
     fn test_extract_first_image_url() {
         assert_eq!(
-            extract_first_image_url(r#"<p>Some text</p><img src="https://example.com/banner.png" alt="test"/><p>more</p>"#),
+            extract_first_image_url(
+                r#"<p>Some text</p><img src="https://example.com/banner.png" alt="test"/><p>more</p>"#
+            ),
             Some("https://example.com/banner.png".to_string())
         );
         assert_eq!(
-            extract_first_image_url(r#"<figure><IMG class="hero" SRC='https://example.com/hero.jpg'></figure>"#),
+            extract_first_image_url(
+                r#"<figure><IMG class="hero" SRC='https://example.com/hero.jpg'></figure>"#
+            ),
             Some("https://example.com/hero.jpg".to_string())
         );
-        assert_eq!(
-            extract_first_image_url("<p>No image here</p>"),
-            None
+        assert_eq!(extract_first_image_url("<p>No image here</p>"), None);
+        assert_eq!(extract_first_image_url(""), None);
+    }
+
+    #[test]
+    fn test_mark_page_read_form_offset_deserialization() {
+        let form: MarkPageReadForm =
+            serde_urlencoded::from_str("entry_ids=1,2&status=all&offset=50").unwrap();
+        assert_eq!(form.offset, Some(50));
+        assert_eq!(form.status.as_deref(), Some("all"));
+
+        let form_no_offset: MarkPageReadForm =
+            serde_urlencoded::from_str("entry_ids=1,2&status=unread").unwrap();
+        assert_eq!(form_no_offset.offset, None);
+
+        let form_empty_offset: MarkPageReadForm =
+            serde_urlencoded::from_str("entry_ids=1,2&status=unread&offset=").unwrap_or_default();
+        assert_eq!(form_empty_offset.offset, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_detail_route_loads_rewrite_from_ai_db() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use http_body_util::BodyExt;
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use tower::ServiceExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/777"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 777,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Article 777 Original Title",
+                "url": "https://example.com/777",
+                "content": "<p>Raw article body 777 that should not appear</p>",
+                "published_at": "2026-11-23T12:00:00Z",
+                "reading_time": 3,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "title": "Tech Feed",
+                    "checked_at": "2026-11-23T12:00:00Z",
+                    "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:entry_detail_777";
+        let db = Arc::new(crate::ai::AiDb::new(db_path).await.unwrap());
+        db.save_summary_and_title_with_rewrite(
+            777,
+            Some("Suggested AI Title 777"),
+            "Teaser summary 777",
+            Some("Definitive conclusion in sentence 1. High impact in sentence 2.\n\n• Key insight A\n• Key insight B"),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/777")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        // Must display the AI rewrite
+        assert!(html.contains("Definitive conclusion in sentence 1. High impact in sentence 2."));
+        assert!(html.contains("• Key insight A"));
+        // Must NOT render raw article HTML
+        assert!(!html.contains("Raw article body 777 that should not appear"));
+        // Must contain original link button
+        assert!(html.contains("Original"));
+        assert!(html.contains("href=\"https://example.com/777\""));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_rewrite_htmx_serves_existing_cache() {
+        let db_path = "mock:entry_rewrite_501";
+        let db = AiDb::new(db_path).await.unwrap();
+        db.save_summary_and_title_with_rewrite(
+            501,
+            Some("Suggested Title 501"),
+            "Executive brief 501.",
+            Some("Cached rewrite lead sentence. Second impact sentence.\n\n• Point 1"),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: "http://127.0.0.1:8080".to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client =
+            MinifluxClient::new("http://127.0.0.1:8080".to_string(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/501/rewrite")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let start = std::time::Instant::now();
+        let resp = app.oneshot(req).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert!(
+            elapsed.as_millis() < 50,
+            "Serving cached rewrite should be extremely fast (<50ms), got {:?}",
+            elapsed
         );
-        assert_eq!(
-            extract_first_image_url(""),
-            None
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(
+            html.contains("id=\"ai-rewrite-box\""),
+            "Must return #ai-rewrite-box fragment"
         );
+        assert!(html.contains("Cached rewrite lead sentence. Second impact sentence."));
+        assert!(html.contains("• Point 1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_rewrite_htmx_generates_and_caches_rewrite() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/502"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 502,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "On Demand Story 502",
+                "url": "https://example.com/502",
+                "comments_url": "",
+                "author": "Reporter",
+                "content": "<p>Content for 502 with substantial details for rewrite generation.</p>",
+                "hash": "hash502",
+                "published_at": "2026-11-24T00:00:00Z",
+                "created_at": "2026-11-24T00:00:00Z",
+                "status": "unread",
+                "starred": false,
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "feed_url": "https://example.com/feed",
+                    "site_url": "https://example.com",
+                    "title": "Tech Source"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        let script_content = "#!/bin/sh\nprintf '%b' 'Generated on-demand rewrite lead.\\n\\n• Supporting insight.'\n";
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        script_file.write_all(script_content.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: script_file.path().to_str().unwrap().to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: ":memory:".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/502/rewrite")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains("Generated on-demand rewrite lead."));
+        assert!(html.contains("• Supporting insight."));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_rewrite_htmx_fallback_on_llm_failure() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/503"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 503,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Failing LLM Story 503",
+                "url": "https://example.com/503",
+                "comments_url": "",
+                "author": "Reporter",
+                "content": "<p>Content for 503</p>",
+                "hash": "hash503",
+                "published_at": "2026-11-24T00:00:00Z",
+                "created_at": "2026-11-24T00:00:00Z",
+                "status": "unread",
+                "starred": false,
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "feed_url": "https://example.com/feed",
+                    "site_url": "https://example.com",
+                    "title": "Tech Source"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:entry_rewrite_503";
+        let db = AiDb::new(db_path).await.unwrap();
+        // Seed an existing brief for 503
+        db.save_summary(503, "Graceful fallback executive brief.", "test-model")
+            .await
+            .unwrap();
+
+        // Point to a non-existent or failing command
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/nonexistent/binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/503/rewrite")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains("Graceful fallback executive brief."));
     }
 }

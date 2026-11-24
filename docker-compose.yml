@@ -1,4 +1,22 @@
 services:
+  db:
+    image: postgres:latest
+    container_name: my-ui-db
+    restart: always
+    environment:
+      POSTGRES_USER: my_ui
+      POSTGRES_PASSWORD: my_ui_password
+      POSTGRES_DB: my_ui
+    ports:
+      - "5432:5432"
+    volumes:
+      - my_ui_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U my_ui -d my_ui"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   my-ui:
     build:
       context: .
@@ -7,12 +25,15 @@ services:
     restart: always
     security_opt:
       - no-new-privileges:true
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      DATABASE_URL: "postgres://my_ui:my_ui_password@db:5432/my_ui"
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
-    volumes:
-      - my_ui_data:/app/data
     logging:
       driver: "json-file"
       options:
@@ -20,5 +41,5 @@ services:
         max-file: "3"
 
 volumes:
-  my_ui_data:
+  my_ui_postgres_data:
     driver: local

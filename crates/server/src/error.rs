@@ -48,7 +48,11 @@ pub fn handle_htmx_error(headers: &HeaderMap, error: AppError) -> Response {
             .insert("HX-Reswap", "none".parse().unwrap());
         resp
     } else {
-        (StatusCode::INTERNAL_SERVER_ERROR, error.user_facing_message().to_string()).into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error.user_facing_message().to_string(),
+        )
+            .into_response()
     }
 }
 
@@ -64,7 +68,8 @@ mod tests {
 
     #[test]
     fn test_user_facing_error_messages_do_not_leak_internal_details() {
-        let err_upstream = AppError::Upstream("Raw hyper connect error 127.0.0.1:56679".to_string());
+        let err_upstream =
+            AppError::Upstream("Raw hyper connect error 127.0.0.1:56679".to_string());
         assert_eq!(
             err_upstream.user_facing_message(),
             "Unable to connect to news service. Please try again later."
@@ -96,7 +101,10 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("HX-Request", "true".parse().unwrap());
 
-        let resp = handle_htmx_error(&headers, AppError::Upstream("Panic at reqwest line 42".to_string()));
+        let resp = handle_htmx_error(
+            &headers,
+            AppError::Upstream("Panic at reqwest line 42".to_string()),
+        );
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers().get("HX-Reswap").unwrap(), "none");
     }

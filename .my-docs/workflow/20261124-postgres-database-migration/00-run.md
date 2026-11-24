@@ -1,0 +1,56 @@
+# Run card
+
+- **Slug:** 20261124-postgres-database-migration
+- **Mode:** full
+- **Review profile:** full
+- **Has UI / API / DB / auth/PII/schema:** no | yes | yes | yes
+- **Status:** running
+- **Last stage:** gate-c
+- **Next:** merge
+- **Gate B settle gen:** 0
+- **Gate B approved:** gen:0
+- **Build armed:** none
+- **Gate C approved:** commit, push
+- **Last Verify:** verify-pass
+- **Last verify-pass at:** 2026-11-24T09:55:10+07:00
+- **Last verify settle-gen:** 0
+- **Lens plan:** api|db
+- **Pending parallel:** none
+- **Notes:** ideation-confirmed, smoke-pass
+- **Provenance:** ideation-confirmed: user: "Use PostgreSQL 19. full-text search across article summaries/titles, time-window aggregations like top daily news, and strictly fast key-value lookups by article ID"; gate-b-approved: user: "proceed with TDD build"; smoke-pass-rerun: evidence: Smoke-Task in 06-test-log.md; gate-c-approved: user: "commit, push"
+- **Test path last run:** full
+
+## Run log
+
+- **08:22** · seed · step-0 · card created
+- **08:24** · ideation · ideation-drafted · idea framed in 01-idea.md, awaiting confirmation
+- **08:26** · ideation · ideation-confirmed · user confirmed PostgreSQL 19 and query patterns
+- **08:27** · gate-a · ok · 01a-gate-a.md approved
+- **08:28** · skim · done · 02-skim.md completed
+- **08:28** · analyze · done · 02-analysis.md completed
+- **08:29** · grill · needs-round · frontier round 1 prepared in 02b-grill.md
+- **08:32** · grill · round-1-settled · user settled 1A, 2A, 3A; closing frontier and advancing to design
+- **08:35** · clarity-check · ok · clarity-check ok — design
+- **08:35** · design · done · 03-design.md and 04-tasks.md created
+- **08:36** · clarity-check · ok · clarity-check ok — api|db
+- **08:37** · db-design-review · clean · 03a-db-design-review.md clean
+- **08:38** · api-contract-review · needs-update · 03a-api-contract-review.md needs update
+- **08:38** · clarity-check · ok · clarity-check ok — design-update
+- **08:41** · design-update — settle-gen:0
+- **08:41** · clarity-check · ok · clarity-check ok — api|db
+- **08:42** · api-contract-review · clean · 03a-api-contract-review.md clean
+- **08:42** · db-design-review · clean · 03a-db-design-review.md clean
+- **08:42** · clarity-check · ok · clarity-check ok — design-review
+- **08:43** · design-review · clean · 03a-design-review-log.md clean
+- **08:44** · clarity-check · ok · clarity-check ok — tdd-review
+- **08:45** · tdd-review · clean · 04a-tdd-plan-review.md clean
+- **08:49** · gate-b · approved · Gate B approved — gen:0
+- **08:49** · clarity-check · ok · clarity-check ok — build
+- **09:54** · build · verify-pass · 201 tests passing, 0 clippy warnings
+- **09:55** · finalize-lens-plan · done · Lens plan finalized to api|db
+- **09:57** · smoke · smoke-pass · 06-test-log.md Smoke source: Smoke-Task
+- **09:57** · clarity-check · ok · clarity-check ok — adversarial
+- **10:06** · merge-findings · clean · 05-review-log.md clean, lenses clean
+- **10:08** · test-full · success · 06-test-log.md Result: success (full path)
+- **10:10** · gate-c · approved · Gate C approved: commit, push
+- **10:11** · clarity-check · ok · clarity-check ok — merge

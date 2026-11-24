@@ -1,7 +1,7 @@
 use miniflux_client::client::MinifluxClient;
 use miniflux_client::schema::build_schema;
 use server::app::build_app;
-use server::config::Config;
+use server::config::{mask_database_url, Config};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
@@ -21,18 +21,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(config);
 
     println!(
-        "[SERVER_INIT] auth_enabled={} ai_enabled={} llm_cmd='{}' llm_model='{}' extra_args={:?} db_path='{}'",
+        "[SERVER_INIT] auth_enabled={} ai_enabled={} llm_cmd='{}' llm_model='{}' extra_args={:?} database_url='{}'",
         config.auth_enabled,
         config.ai_enabled,
         config.llm_cli_cmd,
         config.llm_model,
         config.llm_extra_args,
-        config.ai_db_path
+        mask_database_url(&config.database_url)
     );
 
-    let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+    let client = MinifluxClient::new(
+        config.miniflux_base_url.clone(),
+        config.miniflux_api_key.clone(),
+    );
     let schema = build_schema(client);
-    let app = build_app(config.clone(), schema);
+    let app = build_app(config.clone(), schema).await;
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;

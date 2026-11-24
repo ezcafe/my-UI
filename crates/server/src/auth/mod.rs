@@ -10,14 +10,12 @@ pub use middleware::AuthenticatedUser;
 
 #[cfg(test)]
 mod tests {
-    use super::temp_cookie::{
-        create_temp_cookie_value, OidcTempData,
-    };
+    use super::temp_cookie::{create_temp_cookie_value, OidcTempData};
     use super::AuthenticatedUser;
-    use axum::extract::FromRequestParts;
     use crate::app::build_app;
     use crate::config::Config;
     use axum::body::Body;
+    use axum::extract::FromRequestParts;
     use axum::http::{header, Request, StatusCode};
     use miniflux_client::client::MinifluxClient;
     use miniflux_client::schema::build_schema;
@@ -41,7 +39,7 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: "data/summaries.db".to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
@@ -51,14 +49,14 @@ mod tests {
     #[tokio::test]
     async fn test_unauthenticated_request_redirects_to_login() {
         let config = test_config();
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
@@ -68,9 +66,12 @@ mod tests {
     #[tokio::test]
     async fn test_htmx_unauthenticated_request_returns_hx_redirect() {
         let config = test_config();
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let req = Request::builder()
             .uri("/hx/entries")
@@ -86,9 +87,12 @@ mod tests {
     #[tokio::test]
     async fn test_oidc_callback_state_mismatch_fails() {
         let config = test_config();
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config.clone(), schema);
+        let app = build_app(config.clone(), schema).await;
 
         let temp_data = OidcTempData {
             pkce_verifier: "verifier123".to_string(),
@@ -109,9 +113,12 @@ mod tests {
     #[tokio::test]
     async fn test_oidc_callback_clears_temp_cookie() {
         let config = test_config();
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config.clone(), schema);
+        let app = build_app(config.clone(), schema).await;
 
         let temp_data = OidcTempData {
             pkce_verifier: "verifier123".to_string(),
@@ -137,15 +144,20 @@ mod tests {
             .collect();
 
         assert!(cookies.iter().any(|c| c.contains("__session=")));
-        assert!(cookies.iter().any(|c| c.contains("__oidc_temp=") && c.contains("Max-Age=0")));
+        assert!(cookies
+            .iter()
+            .any(|c| c.contains("__oidc_temp=") && c.contains("Max-Age=0")));
     }
 
     #[tokio::test]
     async fn test_unauthenticated_graphql_request_rejected_with_401() {
         let config = test_config();
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let req = Request::builder()
             .method("POST")
@@ -163,9 +175,12 @@ mod tests {
         use super::session::{create_session_cookie_value, SessionData};
 
         let config = test_config();
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config.clone(), schema);
+        let app = build_app(config.clone(), schema).await;
 
         let expired_session = SessionData {
             user_id: "usr_exp".to_string(),
@@ -174,7 +189,8 @@ mod tests {
             refresh_token: None,
             expires_at: chrono::Utc::now().timestamp() - 300, // 5 minutes in the past
         };
-        let encrypted = create_session_cookie_value(&expired_session, &config.session_secret).unwrap();
+        let encrypted =
+            create_session_cookie_value(&expired_session, &config.session_secret).unwrap();
 
         // 1. Regular browser GET to / -> should redirect to /login
         let req = Request::builder()
@@ -219,9 +235,12 @@ mod tests {
         cfg.host = "app.example.com".to_string();
         let config = Arc::new(cfg);
 
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config.clone(), schema);
+        let app = build_app(config.clone(), schema).await;
 
         let temp_data = OidcTempData {
             pkce_verifier: "verifier123".to_string(),
@@ -246,7 +265,11 @@ mod tests {
             .collect();
 
         for c in &cookies {
-            assert!(c.contains("Secure"), "Cookie must contain Secure flag in HTTPS: {}", c);
+            assert!(
+                c.contains("Secure"),
+                "Cookie must contain Secure flag in HTTPS: {}",
+                c
+            );
         }
     }
 
@@ -256,10 +279,7 @@ mod tests {
         cfg.auth_enabled = false;
         let config = Arc::new(cfg);
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let (mut parts, _) = req.into_parts();
         let user = AuthenticatedUser::from_request_parts(&mut parts, &config)
@@ -277,30 +297,45 @@ mod tests {
         cfg.auth_enabled = false;
         let config = Arc::new(cfg);
 
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         // /auth/login
-        let req = Request::builder().uri("/auth/login").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/auth/login")
+            .body(Body::empty())
+            .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
 
         // /auth/callback
-        let req = Request::builder().uri("/auth/callback").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/auth/callback")
+            .body(Body::empty())
+            .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
 
         // /auth/logout
-        let req = Request::builder().uri("/auth/logout").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/auth/logout")
+            .body(Body::empty())
+            .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");
 
         // /login
-        let req = Request::builder().uri("/login").body(Body::empty()).unwrap();
+        let req = Request::builder()
+            .uri("/login")
+            .body(Body::empty())
+            .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SEE_OTHER);
         assert_eq!(resp.headers().get(header::LOCATION).unwrap(), "/");

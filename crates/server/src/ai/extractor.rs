@@ -2,12 +2,10 @@ use scraper::{ElementRef, Html, Node, Selector};
 use std::sync::LazyLock;
 use std::time::Duration;
 
-static ARTICLE_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse("article").expect("valid article selector")
-});
-static BODY_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse("body").expect("valid body selector")
-});
+static ARTICLE_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("article").expect("valid article selector"));
+static BODY_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("body").expect("valid body selector"));
 
 #[derive(Clone)]
 pub struct ArticleExtractor {
@@ -88,7 +86,8 @@ impl ArticleExtractor {
 
     fn traverse_element(element: ElementRef, chunks: &mut Vec<String>) {
         const BOILERPLATE_TAGS: &[&str] = &[
-            "script", "style", "nav", "header", "footer", "aside", "noscript", "svg", "form", "button",
+            "script", "style", "nav", "header", "footer", "aside", "noscript", "svg", "form",
+            "button",
         ];
 
         for child in element.children() {
@@ -159,7 +158,9 @@ mod tests {
         let extractor = ArticleExtractor::new();
         let content = extractor.parse_html(html, "Breaking Discovery", "Default teaser");
 
-        assert!(content.contains("Scientists have discovered a new high-temperature superconductor"));
+        assert!(
+            content.contains("Scientists have discovered a new high-temperature superconductor")
+        );
         assert!(content.contains("The material functions at ambient pressure"));
         assert!(!content.contains("Title:"));
         assert!(!content.contains("ad script"));
@@ -202,7 +203,9 @@ mod tests {
         let extractor = ArticleExtractor::new();
         let blocked_url = format!("{}/blocked", mock_server.uri());
         let teaser = "Teaser sentence 1. Teaser sentence 2. Extra sentence 3 that gets truncated.";
-        let content = extractor.extract_content(&blocked_url, "Blocked News", teaser).await;
+        let content = extractor
+            .extract_content(&blocked_url, "Blocked News", teaser)
+            .await;
 
         assert!(content.contains("Teaser sentence 1. Teaser sentence 2."));
         assert!(!content.contains("Title:"));
@@ -234,7 +237,9 @@ mod tests {
 
         let extractor = ArticleExtractor::new();
         let fast_path_url = format!("{}/articles/fast", mock_server.uri());
-        let content = extractor.extract_content(&fast_path_url, "Fast Path Title", &teaser).await;
+        let content = extractor
+            .extract_content(&fast_path_url, "Fast Path Title", &teaser)
+            .await;
 
         // Must return teaser content without triggering HTTP fetch
         assert!(!content.is_empty());
@@ -246,7 +251,10 @@ mod tests {
 
     #[test]
     fn test_extractor_word_truncation_100() {
-        let words = (0..300).map(|i| format!("word{}", i)).collect::<Vec<_>>().join(" ");
+        let words = (0..300)
+            .map(|i| format!("word{}", i))
+            .collect::<Vec<_>>()
+            .join(" ");
         let html = format!(
             "<html><body><article><p>{}</p></article></body></html>",
             words

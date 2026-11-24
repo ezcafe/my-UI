@@ -65,7 +65,11 @@ mod tests {
         "#;
 
         let res = schema.execute(query).await;
-        assert!(res.errors.is_empty(), "GraphQL execution returned errors: {:?}", res.errors);
+        assert!(
+            res.errors.is_empty(),
+            "GraphQL execution returned errors: {:?}",
+            res.errors
+        );
         let data = res.data.into_json().expect("Valid json data");
         let entries = data["entries"].as_array().expect("Array of entries");
         assert_eq!(entries.len(), 1);
@@ -167,7 +171,9 @@ mod tests {
         let res = schema.execute(query).await;
         assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
         let data = res.data.into_json().expect("Valid json data");
-        let summary = data["entries"][0]["summary"].as_str().expect("Summary string");
+        let summary = data["entries"][0]["summary"]
+            .as_str()
+            .expect("Summary string");
         assert_eq!(
             summary,
             "Quantum supremacy was achieved in 2019. Now fault-tolerant logic is emerging."
@@ -224,7 +230,10 @@ mod tests {
         "#;
 
         let res = schema.execute(query).await;
-        assert!(!res.errors.is_empty(), "Expected validation error on negative limit");
+        assert!(
+            !res.errors.is_empty(),
+            "Expected validation error on negative limit"
+        );
     }
 
     #[tokio::test]
@@ -314,7 +323,10 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/v1/entries"))
-            .and(wiremock::matchers::query_param("published_after", "1732000000"))
+            .and(wiremock::matchers::query_param(
+                "published_after",
+                "1732000000",
+            ))
             .and(wiremock::matchers::query_param("search", "Rust"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "total": 1,
@@ -428,7 +440,9 @@ mod tests {
         assert!(res.errors.is_empty(), "Errors: {:?}", res.errors);
         let data = res.data.into_json().expect("Valid json");
         assert_eq!(data["entriesResult"]["total"], 42);
-        let entries = data["entriesResult"]["entries"].as_array().expect("Array of entries");
+        let entries = data["entriesResult"]["entries"]
+            .as_array()
+            .expect("Array of entries");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["id"], "1001");
         assert_eq!(entries[0]["title"], "Exploring Spatial Audio");

@@ -1,13 +1,38 @@
 services:
+  db:
+    image: postgres:latest
+    container_name: my-ui-db-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: my_ui
+      POSTGRES_PASSWORD: my_ui_password
+      POSTGRES_DB: my_ui
+    ports:
+      - "5432:5432"
+    volumes:
+      - my_ui_postgres_local_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U my_ui -d my_ui"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   my-ui:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: my-ui-local
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      DATABASE_URL: "postgres://my_ui:my_ui_password@db:5432/my_ui"
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
-    volumes:
-      - ./data:/app/data
+
+volumes:
+  my_ui_postgres_local_data:
+    driver: local

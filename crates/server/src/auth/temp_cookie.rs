@@ -13,7 +13,10 @@ pub fn create_temp_cookie_value(data: &OidcTempData, secret: &str) -> Result<Str
     encrypt_json(data, secret)
 }
 
-pub fn extract_temp_cookie_value(encrypted_val: &str, secret: &str) -> Result<OidcTempData, CryptoError> {
+pub fn extract_temp_cookie_value(
+    encrypted_val: &str,
+    secret: &str,
+) -> Result<OidcTempData, CryptoError> {
     decrypt_json(encrypted_val, secret)
 }
 

@@ -106,7 +106,13 @@ mod tests {
         let cache = MinifluxCache::new(Duration::from_millis(50));
         let val = json!({"foo": "bar"});
 
-        cache.insert_with_ttl("test_key".to_string(), val.clone(), Duration::from_millis(50)).await;
+        cache
+            .insert_with_ttl(
+                "test_key".to_string(),
+                val.clone(),
+                Duration::from_millis(50),
+            )
+            .await;
 
         let cached = cache.get("test_key").await;
         assert_eq!(cached, Some(val));
@@ -140,7 +146,11 @@ mod tests {
         // Fill cache with 1000 items, first 10 have very short TTL
         for i in 0..10 {
             cache
-                .insert_with_ttl(format!("expired_{}", i), json!(i), Duration::from_millis(10))
+                .insert_with_ttl(
+                    format!("expired_{}", i),
+                    json!(i),
+                    Duration::from_millis(10),
+                )
                 .await;
         }
         for i in 10..1000 {
@@ -153,7 +163,11 @@ mod tests {
 
         // Inserting one more item should evict expired items rather than oldest alive items
         cache
-            .insert_with_ttl("new_item".to_string(), json!("new"), Duration::from_secs(60))
+            .insert_with_ttl(
+                "new_item".to_string(),
+                json!("new"),
+                Duration::from_secs(60),
+            )
             .await;
 
         // Expired items should be gone

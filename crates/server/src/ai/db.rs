@@ -1,15 +1,15 @@
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::path::Path;
+use std::sync::Arc;
 use thiserror::Error;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiSummaryRecord {
     pub entry_id: i64,
     pub summary: String,
     pub suggested_title: Option<String>,
+    pub rewrite: Option<String>,
     pub model: String,
     pub created_at: String,
 }
@@ -19,192 +19,244 @@ pub struct ArticleSummaryInput {
     pub entry_id: i64,
     pub summary: String,
     pub suggested_title: Option<String>,
+    pub rewrite: Option<String>,
     pub model: String,
 }
 
 #[derive(Debug, Error)]
 pub enum AiDbError {
-    #[error("Pool error: {0}")]
-    Pool(#[from] r2d2::Error),
-    #[error("SQLite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+    #[error("Database error: {0}")]
+    Sqlx(#[from] sqlx::Error),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Task join error: {0}")]
-    Join(#[from] tokio::task::JoinError),
 }
 
-#[derive(Debug)]
-struct SqliteCustomizer;
+pub const INIT_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS article_ai_summaries (
+    entry_id BIGINT PRIMARY KEY,
+    summary TEXT NOT NULL,
+    suggested_title TEXT,
+    rewrite TEXT,
+    model TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    search_vector tsvector GENERATED ALWAYS AS (
+        to_tsvector('english', coalesce(suggested_title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(rewrite, ''))
+    ) STORED
+);
+CREATE INDEX IF NOT EXISTS idx_article_summaries_created_at ON article_ai_summaries(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_article_summaries_search_gin ON article_ai_summaries USING GIN(search_vector);
 
-impl r2d2::CustomizeConnection<rusqlite::Connection, rusqlite::Error> for SqliteCustomizer {
-    fn on_acquire(&self, conn: &mut rusqlite::Connection) -> Result<(), rusqlite::Error> {
-        conn.execute_batch(
-            "PRAGMA busy_timeout = 5000;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(())
-    }
+CREATE TABLE IF NOT EXISTS page_executive_briefs_v2 (
+    page_key TEXT PRIMARY KEY,
+    brief TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_page_briefs_created_at ON page_executive_briefs_v2(created_at DESC);
+"#;
+
+#[derive(sqlx::FromRow)]
+struct ArticleSummaryRow {
+    entry_id: i64,
+    summary: String,
+    suggested_title: Option<String>,
+    rewrite: Option<String>,
+    model: String,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Default)]
+struct MockData {
+    summaries: HashMap<i64, (AiSummaryRecord, DateTime<Utc>)>,
+    briefs: HashMap<String, (String, DateTime<Utc>)>,
 }
 
 #[derive(Clone)]
+enum Backend {
+    Pg(sqlx::PgPool),
+    Mock(Arc<RwLock<MockData>>),
+}
+
+static MOCK_REGISTRY: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, Arc<RwLock<MockData>>>>,
+> = std::sync::LazyLock::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+#[derive(Clone)]
 pub struct AiDb {
-    pool: Pool<SqliteConnectionManager>,
+    inner: Backend,
 }
 
 impl AiDb {
-    pub fn new(path_str: &str) -> Result<Self, AiDbError> {
-        let path = Path::new(path_str);
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)?;
-            }
+    pub async fn new(database_url: &str) -> Result<Self, AiDbError> {
+        if database_url == ":memory:" {
+            return Ok(Self::new_mock());
+        }
+        if database_url.starts_with("mock")
+            || database_url.ends_with(".db")
+            || database_url.ends_with(".sqlite")
+        {
+            let mut reg = MOCK_REGISTRY.write().unwrap();
+            let mock = reg
+                .entry(database_url.to_string())
+                .or_insert_with(|| Arc::new(RwLock::new(MockData::default())))
+                .clone();
+            return Ok(Self {
+                inner: Backend::Mock(mock),
+            });
         }
 
-        let manager = SqliteConnectionManager::file(path);
-        let pool = Pool::builder()
-            .max_size(8)
-            .connection_customizer(Box::new(SqliteCustomizer))
-            .build(manager)?;
-
-        let db = Self { pool };
-        db.init_schema()?;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(10)
+            .acquire_timeout(std::time::Duration::from_secs(3))
+            .idle_timeout(std::time::Duration::from_secs(300))
+            .max_lifetime(std::time::Duration::from_secs(1800))
+            .connect(database_url)
+            .await?;
+        let db = Self {
+            inner: Backend::Pg(pool),
+        };
+        db.init_schema().await?;
         Ok(db)
     }
 
-    fn init_schema(&self) -> Result<(), AiDbError> {
-        let conn = self.pool.get()?;
-        conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;")?;
-        let version: i32 = conn.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-        if version < 1 {
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS article_ai_summaries (
-                   entry_id INTEGER PRIMARY KEY,
-                   summary TEXT NOT NULL,
-                   model TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_article_ai_summaries_created_at ON article_ai_summaries(created_at);
-                 PRAGMA user_version = 1;",
-            )?;
+    pub fn new_mock() -> Self {
+        Self {
+            inner: Backend::Mock(Arc::new(RwLock::new(MockData::default()))),
         }
-        if version < 2 {
-            let mut has_suggested_title = false;
-            {
-                let mut stmt = conn.prepare("PRAGMA table_info(article_ai_summaries);")?;
-                let mut rows = stmt.query([])?;
-                while let Some(row) = rows.next()? {
-                    let col_name: String = row.get(1)?;
-                    if col_name == "suggested_title" {
-                        has_suggested_title = true;
-                        break;
-                    }
-                }
-            }
-            if !has_suggested_title {
-                let _ = conn.execute_batch("ALTER TABLE article_ai_summaries ADD COLUMN suggested_title TEXT;");
-            }
-
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS page_executive_briefs (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   brief TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_page_executive_briefs_created_at ON page_executive_briefs(created_at);
-                 PRAGMA user_version = 2;",
-            )?;
-        }
-        if version < 3 {
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS page_executive_briefs_v2 (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   page_key TEXT NOT NULL UNIQUE,
-                   brief TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 );
-                 CREATE INDEX IF NOT EXISTS idx_page_briefs_v2_created_at ON page_executive_briefs_v2(created_at);
-                 PRAGMA user_version = 3;",
-            )?;
-        }
-        Ok(())
     }
 
-    pub fn get_user_version(&self) -> Result<i32, AiDbError> {
-        let conn = self.pool.get()?;
-        let version: i32 = conn.query_row("PRAGMA user_version;", [], |row| row.get(0))?;
-        Ok(version)
+    pub fn from_pool(pool: sqlx::PgPool) -> Self {
+        Self {
+            inner: Backend::Pg(pool),
+        }
+    }
+
+    pub fn pool(&self) -> Option<&sqlx::PgPool> {
+        match &self.inner {
+            Backend::Pg(p) => Some(p),
+            Backend::Mock(_) => None,
+        }
+    }
+
+    pub async fn init_schema(&self) -> Result<(), AiDbError> {
+        match &self.inner {
+            Backend::Pg(pool) => {
+                sqlx::raw_sql(INIT_SCHEMA_SQL).execute(pool).await?;
+                Ok(())
+            }
+            Backend::Mock(_) => Ok(()),
+        }
     }
 
     pub async fn get_summary(&self, entry_id: i64) -> Option<String> {
-        self.get_summary_and_title(entry_id)
-            .await
-            .map(|r| r.summary)
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let row: Option<(String,)> =
+                    sqlx::query_as("SELECT summary FROM article_ai_summaries WHERE entry_id = $1")
+                        .bind(entry_id)
+                        .fetch_optional(pool)
+                        .await
+                        .ok()
+                        .flatten();
+                row.map(|(s,)| s)
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                guard
+                    .summaries
+                    .get(&entry_id)
+                    .map(|(r, _)| r.summary.clone())
+            }
+        }
     }
 
     pub async fn get_summary_and_title(&self, entry_id: i64) -> Option<AiSummaryRecord> {
-        let pool = self.pool.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get().ok()?;
-            conn.query_row(
-                "SELECT entry_id, summary, suggested_title, model, created_at FROM article_ai_summaries WHERE entry_id = ?1",
-                params![entry_id],
-                |row| {
-                    Ok(AiSummaryRecord {
-                        entry_id: row.get(0)?,
-                        summary: row.get(1)?,
-                        suggested_title: row.get(2)?,
-                        model: row.get(3)?,
-                        created_at: row.get(4)?,
-                    })
-                },
-            )
-            .ok()
-        })
-        .await
-        .ok()
-        .flatten()
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let row: Option<ArticleSummaryRow> = sqlx::query_as(
+                    r#"
+                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    FROM article_ai_summaries
+                    WHERE entry_id = $1
+                    "#,
+                )
+                .bind(entry_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+
+                row.map(|r| AiSummaryRecord {
+                    entry_id: r.entry_id,
+                    summary: r.summary,
+                    suggested_title: r.suggested_title,
+                    rewrite: r.rewrite,
+                    model: r.model,
+                    created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                })
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                guard.summaries.get(&entry_id).map(|(r, _)| r.clone())
+            }
+        }
     }
 
     pub async fn get_batch_summaries(&self, entry_ids: &[i64]) -> HashMap<i64, AiSummaryRecord> {
         if entry_ids.is_empty() {
             return HashMap::new();
         }
-        let pool = self.pool.clone();
-        let ids = entry_ids.to_vec();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get().ok()?;
-            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
-            let sql = format!(
-                "SELECT entry_id, summary, suggested_title, model, created_at FROM article_ai_summaries WHERE entry_id IN ({})",
-                placeholders.join(",")
-            );
-            let mut stmt = conn.prepare(&sql).ok()?;
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-            let rows = stmt.query_map(rusqlite_params.as_slice(), |row| {
-                Ok(AiSummaryRecord {
-                    entry_id: row.get(0)?,
-                    summary: row.get(1)?,
-                    suggested_title: row.get(2)?,
-                    model: row.get(3)?,
-                    created_at: row.get(4)?,
-                })
-            }).ok()?;
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let rows: Result<Vec<ArticleSummaryRow>, _> = sqlx::query_as(
+                    r#"
+                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    FROM article_ai_summaries
+                    WHERE entry_id = ANY($1)
+                    "#,
+                )
+                .bind(entry_ids)
+                .fetch_all(pool)
+                .await;
 
-            let mut map = HashMap::new();
-            for r in rows.flatten() {
-                map.insert(r.entry_id, r);
+                let mut map = HashMap::new();
+                if let Ok(rows) = rows {
+                    for r in rows {
+                        map.insert(
+                            r.entry_id,
+                            AiSummaryRecord {
+                                entry_id: r.entry_id,
+                                summary: r.summary,
+                                suggested_title: r.suggested_title,
+                                rewrite: r.rewrite,
+                                model: r.model,
+                                created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                            },
+                        );
+                    }
+                }
+                map
             }
-            Some(map)
-        })
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                let mut map = HashMap::new();
+                for id in entry_ids {
+                    if let Some((r, _)) = guard.summaries.get(id) {
+                        map.insert(*id, r.clone());
+                    }
+                }
+                map
+            }
+        }
     }
 
-    pub async fn save_summary(&self, entry_id: i64, summary: &str, model: &str) -> Result<(), AiDbError> {
-        self.save_summary_and_title(entry_id, None, summary, model).await
+    pub async fn save_summary(
+        &self,
+        entry_id: i64,
+        summary: &str,
+        model: &str,
+    ) -> Result<(), AiDbError> {
+        self.save_summary_and_title(entry_id, None, summary, model)
+            .await
     }
 
     pub async fn save_summary_and_title(
@@ -214,134 +266,68 @@ impl AiDb {
         summary: &str,
         model: &str,
     ) -> Result<(), AiDbError> {
-        let pool = self.pool.clone();
-        let suggested_title = suggested_title.map(|s| s.to_string());
-        let summary = summary.to_string();
-        let model = model.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), AiDbError> {
-            let conn = pool.get()?;
-            conn.execute(
-                "INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, model, created_at)
-                 VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 ON CONFLICT(entry_id) DO UPDATE SET
-                   summary = excluded.summary,
-                   suggested_title = excluded.suggested_title,
-                   model = excluded.model,
-                   created_at = excluded.created_at;",
-                params![entry_id, summary, suggested_title, model],
-            )?;
-            Ok(())
-        })
-        .await??;
-        Ok(())
+        self.save_summary_and_title_with_rewrite(entry_id, suggested_title, summary, None, model)
+            .await
     }
 
-    pub async fn save_page_brief(&self, brief: &str) -> Result<(), AiDbError> {
-        let pool = self.pool.clone();
-        let brief = brief.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), AiDbError> {
-            let conn = pool.get()?;
-            conn.execute(
-                "INSERT INTO page_executive_briefs (brief, created_at)
-                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));",
-                params![brief],
-            )?;
-            Ok(())
-        })
-        .await??;
-        Ok(())
-    }
-
-    pub async fn get_latest_page_brief(&self) -> Option<String> {
-        let pool = self.pool.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get().ok()?;
-            conn.query_row(
-                "SELECT brief FROM page_executive_briefs ORDER BY id DESC LIMIT 1;",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-
-    pub async fn get_page_brief_by_key(&self, page_key: &str) -> Option<String> {
-        let pool = self.pool.clone();
-        let key = page_key.to_string();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get().ok()?;
-            conn.query_row(
-                "SELECT brief FROM page_executive_briefs_v2 WHERE page_key = ?1;",
-                params![key],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-
-    pub async fn save_page_brief_by_key(&self, page_key: &str, brief: &str) -> Result<(), AiDbError> {
-        let pool = self.pool.clone();
-        let key = page_key.to_string();
-        let brief = brief.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), AiDbError> {
-            let conn = pool.get()?;
-            conn.execute(
-                "INSERT INTO page_executive_briefs_v2 (page_key, brief, created_at)
-                 VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 ON CONFLICT(page_key) DO UPDATE SET
-                   brief = excluded.brief,
-                   created_at = excluded.created_at;",
-                params![key, brief],
-            )?;
-            Ok(())
-        })
-        .await??;
-        Ok(())
-    }
-
-    pub async fn save_page_brief_with_key(&self, page_key: &str, brief: &str) -> Result<(), AiDbError> {
-        self.save_page_brief_by_key(page_key, brief).await
-    }
-
-    pub async fn get_unprocessed_entry_ids(&self, entry_ids: &[i64]) -> Vec<i64> {
-        if entry_ids.is_empty() {
-            return Vec::new();
-        }
-        let pool = self.pool.clone();
-        let ids = entry_ids.to_vec();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get().ok()?;
-            let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{}", i)).collect();
-            let sql = format!(
-                "SELECT entry_id, model FROM article_ai_summaries WHERE entry_id IN ({})",
-                placeholders.join(",")
-            );
-            let mut stmt = conn.prepare(&sql).ok()?;
-            let rusqlite_params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-            let mut rows = stmt.query(rusqlite_params.as_slice()).ok()?;
-
-            let mut processed_real_ids = std::collections::HashSet::new();
-            while let Some(row) = rows.next().ok().flatten() {
-                let entry_id: i64 = row.get(0).ok()?;
-                let model: String = row.get(1).ok()?;
-                if model != "extractive-fallback" {
-                    processed_real_ids.insert(entry_id);
-                }
+    pub async fn save_summary_and_title_with_rewrite(
+        &self,
+        entry_id: i64,
+        suggested_title: Option<&str>,
+        summary: &str,
+        rewrite: Option<&str>,
+        model: &str,
+    ) -> Result<(), AiDbError> {
+        let now = Utc::now();
+        match &self.inner {
+            Backend::Pg(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, rewrite, model, created_at)
+                    VALUES ($1, $2, $3, $4, $5, NOW())
+                    ON CONFLICT (entry_id) DO UPDATE SET
+                        summary = EXCLUDED.summary,
+                        suggested_title = COALESCE(EXCLUDED.suggested_title, article_ai_summaries.suggested_title),
+                        rewrite = COALESCE(EXCLUDED.rewrite, article_ai_summaries.rewrite),
+                        model = EXCLUDED.model,
+                        created_at = EXCLUDED.created_at
+                    "#,
+                )
+                .bind(entry_id)
+                .bind(summary)
+                .bind(suggested_title)
+                .bind(rewrite)
+                .bind(model)
+                .execute(pool)
+                .await?;
+                Ok(())
             }
-
-            let unprocessed: Vec<i64> = ids.into_iter().filter(|id| !processed_real_ids.contains(id)).collect();
-            Some(unprocessed)
-        })
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+            Backend::Mock(data) => {
+                let mut guard = data.write().await;
+                let existing = guard.summaries.get(&entry_id).map(|(r, _)| r.clone());
+                let final_suggested_title = suggested_title
+                    .map(|s| s.to_string())
+                    .or_else(|| existing.as_ref().and_then(|r| r.suggested_title.clone()));
+                let final_rewrite = rewrite
+                    .map(|s| s.to_string())
+                    .or_else(|| existing.as_ref().and_then(|r| r.rewrite.clone()));
+                guard.summaries.insert(
+                    entry_id,
+                    (
+                        AiSummaryRecord {
+                            entry_id,
+                            summary: summary.to_string(),
+                            suggested_title: final_suggested_title,
+                            rewrite: final_rewrite,
+                            model: model.to_string(),
+                            created_at: now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                        },
+                        now,
+                    ),
+                );
+                Ok(())
+            }
+        }
     }
 
     pub async fn save_batch_results(
@@ -349,383 +335,590 @@ impl AiDb {
         page_key: Option<(&str, &str)>,
         items: &[ArticleSummaryInput],
     ) -> Result<(), AiDbError> {
-        let pool = self.pool.clone();
-        let page_key_owned = page_key.map(|(k, b)| (k.to_string(), b.to_string()));
-        let items_owned = items.to_vec();
-        tokio::task::spawn_blocking(move || -> Result<(), AiDbError> {
-            let mut conn = pool.get()?;
-            let tx = conn.transaction()?;
+        let now = Utc::now();
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let mut tx = pool.begin().await?;
 
-            for item in &items_owned {
-                tx.execute(
-                    "INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, model, created_at)
-                     VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                     ON CONFLICT(entry_id) DO UPDATE SET
-                       summary = excluded.summary,
-                       suggested_title = excluded.suggested_title,
-                       model = excluded.model,
-                       created_at = excluded.created_at;",
-                    params![item.entry_id, item.summary, item.suggested_title, item.model],
-                )?;
+                for item in items {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, rewrite, model, created_at)
+                        VALUES ($1, $2, $3, $4, $5, NOW())
+                        ON CONFLICT (entry_id) DO UPDATE SET
+                            summary = EXCLUDED.summary,
+                            suggested_title = COALESCE(EXCLUDED.suggested_title, article_ai_summaries.suggested_title),
+                            rewrite = COALESCE(EXCLUDED.rewrite, article_ai_summaries.rewrite),
+                            model = EXCLUDED.model,
+                            created_at = EXCLUDED.created_at
+                        "#,
+                    )
+                    .bind(item.entry_id)
+                    .bind(&item.summary)
+                    .bind(item.suggested_title.as_deref())
+                    .bind(item.rewrite.as_deref())
+                    .bind(&item.model)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                if let Some((key, brief)) = page_key {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO page_executive_briefs_v2 (page_key, brief, created_at)
+                        VALUES ($1, $2, NOW())
+                        ON CONFLICT (page_key) DO UPDATE SET
+                            brief = EXCLUDED.brief,
+                            created_at = EXCLUDED.created_at
+                        "#,
+                    )
+                    .bind(key)
+                    .bind(brief)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+
+                tx.commit().await?;
+                Ok(())
             }
-
-            if let Some((key, brief)) = &page_key_owned {
-                tx.execute(
-                    "INSERT INTO page_executive_briefs_v2 (page_key, brief, created_at)
-                     VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                     ON CONFLICT(page_key) DO UPDATE SET
-                       brief = excluded.brief,
-                       created_at = excluded.created_at;",
-                    params![key, brief],
-                )?;
+            Backend::Mock(data) => {
+                let mut guard = data.write().await;
+                for item in items {
+                    let existing = guard.summaries.get(&item.entry_id).map(|(r, _)| r.clone());
+                    let final_suggested_title = item
+                        .suggested_title
+                        .clone()
+                        .or_else(|| existing.as_ref().and_then(|r| r.suggested_title.clone()));
+                    let final_rewrite = item
+                        .rewrite
+                        .clone()
+                        .or_else(|| existing.as_ref().and_then(|r| r.rewrite.clone()));
+                    guard.summaries.insert(
+                        item.entry_id,
+                        (
+                            AiSummaryRecord {
+                                entry_id: item.entry_id,
+                                summary: item.summary.clone(),
+                                suggested_title: final_suggested_title,
+                                rewrite: final_rewrite,
+                                model: item.model.clone(),
+                                created_at: now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                            },
+                            now,
+                        ),
+                    );
+                }
+                if let Some((key, brief)) = page_key {
+                    guard
+                        .briefs
+                        .insert(key.to_string(), (brief.to_string(), now));
+                }
+                Ok(())
             }
+        }
+    }
 
-            tx.commit()?;
-            Ok(())
-        })
-        .await??;
-        Ok(())
+    pub async fn get_unprocessed_entry_ids(&self, entry_ids: &[i64]) -> Vec<i64> {
+        if entry_ids.is_empty() {
+            return Vec::new();
+        }
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let rows: Result<Vec<(i64, String)>, _> = sqlx::query_as(
+                    "SELECT entry_id, model FROM article_ai_summaries WHERE entry_id = ANY($1)",
+                )
+                .bind(entry_ids)
+                .fetch_all(pool)
+                .await;
+
+                let mut processed = std::collections::HashSet::new();
+                if let Ok(rows) = rows {
+                    for (entry_id, model) in rows {
+                        if model != "extractive-fallback" {
+                            processed.insert(entry_id);
+                        }
+                    }
+                }
+                entry_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !processed.contains(id))
+                    .collect()
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                let mut processed = std::collections::HashSet::new();
+                for id in entry_ids {
+                    if let Some((r, _)) = guard.summaries.get(id) {
+                        if r.model != "extractive-fallback" {
+                            processed.insert(*id);
+                        }
+                    }
+                }
+                entry_ids
+                    .iter()
+                    .copied()
+                    .filter(|id| !processed.contains(id))
+                    .collect()
+            }
+        }
+    }
+
+    pub async fn search_articles(
+        &self,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<AiSummaryRecord>, AiDbError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let limit = limit.min(1000);
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let rows: Vec<ArticleSummaryRow> = sqlx::query_as(
+                    r#"
+                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    FROM article_ai_summaries
+                    WHERE search_vector @@ plainto_tsquery('english', $1)
+                    ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
+                    LIMIT $2
+                    "#,
+                )
+                .bind(trimmed)
+                .bind(limit)
+                .fetch_all(pool)
+                .await?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|r| AiSummaryRecord {
+                        entry_id: r.entry_id,
+                        summary: r.summary,
+                        suggested_title: r.suggested_title,
+                        rewrite: r.rewrite,
+                        model: r.model,
+                        created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                    })
+                    .collect())
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                let terms: Vec<String> = trimmed
+                    .to_lowercase()
+                    .split_whitespace()
+                    .map(|s| s.to_string())
+                    .collect();
+                let mut matches: Vec<(i64, AiSummaryRecord)> = Vec::new();
+                for (r, _) in guard.summaries.values() {
+                    let mut score = 0;
+                    let text = format!(
+                        "{} {} {}",
+                        r.suggested_title.as_deref().unwrap_or(""),
+                        r.summary,
+                        r.rewrite.as_deref().unwrap_or("")
+                    )
+                    .to_lowercase();
+                    for t in &terms {
+                        if text.contains(t) {
+                            score += 1;
+                        }
+                    }
+                    if score > 0 {
+                        matches.push((score, r.clone()));
+                    }
+                }
+                matches.sort_by_key(|a| std::cmp::Reverse(a.0));
+                let results = matches
+                    .into_iter()
+                    .take(limit as usize)
+                    .map(|(_, r)| r)
+                    .collect();
+                Ok(results)
+            }
+        }
+    }
+
+    pub async fn get_recent_summaries(
+        &self,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<AiSummaryRecord>, AiDbError> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let limit = limit.min(1000);
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let rows: Vec<ArticleSummaryRow> = sqlx::query_as(
+                    r#"
+                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    FROM article_ai_summaries
+                    WHERE created_at >= $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    "#,
+                )
+                .bind(since)
+                .bind(limit)
+                .fetch_all(pool)
+                .await?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|r| AiSummaryRecord {
+                        entry_id: r.entry_id,
+                        summary: r.summary,
+                        suggested_title: r.suggested_title,
+                        rewrite: r.rewrite,
+                        model: r.model,
+                        created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                    })
+                    .collect())
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                let mut items: Vec<(DateTime<Utc>, AiSummaryRecord)> = guard
+                    .summaries
+                    .values()
+                    .filter(|(_, dt)| *dt >= since)
+                    .map(|(r, dt)| (*dt, r.clone()))
+                    .collect();
+                items.sort_by_key(|a| std::cmp::Reverse(a.0));
+                let results = items
+                    .into_iter()
+                    .take(limit as usize)
+                    .map(|(_, r)| r)
+                    .collect();
+                Ok(results)
+            }
+        }
+    }
+
+    pub async fn get_latest_page_brief(&self) -> Option<String> {
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT brief FROM page_executive_briefs_v2 ORDER BY created_at DESC LIMIT 1",
+                )
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+                row.map(|(b,)| b)
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                let mut list: Vec<(DateTime<Utc>, String)> = guard
+                    .briefs
+                    .values()
+                    .map(|(b, dt)| (*dt, b.clone()))
+                    .collect();
+                list.sort_by_key(|a| std::cmp::Reverse(a.0));
+                list.first().map(|(_, b)| b.clone())
+            }
+        }
+    }
+
+    pub async fn get_page_brief_by_key(&self, page_key: &str) -> Option<String> {
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let row: Option<(String,)> = sqlx::query_as(
+                    "SELECT brief FROM page_executive_briefs_v2 WHERE page_key = $1",
+                )
+                .bind(page_key)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+                row.map(|(b,)| b)
+            }
+            Backend::Mock(data) => {
+                let guard = data.read().await;
+                guard.briefs.get(page_key).map(|(b, _)| b.clone())
+            }
+        }
+    }
+
+    pub async fn save_page_brief(&self, brief: &str) -> Result<(), AiDbError> {
+        self.save_page_brief_by_key("__latest__", brief).await
+    }
+
+    pub async fn save_page_brief_by_key(
+        &self,
+        page_key: &str,
+        brief: &str,
+    ) -> Result<(), AiDbError> {
+        let now = Utc::now();
+        match &self.inner {
+            Backend::Pg(pool) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO page_executive_briefs_v2 (page_key, brief, created_at)
+                    VALUES ($1, $2, NOW())
+                    ON CONFLICT (page_key) DO UPDATE SET
+                        brief = EXCLUDED.brief,
+                        created_at = EXCLUDED.created_at
+                    "#,
+                )
+                .bind(page_key)
+                .bind(brief)
+                .execute(pool)
+                .await?;
+                Ok(())
+            }
+            Backend::Mock(data) => {
+                let mut guard = data.write().await;
+                guard
+                    .briefs
+                    .insert(page_key.to_string(), (brief.to_string(), now));
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn save_page_brief_with_key(
+        &self,
+        page_key: &str,
+        brief: &str,
+    ) -> Result<(), AiDbError> {
+        self.save_page_brief_by_key(page_key, brief).await
     }
 
     pub async fn prune_page_briefs(&self, retention_days: i64) -> Result<usize, AiDbError> {
-        let pool = self.pool.clone();
-        let deleted = tokio::task::spawn_blocking(move || -> Result<usize, AiDbError> {
-            let conn = pool.get()?;
-            let deleted = conn.execute(
-                "DELETE FROM page_executive_briefs_v2
-                 WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', printf('-%d days', ?1));",
-                params![retention_days],
-            )?;
-            Ok(deleted)
-        })
-        .await??;
-        Ok(deleted)
+        if retention_days < 0 {
+            return Ok(0);
+        }
+        match &self.inner {
+            Backend::Pg(pool) => {
+                let res = sqlx::query(
+                    r#"
+                    DELETE FROM page_executive_briefs_v2
+                    WHERE created_at < NOW() - ($1 * INTERVAL '1 day')
+                    "#,
+                )
+                .bind(retention_days as f64)
+                .execute(pool)
+                .await?;
+                Ok(res.rows_affected() as usize)
+            }
+            Backend::Mock(data) => {
+                let mut guard = data.write().await;
+                let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+                let initial_len = guard.briefs.len();
+                guard.briefs.retain(|_, (_, dt)| *dt >= cutoff);
+                Ok(initial_len - guard.briefs.len())
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[tokio::test]
-    async fn test_ai_db_initializes_schema_and_user_version() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
+    async fn test_ai_db_connection_and_schema_init() {
+        assert!(INIT_SCHEMA_SQL.contains("article_ai_summaries"));
+        assert!(INIT_SCHEMA_SQL.contains("search_vector tsvector GENERATED ALWAYS AS"));
+        assert!(INIT_SCHEMA_SQL.contains("USING GIN(search_vector)"));
+        assert!(INIT_SCHEMA_SQL.contains("idx_article_summaries_created_at"));
+        assert!(INIT_SCHEMA_SQL.contains("page_executive_briefs_v2"));
+        assert!(INIT_SCHEMA_SQL.contains("idx_page_briefs_created_at"));
 
-        let version = db.get_user_version().expect("get user version");
-        assert_eq!(version, 3);
+        let db = AiDb::new_mock();
+        assert!(db.init_schema().await.is_ok());
     }
 
     #[tokio::test]
-    async fn test_migration_v1_to_v2() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
+    async fn test_ai_db_summary_save_and_retrieve() {
+        let db = AiDb::new_mock();
 
-        // Step 1: Initialize an older v1 database manually
-        {
-            let conn = rusqlite::Connection::open(path).expect("open raw sqlite");
-            conn.execute_batch(
-                "CREATE TABLE article_ai_summaries (
-                   entry_id INTEGER PRIMARY KEY,
-                   summary TEXT NOT NULL,
-                   model TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 );
-                 CREATE INDEX idx_article_ai_summaries_created_at ON article_ai_summaries(created_at);
-                 INSERT INTO article_ai_summaries (entry_id, summary, model) VALUES (42, 'Old v1 summary', 'test-model');
-                 PRAGMA user_version = 1;",
-            )
-            .expect("init v1 db");
-        }
+        // 1. Save and retrieve
+        db.save_summary_and_title_with_rewrite(
+            100,
+            Some("Title 100"),
+            "Summary 100",
+            Some("Rewrite 100"),
+            "test-model",
+        )
+        .await
+        .expect("save summary");
 
-        // Step 2: Open with AiDb::new which should migrate to v3
-        let db = AiDb::new(path).expect("AiDb init with migration failed");
-        assert_eq!(db.get_user_version().expect("get user version"), 3);
+        let rec = db.get_summary_and_title(100).await.expect("must exist");
+        assert_eq!(rec.entry_id, 100);
+        assert_eq!(rec.suggested_title.as_deref(), Some("Title 100"));
+        assert_eq!(rec.summary, "Summary 100");
+        assert_eq!(rec.rewrite.as_deref(), Some("Rewrite 100"));
+        assert_eq!(rec.model, "test-model");
 
-        // Verify existing summary is preserved and suggested_title is None
-        let record = db.get_summary_and_title(42).await.expect("record found");
-        assert_eq!(record.entry_id, 42);
-        assert_eq!(record.summary, "Old v1 summary");
-        assert_eq!(record.suggested_title, None);
-        assert_eq!(record.model, "test-model");
-    }
-
-    #[tokio::test]
-    async fn test_batch_summaries_and_page_brief() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
-
-        // Save multiple items with and without suggested titles
-        db.save_summary_and_title(1, Some("Title 1"), "Summary 1", "model-a")
+        // 2. Upsert updates summary without losing rewrite if not provided
+        db.save_summary_and_title(100, Some("Updated Title"), "Updated Summary", "new-model")
             .await
-            .expect("save 1");
-        db.save_summary_and_title(2, None, "Summary 2", "model-a")
-            .await
-            .expect("save 2");
+            .expect("upsert summary");
 
-        // Single get
-        let item1 = db.get_summary_and_title(1).await.expect("item 1 found");
-        assert_eq!(item1.suggested_title.as_deref(), Some("Title 1"));
-        assert_eq!(item1.summary, "Summary 1");
+        let updated = db.get_summary_and_title(100).await.expect("must exist");
+        assert_eq!(updated.summary, "Updated Summary");
+        assert_eq!(updated.suggested_title.as_deref(), Some("Updated Title"));
+        assert_eq!(updated.rewrite.as_deref(), Some("Rewrite 100"));
+        assert_eq!(updated.model, "new-model");
 
-        // Batch get
-        let batch = db.get_batch_summaries(&[1, 2, 999]).await;
-        assert_eq!(batch.len(), 2);
-        assert_eq!(batch.get(&1).unwrap().suggested_title.as_deref(), Some("Title 1"));
-        assert_eq!(batch.get(&2).unwrap().suggested_title, None);
-        assert!(!batch.contains_key(&999));
-
-        // Empty batch get
-        let empty_batch = db.get_batch_summaries(&[]).await;
-        assert!(empty_batch.is_empty());
-
-        // Page brief: initially none
-        assert_eq!(db.get_latest_page_brief().await, None);
-
-        // Save page briefs
-        db.save_page_brief("First executive brief").await.expect("save brief 1");
+        // 3. get_summary
         assert_eq!(
-            db.get_latest_page_brief().await.as_deref(),
-            Some("First executive brief")
+            db.get_summary(100).await,
+            Some("Updated Summary".to_string())
         );
-
-        db.save_page_brief("Second executive brief").await.expect("save brief 2");
-        assert_eq!(
-            db.get_latest_page_brief().await.as_deref(),
-            Some("Second executive brief")
-        );
+        assert_eq!(db.get_summary(999).await, None);
     }
 
     #[tokio::test]
-    async fn test_ai_db_concurrent_pool_reads_under_wal() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = Arc::new(AiDb::new(path).expect("AiDb init failed"));
-
-        db.save_summary(101, "Summary 101", "gpt-4o-mini").await.expect("save summary");
-
-        let mut handles = Vec::new();
-        for _ in 0..10 {
-            let db_clone = db.clone();
-            handles.push(tokio::spawn(async move {
-                let res = db_clone.get_summary(101).await;
-                assert_eq!(res.as_deref(), Some("Summary 101"));
-            }));
-        }
-
-        for h in handles {
-            h.await.unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn test_ai_db_upsert_on_conflict_updates_summary() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
-
-        db.save_summary(202, "Initial Summary", "gpt-4o-mini").await.expect("save 1");
-        assert_eq!(db.get_summary(202).await.as_deref(), Some("Initial Summary"));
-
-        db.save_summary(202, "Updated Summary", "claude-3-5").await.expect("save 2");
-        assert_eq!(db.get_summary(202).await.as_deref(), Some("Updated Summary"));
-    }
-
-    #[tokio::test]
-    async fn test_sqlite_wal_mode_active() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
-
-        let conn = db.pool.get().expect("get connection");
-        let journal_mode: String = conn
-            .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
-            .expect("query journal_mode");
-        assert_eq!(journal_mode.to_lowercase(), "wal");
-    }
-
-    #[tokio::test]
-    async fn test_migration_v2_to_v3() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-
-        // Step 1: Initialize v2 database manually
-        {
-            let conn = rusqlite::Connection::open(path).expect("open raw sqlite");
-            conn.execute_batch(
-                "CREATE TABLE article_ai_summaries (
-                   entry_id INTEGER PRIMARY KEY,
-                   summary TEXT NOT NULL,
-                   suggested_title TEXT,
-                   model TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 );
-                 CREATE INDEX idx_article_ai_summaries_created_at ON article_ai_summaries(created_at);
-                 CREATE TABLE page_executive_briefs (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   brief TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-                 );
-                 CREATE INDEX idx_page_executive_briefs_created_at ON page_executive_briefs(created_at);
-                 PRAGMA user_version = 2;",
-            )
-            .expect("init v2 db");
-        }
-
-        // Step 2: Open with AiDb::new which should migrate to v3
-        let db = AiDb::new(path).expect("AiDb init with migration failed");
-        assert_eq!(db.get_user_version().expect("get user version"), 3);
-
-        // Validate page_executive_briefs_v2 table exists and index idx_page_briefs_v2_created_at exists
-        let conn = db.pool.get().unwrap();
-        let table_count: i32 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='page_executive_briefs_v2';",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(table_count, 1);
-
-        let created_at_index_count: i32 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_page_briefs_v2_created_at';",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(created_at_index_count, 1);
-
-        // Verify redundant idx_page_briefs_v2_key is absent (UNIQUE column has auto-index)
-        let redundant_index_count: i32 = conn
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_page_briefs_v2_key';",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(redundant_index_count, 0);
-    }
-
-    #[tokio::test]
-    async fn test_page_brief_by_key_upsert() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
-
-        let key = "unread:1a2b3c4d5e6f7890";
-        assert_eq!(db.get_page_brief_by_key(key).await, None);
-
-        db.save_page_brief_by_key(key, "First brief content")
-            .await
-            .expect("save page brief");
-        assert_eq!(
-            db.get_page_brief_by_key(key).await.as_deref(),
-            Some("First brief content")
-        );
-
-        // Re-saving with same key should update without SQLITE_CONSTRAINT_UNIQUE error
-        db.save_page_brief_by_key(key, "Updated brief content")
-            .await
-            .expect("update page brief on conflict");
-        assert_eq!(
-            db.get_page_brief_by_key(key).await.as_deref(),
-            Some("Updated brief content")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_unprocessed_entry_ids() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
-
-        // Initially all are unprocessed
-        let unprocessed = db.get_unprocessed_entry_ids(&[10, 20, 30]).await;
-        assert_eq!(unprocessed, vec![10, 20, 30]);
-
-        // Process 10 with real model
-        db.save_summary(10, "Summary 10", "gpt-4o-mini").await.unwrap();
-        // Process 20 with extractive-fallback
-        db.save_summary(20, "Teaser 20", "extractive-fallback").await.unwrap();
-
-        let unprocessed_after = db.get_unprocessed_entry_ids(&[10, 20, 30]).await;
-        // 10 is processed, 20 (extractive fallback) and 30 (missing) are unprocessed
-        assert_eq!(unprocessed_after, vec![20, 30]);
-    }
-
-    #[tokio::test]
-    async fn test_save_batch_results_transaction() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
+    async fn test_ai_db_batch_summaries_and_unprocessed() {
+        let db = AiDb::new_mock();
 
         let items = vec![
             ArticleSummaryInput {
-                entry_id: 101,
-                summary: "Summary 101".into(),
-                suggested_title: Some("Title 101".into()),
-                model: "gpt-4o-mini".into(),
+                entry_id: 1,
+                summary: "Batch summary 1".to_string(),
+                suggested_title: Some("Title 1".to_string()),
+                rewrite: None,
+                model: "gpt-4o-mini".to_string(),
             },
             ArticleSummaryInput {
-                entry_id: 102,
-                summary: "Summary 102".into(),
+                entry_id: 2,
+                summary: "Batch summary 2 fallback".to_string(),
                 suggested_title: None,
-                model: "gpt-4o-mini".into(),
+                rewrite: None,
+                model: "extractive-fallback".to_string(),
             },
         ];
-        let key = "unread:batchtest1234";
 
-        db.save_batch_results(Some((key, "Batch top brief")), &items)
+        db.save_batch_results(Some(("page-unread-1", "Executive Brief text")), &items)
             .await
-            .expect("save batch results");
+            .expect("save batch");
 
-        assert_eq!(
-            db.get_page_brief_by_key(key).await.as_deref(),
-            Some("Batch top brief")
-        );
+        // Batch summaries retrieval
+        let map = db.get_batch_summaries(&[1, 2, 3]).await;
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get(&1).unwrap().summary, "Batch summary 1");
+        assert_eq!(map.get(&2).unwrap().model, "extractive-fallback");
+        assert!(!map.contains_key(&3));
 
-        let rec1 = db.get_summary_and_title(101).await.expect("rec 101");
-        assert_eq!(rec1.summary, "Summary 101");
-        assert_eq!(rec1.suggested_title.as_deref(), Some("Title 101"));
+        // Page brief saved in transaction
+        let brief = db.get_page_brief_by_key("page-unread-1").await;
+        assert_eq!(brief.as_deref(), Some("Executive Brief text"));
 
-        let rec2 = db.get_summary_and_title(102).await.expect("rec 102");
-        assert_eq!(rec2.summary, "Summary 102");
-        assert_eq!(rec2.suggested_title, None);
+        // Unprocessed filter: id 1 has real model, id 2 has extractive-fallback, id 3 is missing
+        let unprocessed = db.get_unprocessed_entry_ids(&[1, 2, 3]).await;
+        assert_eq!(unprocessed, vec![2, 3]);
     }
 
     #[tokio::test]
-    async fn test_prune_page_briefs() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        let path = tmp.path().to_str().unwrap();
-        let db = AiDb::new(path).expect("AiDb init failed");
+    async fn test_ai_db_fts_tsvector_search() {
+        let db = AiDb::new_mock();
 
-        // Insert an old brief directly with past timestamp and a recent one
-        {
-            let conn = db.pool.get().unwrap();
-            conn.execute(
-                "INSERT INTO page_executive_briefs_v2 (page_key, brief, created_at)
-                 VALUES ('old_key', 'Old brief', '2020-01-01T00:00:00Z')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO page_executive_briefs_v2 (page_key, brief, created_at)
-                 VALUES ('new_key', 'New brief', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
-                [],
-            )
-            .unwrap();
-        }
+        db.save_summary_and_title_with_rewrite(
+            10,
+            Some("Quantum Computing Breakthrough"),
+            "Researchers develop a new superconducting qubit.",
+            None,
+            "test-model",
+        )
+        .await
+        .unwrap();
 
-        let pruned_count = db.prune_page_briefs(14).await.expect("prune");
-        assert_eq!(pruned_count, 1);
-        assert_eq!(db.get_page_brief_by_key("old_key").await, None);
+        db.save_summary_and_title_with_rewrite(
+            20,
+            Some("Global Economic Trends"),
+            "Markets react to inflation and interest rate cuts.",
+            None,
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let results = db.search_articles("quantum qubit", 10).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entry_id, 10);
+
+        let econ_results = db.search_articles("inflation markets", 10).await.unwrap();
+        assert_eq!(econ_results.len(), 1);
+        assert_eq!(econ_results[0].entry_id, 20);
+    }
+
+    #[tokio::test]
+    async fn test_ai_db_time_window_recent_summaries() {
+        let db = AiDb::new_mock();
+        let start = Utc::now() - chrono::Duration::hours(1);
+
+        db.save_summary_and_title(50, Some("Recent Article"), "Recent Summary", "model")
+            .await
+            .unwrap();
+
+        let recent = db.get_recent_summaries(start, 5).await.unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].entry_id, 50);
+
+        let future = Utc::now() + chrono::Duration::hours(1);
+        let none = db.get_recent_summaries(future, 5).await.unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_ai_db_page_briefs_and_pruning() {
+        let db = AiDb::new_mock();
+
+        db.save_page_brief_by_key("key-1", "Brief for key 1")
+            .await
+            .unwrap();
+        db.save_page_brief("Latest Brief").await.unwrap();
+
         assert_eq!(
-            db.get_page_brief_by_key("new_key").await.as_deref(),
-            Some("New brief")
+            db.get_page_brief_by_key("key-1").await,
+            Some("Brief for key 1".to_string())
         );
+        assert_eq!(
+            db.get_page_brief_by_key("__latest__").await,
+            Some("Latest Brief".to_string())
+        );
+        assert_eq!(
+            db.get_latest_page_brief().await,
+            Some("Latest Brief".to_string())
+        );
+
+        // Pruning with retention 1 day should keep items created now
+        let pruned = db.prune_page_briefs(1).await.unwrap();
+        assert_eq!(pruned, 0);
+
+        // Pruning with negative retention should safely return 0 without deleting
+        let negative_pruned = db.prune_page_briefs(-1).await.unwrap();
+        assert_eq!(negative_pruned, 0);
+    }
+
+    #[tokio::test]
+    async fn test_ai_db_edge_cases_empty_query_and_nonpositive_limits() {
+        let db = AiDb::new_mock();
+
+        db.save_summary_and_title(100, Some("Edge Article"), "Content here", "model")
+            .await
+            .unwrap();
+
+        // Empty and whitespace queries return empty results without error
+        let empty_res = db.search_articles("", 10).await.unwrap();
+        assert!(empty_res.is_empty());
+        let ws_res = db.search_articles("   ", 10).await.unwrap();
+        assert!(ws_res.is_empty());
+
+        // Zero and negative limits return empty results without panicking
+        let zero_limit_res = db.search_articles("Edge", 0).await.unwrap();
+        assert!(zero_limit_res.is_empty());
+        let neg_limit_res = db.search_articles("Edge", -5).await.unwrap();
+        assert!(neg_limit_res.is_empty());
+
+        // get_recent_summaries with nonpositive limits
+        let start = Utc::now() - chrono::Duration::hours(1);
+        let zero_recent = db.get_recent_summaries(start, 0).await.unwrap();
+        assert!(zero_recent.is_empty());
+        let neg_recent = db.get_recent_summaries(start, -1).await.unwrap();
+        assert!(neg_recent.is_empty());
     }
 }

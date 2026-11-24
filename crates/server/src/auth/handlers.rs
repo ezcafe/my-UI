@@ -21,12 +21,15 @@ pub struct AuthCallbackQuery {
     pub error: Option<String>,
 }
 
-pub async fn login_handler(State(config): State<Arc<Config>>) -> Result<Response, (StatusCode, String)> {
+pub async fn login_handler(
+    State(config): State<Arc<Config>>,
+) -> Result<Response, (StatusCode, String)> {
     if !config.auth_enabled {
         return Ok(Redirect::to("/").into_response());
     }
 
-    let req = generate_auth_request(&config).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let req = generate_auth_request(&config)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let temp_data = OidcTempData {
         pkce_verifier: req.pkce_verifier,
@@ -58,14 +61,25 @@ pub async fn callback_handler(
         return Err((StatusCode::BAD_REQUEST, format!("OIDC error: {}", err)));
     }
 
-    let code = query.code.ok_or((StatusCode::BAD_REQUEST, "Missing code".to_string()))?;
-    let state = query.state.ok_or((StatusCode::BAD_REQUEST, "Missing state".to_string()))?;
+    let code = query
+        .code
+        .ok_or((StatusCode::BAD_REQUEST, "Missing code".to_string()))?;
+    let state = query
+        .state
+        .ok_or((StatusCode::BAD_REQUEST, "Missing state".to_string()))?;
 
-    let temp_cookie_val = extract_cookie(&headers, OIDC_TEMP_COOKIE_NAME)
-        .ok_or((StatusCode::UNAUTHORIZED, "Missing temp OIDC cookie".to_string()))?;
+    let temp_cookie_val = extract_cookie(&headers, OIDC_TEMP_COOKIE_NAME).ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Missing temp OIDC cookie".to_string(),
+    ))?;
 
-    let temp_data = extract_temp_cookie_value(temp_cookie_val, &config.session_secret)
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid temp OIDC cookie".to_string()))?;
+    let temp_data =
+        extract_temp_cookie_value(temp_cookie_val, &config.session_secret).map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                "Invalid temp OIDC cookie".to_string(),
+            )
+        })?;
 
     if temp_data.csrf_state != state {
         return Err((StatusCode::BAD_REQUEST, "CSRF state mismatch".to_string()));
@@ -74,7 +88,12 @@ pub async fn callback_handler(
     // Exchange token: in integration / production, dispatches token request with pkce_verifier
     let session = exchange_token(&config, &code, &temp_data.pkce_verifier)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Token exchange failed: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Token exchange failed: {}", e),
+            )
+        })?;
 
     let encrypted_session = create_session_cookie_value(&session, &config.session_secret)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

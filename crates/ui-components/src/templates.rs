@@ -109,6 +109,8 @@ pub struct EntryDetailTemplate {
     pub summary: String,
     pub sanitized_content: String,
     pub auth_enabled: bool,
+    pub rewrite: String,
+    pub is_rewrite: bool,
 }
 
 #[derive(Template)]
@@ -151,7 +153,9 @@ mod tests {
 
         let list_tmpl = EntryListTemplate {
             entries: vec![entry],
-            top_executive_brief: Some("Today's key themes: AI optimization and Rust speed.".to_string()),
+            top_executive_brief: Some(
+                "Today's key themes: AI optimization and Rust speed.".to_string(),
+            ),
             unread_count: Some(1),
             current_page: 1,
             total_pages: 1,
@@ -224,7 +228,8 @@ mod tests {
         assert!(list_html.contains(r#"title="Original Long Headline Goes Here""#));
 
         let brief_tmpl = BriefCardTemplate {
-            summary: "Nvidia unveiled Blackwell Ultra, boosting memory bandwidth by 40%.".to_string(),
+            summary: "Nvidia unveiled Blackwell Ultra, boosting memory bandwidth by 40%."
+                .to_string(),
         };
         let brief_html = brief_tmpl.render().expect("render brief card");
         assert!(brief_html.contains("Executive Brief"));
@@ -253,7 +258,9 @@ mod tests {
             entry: entry_unread,
             unread_count: Some(5),
         };
-        let html_unread = template_unread.render().expect("Failed to render EntryItemTemplate");
+        let html_unread = template_unread
+            .render()
+            .expect("Failed to render EntryItemTemplate");
 
         // Title and styling
         assert!(html_unread.contains("Spatial Computing in Rust"));
@@ -261,9 +268,18 @@ mod tests {
         assert!(html_unread.contains("text-sm font-medium"));
 
         // Omission of summary, reading time, and feed title
-        assert!(!html_unread.contains("Rust Optics"), "Feed title must be omitted");
-        assert!(!html_unread.contains("Extractive brief of the post"), "Summary must be omitted");
-        assert!(!html_unread.contains("min read"), "Reading time must be omitted");
+        assert!(
+            !html_unread.contains("Rust Optics"),
+            "Feed title must be omitted"
+        );
+        assert!(
+            !html_unread.contains("Extractive brief of the post"),
+            "Summary must be omitted"
+        );
+        assert!(
+            !html_unread.contains("min read"),
+            "Reading time must be omitted"
+        );
 
         // External link button attributes
         assert!(html_unread.contains("href=\"https://example.com/spatial\""));
@@ -277,10 +293,22 @@ mod tests {
         assert!(html_unread.contains("title=\"Unread\"") || html_unread.contains("bg-brand"));
 
         // Omission of dotted leader and date time per user preference
-        assert!(!html_unread.contains("leader"), "Must omit dotted leader in entry item");
-        assert!(!html_unread.contains("2 hours ago"), "Must omit published_at timestamp in entry item");
-        assert!(html_unread.contains("bg-brand") || html_unread.contains("var(--brand)"), "Must include brand red indicator");
-        assert!(html_unread.contains("last:border-b-0"), "Entry item must include last:border-b-0");
+        assert!(
+            !html_unread.contains("leader"),
+            "Must omit dotted leader in entry item"
+        );
+        assert!(
+            !html_unread.contains("2 hours ago"),
+            "Must omit published_at timestamp in entry item"
+        );
+        assert!(
+            html_unread.contains("bg-brand") || html_unread.contains("var(--brand)"),
+            "Must include brand red indicator"
+        );
+        assert!(
+            html_unread.contains("last:border-b-0"),
+            "Entry item must include last:border-b-0"
+        );
 
         // When is_read = true, unread indicator dot is omitted
         let entry_read = EntryViewModel {
@@ -302,7 +330,9 @@ mod tests {
             entry: entry_read,
             unread_count: None,
         };
-        let html_read = template_read.render().expect("Failed to render read EntryItemTemplate");
+        let html_read = template_read
+            .render()
+            .expect("Failed to render read EntryItemTemplate");
         assert!(!html_read.contains("title=\"Unread\""));
 
         // OOB unread counter
@@ -325,8 +355,8 @@ mod tests {
                 author: None,
                 is_read: false,
                 category_title: None,
-            image_url: None,
-            is_bookmarked: false,
+                image_url: None,
+                is_bookmarked: false,
             },
             EntryViewModel {
                 id: 2,
@@ -340,8 +370,8 @@ mod tests {
                 author: None,
                 is_read: true,
                 category_title: None,
-            image_url: None,
-            is_bookmarked: true,
+                image_url: None,
+                is_bookmarked: true,
             },
         ];
 
@@ -363,17 +393,28 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = template.render().expect("Failed to render EntryListTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryListTemplate");
 
         let list_view_html = html.split(r#"id="entries-magazine-view""#).next().unwrap();
         assert!(list_view_html.contains("First Title"));
         assert!(list_view_html.contains("Second Title"));
-        assert!(!list_view_html.contains("Summary A"), "List view rows must be title-only without summary");
-        assert!(!list_view_html.contains("Summary B"), "List view rows must be title-only without summary");
+        assert!(
+            !list_view_html.contains("Summary A"),
+            "List view rows must be title-only without summary"
+        );
+        assert!(
+            !list_view_html.contains("Summary B"),
+            "List view rows must be title-only without summary"
+        );
         assert!(html.contains("data-lucide=\"external-link\""));
         assert!(html.contains("href=\"https://example.com/1\""));
         assert!(html.contains("href=\"https://example.com/2\""));
-        assert!(html.contains("last:border-b-0"), "Entry list item must include last:border-b-0");
+        assert!(
+            html.contains("last:border-b-0"),
+            "Entry list item must include last:border-b-0"
+        );
     }
 
     #[test]
@@ -418,7 +459,9 @@ mod tests {
             ai_enabled: true,
             auth_enabled: true,
         };
-        let html_enabled = index_enabled.render().expect("Failed to render IndexTemplate enabled");
+        let html_enabled = index_enabled
+            .render()
+            .expect("Failed to render IndexTemplate enabled");
         assert!(
             !html_enabled.contains("id=\"filter-ai\""),
             "filter-ai button must be completely removed from index.html"
@@ -438,8 +481,13 @@ mod tests {
             ai_enabled: false,
             auth_enabled: true,
         };
-        let html_enabled = index_auth_enabled.render().expect("Failed to render with auth enabled");
-        assert!(html_enabled.contains("/auth/logout"), "Logout button must render when auth_enabled is true");
+        let html_enabled = index_auth_enabled
+            .render()
+            .expect("Failed to render with auth enabled");
+        assert!(
+            html_enabled.contains("/auth/logout"),
+            "Logout button must render when auth_enabled is true"
+        );
 
         let index_auth_disabled = IndexTemplate {
             unread_count: 5,
@@ -448,8 +496,13 @@ mod tests {
             ai_enabled: false,
             auth_enabled: false,
         };
-        let html_disabled = index_auth_disabled.render().expect("Failed to render with auth disabled");
-        assert!(!html_disabled.contains("/auth/logout"), "Logout button must be hidden when auth_enabled is false");
+        let html_disabled = index_auth_disabled
+            .render()
+            .expect("Failed to render with auth disabled");
+        assert!(
+            !html_disabled.contains("/auth/logout"),
+            "Logout button must be hidden when auth_enabled is false"
+        );
     }
 
     #[test]
@@ -461,9 +514,17 @@ mod tests {
             ai_enabled: false,
             auth_enabled: false,
         };
-        let html = index_auth_disabled.render().expect("Failed to render with auth disabled");
-        assert!(html.contains("my_news_guest_db"), "Must initialize guest IndexedDB");
-        assert!(html.contains("read_entries"), "Must reference read_entries store");
+        let html = index_auth_disabled
+            .render()
+            .expect("Failed to render with auth disabled");
+        assert!(
+            html.contains("my_news_guest_db"),
+            "Must initialize guest IndexedDB"
+        );
+        assert!(
+            html.contains("read_entries"),
+            "Must reference read_entries store"
+        );
         assert!(html.contains("readSet"), "Must maintain in-memory readSet");
     }
 
@@ -491,7 +552,9 @@ mod tests {
         let template = AiGroupedListTemplate {
             groups: vec![group],
         };
-        let html = template.render().expect("Failed to render AiGroupedListTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render AiGroupedListTemplate");
 
         assert!(html.contains("AI Daily"));
         assert!(html.contains("Autonomous Agent Flow"));
@@ -523,12 +586,19 @@ mod tests {
             summary: "Extractive summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: true,
+            rewrite: String::new(),
+            is_rewrite: false,
         };
 
-        let html = template.render().expect("Failed to render EntryDetailTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate");
 
         // Author must be omitted
-        assert!(!html.contains("By Visionary Designer"), "Author must be omitted from detail view");
+        assert!(
+            !html.contains("By Visionary Designer"),
+            "Author must be omitted from detail view"
+        );
         assert!(!html.contains("By "), "Author prefix must not be rendered");
 
         // Feed title and publication date must still be present
@@ -559,9 +629,13 @@ mod tests {
             summary: "XR summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: true,
+            rewrite: String::new(),
+            is_rewrite: false,
         };
 
-        let html = template.render().expect("Failed to render EntryDetailTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate");
 
         // Mark as unread button present
         assert!(
@@ -578,7 +652,9 @@ mod tests {
         );
 
         // Precedes bookmark button
-        let pos_mark_unread = html.find("hx-post=\"/hx/entries/102/read?status=unread\"").unwrap();
+        let pos_mark_unread = html
+            .find("hx-post=\"/hx/entries/102/read?status=unread\"")
+            .unwrap();
         let pos_bookmark = html.find("hx-post=\"/hx/entries/102/bookmark\"").unwrap();
         assert!(
             pos_mark_unread < pos_bookmark,
@@ -609,9 +685,13 @@ mod tests {
             summary: "XR summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: false,
+            rewrite: String::new(),
+            is_rewrite: false,
         };
 
-        let html = template.render().expect("Failed to render EntryDetailTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate");
 
         assert!(
             !html.contains("hx-post=\"/hx/entries/102/read"),
@@ -654,9 +734,13 @@ mod tests {
             summary: "XR summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: true,
+            rewrite: String::new(),
+            is_rewrite: false,
         };
 
-        let html = template.render().expect("Failed to render EntryDetailTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate");
 
         assert!(
             html.contains("hx-post=\"/hx/entries/102/read?status=unread\""),
@@ -687,7 +771,10 @@ mod tests {
         assert!(html.contains("id=\"toast-container\""));
         assert!(html.contains("hx-swap-oob=\"beforeend\""));
         assert!(html.contains("Upstream service timeout"));
-        assert!(html.contains("shadow-float"), "Must use Annuaire .shadow-float elevation");
+        assert!(
+            html.contains("shadow-float"),
+            "Must use Annuaire .shadow-float elevation"
+        );
         assert!(
             html.contains("rounded-full") && html.contains("bg-foreground text-background"),
             "Must use Annuaire ink pill floating toast style"
@@ -724,10 +811,7 @@ mod tests {
             html.contains("id=\"filter-today-count\""),
             "Must contain filter-today-count"
         );
-        assert!(
-            html.contains("(5)"),
-            "Must contain today count badge (5)"
-        );
+        assert!(html.contains("(5)"), "Must contain today count badge (5)");
     }
 
     #[test]
@@ -765,7 +849,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = template.render().expect("Failed to render EntryListTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(
             html.contains("aria-label=\"Pagination\""),
             "Must contain pagination nav bar"
@@ -774,13 +860,11 @@ mod tests {
             html.contains("Page 1 of 3"),
             "Must display current and total pages"
         );
+        assert!(html.contains("Previous"), "Must have Previous label");
         assert!(
-            html.contains("Previous"),
-            "Must have Previous label"
-        );
-        assert!(
-            html.contains("hx-get=\"/hx/entries?status=unread&amp;search=&amp;offset=50&amp;limit=50\"")
-                || html.contains("hx-get=\"/hx/entries?status=unread&search=&offset=50&limit=50\""),
+            html.contains(
+                "hx-get=\"/hx/entries?status=unread&amp;search=&amp;offset=50&amp;limit=50\""
+            ) || html.contains("hx-get=\"/hx/entries?status=unread&search=&offset=50&limit=50\""),
             "Must have Next button with HTMX pagination query"
         );
         assert!(
@@ -809,7 +893,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = template.render().expect("Failed to render EntryListTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(
             !html.contains("aria-label=\"Pagination\""),
             "Must NOT contain pagination nav bar when total_pages <= 1"
@@ -865,7 +951,9 @@ mod tests {
             entry,
             unread_count: None,
         };
-        let html = template.render().expect("Failed to render EntryItemTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryItemTemplate");
         assert!(
             html.contains("onclick=\"openEntryDetail(42)\""),
             "Entry item must trigger openEntryDetail(id)"
@@ -911,7 +999,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = template.render().expect("Failed to render EntryListTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(
             html.contains("onclick=\"openEntryDetail(42)\""),
             "Entry list items must trigger openEntryDetail(id)"
@@ -944,8 +1034,12 @@ mod tests {
             summary: "Summary".to_string(),
             sanitized_content: "<p>Detail body</p>".to_string(),
             auth_enabled: true,
+            rewrite: String::new(),
+            is_rewrite: false,
         };
-        let html = template.render().expect("Failed to render EntryDetailTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryDetailTemplate");
         assert!(
             html.contains("onclick=\"closeDetailPanel()\""),
             "Detail back button must trigger closeDetailPanel()"
@@ -1022,11 +1116,27 @@ mod tests {
             auth_enabled: false,
         };
         let html = template.render().expect("render index template");
-        assert!(html.contains(".magazine-3col-grid"), "base.html must include .magazine-3col-grid in style block");
-        assert!(html.contains("magazine-container"), "base.html must include magazine-container");
-        assert!(html.contains("minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr)"), "base.html must define 3-column grid template");
-        assert!(html.contains(".magazine-p2-grid"), "base.html must include .magazine-p2-grid");
-        assert!(html.contains("repeat(3, minmax(0, 1fr))"), "base.html must define 3-column grid for priority 2: {}", html);
+        assert!(
+            html.contains(".magazine-3col-grid"),
+            "base.html must include .magazine-3col-grid in style block"
+        );
+        assert!(
+            html.contains("magazine-container"),
+            "base.html must include magazine-container"
+        );
+        assert!(
+            html.contains("minmax(220px, 1fr) minmax(380px, 2.5fr) minmax(220px, 1.1fr)"),
+            "base.html must define 3-column grid template"
+        );
+        assert!(
+            html.contains(".magazine-p2-grid"),
+            "base.html must include .magazine-p2-grid"
+        );
+        assert!(
+            html.contains("repeat(3, minmax(0, 1fr))"),
+            "base.html must define 3-column grid for priority 2: {}",
+            html
+        );
     }
 
     #[test]
@@ -1041,25 +1151,58 @@ mod tests {
         let html = template.render().expect("Failed to render IndexTemplate");
 
         // Google Fonts for Big Shoulders Display and Work Sans
-        assert!(html.contains("family=Big+Shoulders+Display"), "Must load Big Shoulders Display font");
-        assert!(html.contains("family=Work+Sans"), "Must load Work Sans font");
+        assert!(
+            html.contains("family=Big+Shoulders+Display"),
+            "Must load Big Shoulders Display font"
+        );
+        assert!(
+            html.contains("family=Work+Sans"),
+            "Must load Work Sans font"
+        );
 
         // Annuaire OKLCH color tokens in :root and dark theme
-        assert!(html.contains("--brand: oklch(0.569 0.213 29)"), "Must define --brand positional red token");
-        assert!(html.contains("--primary: oklch(0.21 0.008 274.5)"), "Must define light --primary token");
-        assert!(html.contains("[data-theme=\"dark\"]"), "Must include dark theme token overrides");
+        assert!(
+            html.contains("--brand: oklch(0.569 0.213 29)"),
+            "Must define --brand positional red token"
+        );
+        assert!(
+            html.contains("--primary: oklch(0.21 0.008 274.5)"),
+            "Must define light --primary token"
+        );
+        assert!(
+            html.contains("[data-theme=\"dark\"]"),
+            "Must include dark theme token overrides"
+        );
 
         // Essential utility classes
-        assert!(html.contains(".font-display"), "Must define .font-display utility");
-        assert!(html.contains(".font-sans"), "Must define .font-sans utility");
+        assert!(
+            html.contains(".font-display"),
+            "Must define .font-display utility"
+        );
+        assert!(
+            html.contains(".font-sans"),
+            "Must define .font-sans utility"
+        );
         assert!(html.contains(".tabular"), "Must define .tabular utility");
         assert!(html.contains(".leader"), "Must define .leader utility");
-        assert!(html.contains(".shadow-float"), "Must define .shadow-float utility");
+        assert!(
+            html.contains(".shadow-float"),
+            "Must define .shadow-float utility"
+        );
 
         // Theme switcher inline script & toggle function
-        assert!(html.contains("function toggleTheme()"), "Must define toggleTheme() function");
-        assert!(html.contains("data-theme"), "Must toggle data-theme attribute");
-        assert!(html.contains("localStorage"), "Must persist theme in localStorage");
+        assert!(
+            html.contains("function toggleTheme()"),
+            "Must define toggleTheme() function"
+        );
+        assert!(
+            html.contains("data-theme"),
+            "Must toggle data-theme attribute"
+        );
+        assert!(
+            html.contains("localStorage"),
+            "Must persist theme in localStorage"
+        );
     }
 
     #[test]
@@ -1107,7 +1250,9 @@ mod tests {
             ai_enabled: false,
             auth_enabled: true,
         };
-        let html_auth = template_auth.render().expect("Failed to render IndexTemplate with auth_enabled: true");
+        let html_auth = template_auth
+            .render()
+            .expect("Failed to render IndexTemplate with auth_enabled: true");
         assert!(
             html_auth.contains("hx-post=\"/hx/mark-page-read\""),
             "Authenticated mode must include hx-post on mark-page-read button"
@@ -1124,7 +1269,9 @@ mod tests {
             ai_enabled: false,
             auth_enabled: false,
         };
-        let html_guest = template_guest.render().expect("Failed to render IndexTemplate with auth_enabled: false");
+        let html_guest = template_guest
+            .render()
+            .expect("Failed to render IndexTemplate with auth_enabled: false");
         assert!(
             !html_guest.contains("hx-post=\"/hx/mark-page-read\""),
             "Guest mode must not include hx-post on mark-page-read button"
@@ -1209,7 +1356,9 @@ mod tests {
             ai_enabled: false,
             auth_enabled: false,
         };
-        let html_guest = template_guest.render().expect("Failed to render IndexTemplate with auth_enabled: false");
+        let html_guest = template_guest
+            .render()
+            .expect("Failed to render IndexTemplate with auth_enabled: false");
         assert!(
             !html_guest.contains("id=\"filter-starred\""),
             "Guest mode must not render filter-starred"
@@ -1234,7 +1383,9 @@ mod tests {
             ai_enabled: false,
             auth_enabled: true,
         };
-        let html_auth = template_auth.render().expect("Failed to render IndexTemplate with auth_enabled: true");
+        let html_auth = template_auth
+            .render()
+            .expect("Failed to render IndexTemplate with auth_enabled: true");
         assert!(
             html_auth.contains("id=\"filter-starred\""),
             "Authenticated mode must render filter-starred"
@@ -1268,7 +1419,9 @@ mod tests {
             entry: entry.clone(),
             unread_count: None,
         };
-        let item_html = item_template.render().expect("Failed to render EntryItemTemplate");
+        let item_html = item_template
+            .render()
+            .expect("Failed to render EntryItemTemplate");
         assert!(
             item_html.contains("onclick=\"event.stopPropagation(); markArticleRead(42)\""),
             "Entry item external link must call markArticleRead(42)"
@@ -1293,7 +1446,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let list_html = list_template.render().expect("Failed to render EntryListTemplate");
+        let list_html = list_template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(
             list_html.contains("onclick=\"event.stopPropagation(); markArticleRead(42)\""),
             "Entry list external link must call markArticleRead(42)"
@@ -1305,8 +1460,12 @@ mod tests {
             summary: "Summary".to_string(),
             sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: false,
+            rewrite: String::new(),
+            is_rewrite: false,
         };
-        let detail_html = detail_template.render().expect("Failed to render EntryDetailTemplate");
+        let detail_html = detail_template
+            .render()
+            .expect("Failed to render EntryDetailTemplate");
         assert!(
             detail_html.contains("markArticleRead(42)"),
             "Entry detail 'Original' link must call markArticleRead(42)"
@@ -1383,8 +1542,8 @@ mod tests {
                 author: None,
                 is_read: false,
                 category_title: None,
-            image_url: None,
-            is_bookmarked: false,
+                image_url: None,
+                is_bookmarked: false,
             },
             unread_count: Some(5),
         };
@@ -1430,7 +1589,9 @@ mod tests {
         };
         let html = template.render().expect("Failed to render IndexTemplate");
 
-        let pos_handle = html.find("function handleFilterClick").expect("handleFilterClick must exist");
+        let pos_handle = html
+            .find("function handleFilterClick")
+            .expect("handleFilterClick must exist");
         let handle_fn_slice = &html[pos_handle..pos_handle + 300];
         assert!(
             handle_fn_slice.contains("closeDetailPanel()"),
@@ -1458,7 +1619,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = template.render().expect("Failed to render EntryListTemplate");
+        let html = template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(!html.contains("aria-label=\"Pagination\""));
         assert!(!html.contains("Page 1 of 5"));
         assert!(html.contains("All caught up!"));
@@ -1689,7 +1852,8 @@ mod tests {
             "Must define mobile padding override for #detail-panel inside container query"
         );
         assert!(
-            cq_slice.contains("padding-left: 0.5rem;") && cq_slice.contains("padding-right: 0.5rem;"),
+            cq_slice.contains("padding-left: 0.5rem;")
+                && cq_slice.contains("padding-right: 0.5rem;"),
             "Must reduce left/right padding on mobile entries-list to maximize content area"
         );
     }
@@ -1716,7 +1880,9 @@ mod tests {
             entry: entry.clone(),
             unread_count: None,
         };
-        let item_html = item_template.render().expect("Failed to render EntryItemTemplate");
+        let item_html = item_template
+            .render()
+            .expect("Failed to render EntryItemTemplate");
 
         // The outer row and inner title wrapper both use compact gap-1.5 (6px)
         assert!(
@@ -1746,7 +1912,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let list_html = list_template.render().expect("Failed to render EntryListTemplate");
+        let list_html = list_template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(
             list_html.contains("gap-1.5"),
             "Entry list rows must use gap-1.5 to tighten spacing between red bar and title"
@@ -1819,7 +1987,10 @@ mod tests {
         assert!(html.contains("id=\"page-executive-brief\""));
         assert!(html.contains("animate-pulse"));
         assert!(html.contains("Generating Executive Brief..."));
-        assert!(html.contains("id=\"entry-title-1\""), "Must include entry-title span");
+        assert!(
+            html.contains("id=\"entry-title-1\""),
+            "Must include entry-title span"
+        );
     }
 
     #[test]
@@ -1843,7 +2014,10 @@ mod tests {
             category_id: None,
         };
         let html = template.render().expect("render");
-        assert!(!html.contains("id=\"page-executive-brief\""), "Empty entries list must not render skeleton");
+        assert!(
+            !html.contains("id=\"page-executive-brief\""),
+            "Empty entries list must not render skeleton"
+        );
         assert!(!html.contains("animate-pulse"));
         assert!(html.contains("All caught up!"));
     }
@@ -1873,8 +2047,10 @@ mod tests {
         };
         let item_html = item_tpl.render().expect("render entry item");
         assert!(
-            item_html.contains(r#"class="annuaire-row"#) && item_html.contains(r#"onclick="openEntryDetail(42)""#),
-            "Outer annuaire-row must have onclick handler: {}", item_html
+            item_html.contains(r#"class="annuaire-row"#)
+                && item_html.contains(r#"onclick="openEntryDetail(42)""#),
+            "Outer annuaire-row must have onclick handler: {}",
+            item_html
         );
         // Ensure inner title container does not also have onclick
         assert!(
@@ -1908,8 +2084,10 @@ mod tests {
         };
         let list_html = list_tpl.render().expect("render entry list");
         assert!(
-            list_html.contains(r#"<div class="annuaire-row"#) && list_html.contains(r#"onclick="openEntryDetail(42)""#),
-            "Outer annuaire-row in list must have onclick handler: {}", list_html
+            list_html.contains(r#"<div class="annuaire-row"#)
+                && list_html.contains(r#"onclick="openEntryDetail(42)""#),
+            "Outer annuaire-row in list must have onclick handler: {}",
+            list_html
         );
         assert!(
             !list_html.contains(r#"<div class="flex items-center gap-1.5 flex-1 min-w-0" onclick="openEntryDetail(42)">"#),
@@ -1952,9 +2130,18 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = list_tpl.render().expect("render entry list with pagination");
-        assert!(html.contains(r#"aria-label="Pagination""#), "Must contain pagination nav");
-        assert!(!html.contains("border-t border-border"), "Pagination nav must not have border-t border-border: {}", html);
+        let html = list_tpl
+            .render()
+            .expect("render entry list with pagination");
+        assert!(
+            html.contains(r#"aria-label="Pagination""#),
+            "Must contain pagination nav"
+        );
+        assert!(
+            !html.contains("border-t border-border"),
+            "Pagination nav must not have border-t border-border: {}",
+            html
+        );
     }
 
     #[test]
@@ -1992,13 +2179,39 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let html = list_tpl.render().expect("render entry list with static brief");
-        assert!(html.contains("Pre-existing Executive Brief Summary"), "Must contain static executive brief: {}", html);
-        assert!(html.contains("Executive Brief"), "Must contain Executive Brief header: {}", html);
-        assert!(html.contains("id=\"list-executive-brief\""), "Must contain list-executive-brief for list view: {}", html);
-        assert!(html.contains("id=\"page-executive-brief\""), "Must contain page-executive-brief for magazine view: {}", html);
-        assert!(!html.contains("hx-trigger=\"load\""), "Must not contain hx-trigger=load: {}", html);
-        assert!(!html.contains("Generating Executive Brief..."), "Must not contain loading skeleton: {}", html);
+        let html = list_tpl
+            .render()
+            .expect("render entry list with static brief");
+        assert!(
+            html.contains("Pre-existing Executive Brief Summary"),
+            "Must contain static executive brief: {}",
+            html
+        );
+        assert!(
+            html.contains("Executive Brief"),
+            "Must contain Executive Brief header: {}",
+            html
+        );
+        assert!(
+            html.contains("id=\"list-executive-brief\""),
+            "Must contain list-executive-brief for list view: {}",
+            html
+        );
+        assert!(
+            html.contains("id=\"page-executive-brief\""),
+            "Must contain page-executive-brief for magazine view: {}",
+            html
+        );
+        assert!(
+            !html.contains("hx-trigger=\"load\""),
+            "Must not contain hx-trigger=load: {}",
+            html
+        );
+        assert!(
+            !html.contains("Generating Executive Brief..."),
+            "Must not contain loading skeleton: {}",
+            html
+        );
     }
 
     #[test]
@@ -2012,11 +2225,26 @@ mod tests {
         };
         let html = template.render().expect("Failed to render IndexTemplate");
 
-        assert!(html.contains("readSinceLastBriefSet = new Set()"), "Must define readSinceLastBriefSet");
-        assert!(html.contains("htmx.process(entriesList)"), "Must call htmx.process in applyCachedList");
-        assert!(html.contains("request_brief"), "Must configure request_brief parameter");
-        assert!(html.contains("effectiveUnread = visibleUnreadRowCount"), "Must fallback effectiveUnread in syncDomReadStates");
-        assert!(html.contains("isBriefSwap = targetId === 'page-executive-brief'"), "Must handle brief swap in htmx:afterSwap");
+        assert!(
+            html.contains("readSinceLastBriefSet = new Set()"),
+            "Must define readSinceLastBriefSet"
+        );
+        assert!(
+            html.contains("htmx.process(entriesList)"),
+            "Must call htmx.process in applyCachedList"
+        );
+        assert!(
+            html.contains("request_brief"),
+            "Must configure request_brief parameter"
+        );
+        assert!(
+            html.contains("effectiveUnread = visibleUnreadRowCount"),
+            "Must fallback effectiveUnread in syncDomReadStates"
+        );
+        assert!(
+            html.contains("isBriefSwap = targetId === 'page-executive-brief'"),
+            "Must handle brief swap in htmx:afterSwap"
+        );
     }
 
     #[test]
@@ -2037,11 +2265,15 @@ mod tests {
             is_bookmarked: false,
         };
         assert_eq!(entry.category_title.as_deref(), Some("Technology"));
-        assert_eq!(entry.image_url.as_deref(), Some("https://example.com/photo.jpg"));
+        assert_eq!(
+            entry.image_url.as_deref(),
+            Some("https://example.com/photo.jpg")
+        );
 
         // Test serde default roundtrip when fields are missing
         let json_data = r#"{"id":42,"title":"T","feed_title":"F","published_at":"now","reading_time":1,"summary":"S","url":"U","is_read":false,"is_bookmarked":false}"#;
-        let deserialized: EntryViewModel = serde_json::from_str(json_data).expect("deserialize with default category and image");
+        let deserialized: EntryViewModel =
+            serde_json::from_str(json_data).expect("deserialize with default category and image");
         assert_eq!(deserialized.category_title, None);
         assert_eq!(deserialized.image_url, None);
     }
@@ -2076,7 +2308,11 @@ mod tests {
                 published_at: "1 hour ago".into(),
                 reading_time: 2,
                 summary: format!("Brief for standard article {}", i),
-                image_url: if i % 2 == 0 { Some(format!("https://example.com/photo{}.jpg", i)) } else { None },
+                image_url: if i % 2 == 0 {
+                    Some(format!("https://example.com/photo{}.jpg", i))
+                } else {
+                    None
+                },
                 url: format!("https://example.com/{}", 101 + i),
                 author: None,
                 is_read: i == 1, // entry 102 is read
@@ -2122,79 +2358,242 @@ mod tests {
         let html = list_tpl.render().expect("render entry list template");
 
         // Executive brief as 1 full-width row
-        assert!(html.contains("id=\"page-executive-brief\""), "Must contain executive brief row: {}", html);
-        assert!(html.contains("Executive brief for the page"), "Must render executive brief text: {}", html);
+        assert!(
+            html.contains("id=\"page-executive-brief\""),
+            "Must contain executive brief row: {}",
+            html
+        );
+        assert!(
+            html.contains("Executive brief for the page"),
+            "Must render executive brief text: {}",
+            html
+        );
 
         // Dual views containers
-        assert!(html.contains("id=\"entries-list-view\""), "Must contain list view container: {}", html);
-        assert!(html.contains("id=\"entries-magazine-view\""), "Must contain magazine view container: {}", html);
+        assert!(
+            html.contains("id=\"entries-list-view\""),
+            "Must contain list view container: {}",
+            html
+        );
+        assert!(
+            html.contains("id=\"entries-magazine-view\""),
+            "Must contain magazine view container: {}",
+            html
+        );
 
-        let mag_view = html.split("id=\"entries-magazine-view\"").nth(1).unwrap()
-            .split("aria-label=\"Pagination\"").next().unwrap();
+        let mag_view = html
+            .split("id=\"entries-magazine-view\"")
+            .nth(1)
+            .unwrap()
+            .split("aria-label=\"Pagination\"")
+            .next()
+            .unwrap();
 
         // Assert 3-column editorial magazine layout
-        assert!(mag_view.contains("id=\"mag-col-brief\""), "Must contain left column #mag-col-brief: {}", mag_view);
-        assert!(mag_view.contains("id=\"mag-col-center\""), "Must contain center column #mag-col-center: {}", mag_view);
-        assert!(mag_view.contains("id=\"mag-col-right\""), "Must contain right column #mag-col-right: {}", mag_view);
+        assert!(
+            mag_view.contains("id=\"mag-col-brief\""),
+            "Must contain left column #mag-col-brief: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains("id=\"mag-col-center\""),
+            "Must contain center column #mag-col-center: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains("id=\"mag-col-right\""),
+            "Must contain right column #mag-col-right: {}",
+            mag_view
+        );
 
         // Left column houses Executive Brief
-        let brief_col = mag_view.split("id=\"mag-col-brief\"").nth(1).unwrap()
-            .split("id=\"mag-col-center\"").next().unwrap();
-        assert!(brief_col.contains("id=\"page-executive-brief\""), "Left column must contain #page-executive-brief: {}", brief_col);
-        assert!(brief_col.contains("Executive brief for the page"), "Left column must render executive brief text: {}", brief_col);
+        let brief_col = mag_view
+            .split("id=\"mag-col-brief\"")
+            .nth(1)
+            .unwrap()
+            .split("id=\"mag-col-center\"")
+            .next()
+            .unwrap();
+        assert!(
+            brief_col.contains("id=\"page-executive-brief\""),
+            "Left column must contain #page-executive-brief: {}",
+            brief_col
+        );
+        assert!(
+            brief_col.contains("Executive brief for the page"),
+            "Left column must render executive brief text: {}",
+            brief_col
+        );
 
         // Center column houses Priority 1 and Priority 2
-        let center_col = mag_view.split("id=\"mag-col-center\"").nth(1).unwrap()
-            .split("id=\"mag-col-right\"").next().unwrap();
-        assert!(center_col.contains("priority-1"), "Center column must contain priority-1: {}", center_col);
-        assert!(center_col.contains("priority-2"), "Center column must contain priority-2: {}", center_col);
-        assert!(!center_col.contains("priority-3"), "Center column must NOT contain priority-3: {}", center_col);
+        let center_col = mag_view
+            .split("id=\"mag-col-center\"")
+            .nth(1)
+            .unwrap()
+            .split("id=\"mag-col-right\"")
+            .next()
+            .unwrap();
+        assert!(
+            center_col.contains("priority-1"),
+            "Center column must contain priority-1: {}",
+            center_col
+        );
+        assert!(
+            center_col.contains("priority-2"),
+            "Center column must contain priority-2: {}",
+            center_col
+        );
+        assert!(
+            !center_col.contains("priority-3"),
+            "Center column must NOT contain priority-3: {}",
+            center_col
+        );
 
         // Right column houses Priority 3
         let right_col = mag_view.split("id=\"mag-col-right\"").nth(1).unwrap();
-        assert!(right_col.contains("priority-3"), "Right column must contain priority-3: {}", right_col);
-        assert!(!right_col.contains("priority-1"), "Right column must NOT contain priority-1: {}", right_col);
-        assert!(!right_col.contains("priority-2"), "Right column must NOT contain priority-2: {}", right_col);
+        assert!(
+            right_col.contains("priority-3"),
+            "Right column must contain priority-3: {}",
+            right_col
+        );
+        assert!(
+            !right_col.contains("priority-1"),
+            "Right column must NOT contain priority-1: {}",
+            right_col
+        );
+        assert!(
+            !right_col.contains("priority-2"),
+            "Right column must NOT contain priority-2: {}",
+            right_col
+        );
 
         // Rule: Remove news badge!
-        assert!(!mag_view.contains("magazine-topic-badge"), "Magazine view must NOT contain news badge: {}", mag_view);
-        assert!(!mag_view.contains("uppercase tracking-wider text-brand mb-1"), "Must NOT contain category badge in P2");
-        assert!(!mag_view.contains("uppercase tracking-wider text-muted-foreground mb-1"), "Must NOT contain category badge in P3");
+        assert!(
+            !mag_view.contains("magazine-topic-badge"),
+            "Magazine view must NOT contain news badge: {}",
+            mag_view
+        );
+        assert!(
+            !mag_view.contains("uppercase tracking-wider text-brand mb-1"),
+            "Must NOT contain category badge in P2"
+        );
+        assert!(
+            !mag_view.contains("uppercase tracking-wider text-muted-foreground mb-1"),
+            "Must NOT contain category badge in P3"
+        );
 
         // Priority 1 checks: Hero photo on left (50% width, 100% height self-stretch), title and brief on right
-        assert!(mag_view.contains("src=\"https://example.com/photo1.jpg\""), "Hero must render photo: {}", mag_view);
-        assert!(mag_view.contains("self-stretch"), "Hero photo container must be self-stretch: {}", mag_view);
-        assert!(mag_view.contains("Hero Suggested Headline"), "Hero must render suggested title: {}", mag_view);
-        assert!(mag_view.contains("AI summary brief for hero article"), "Hero must render brief: {}", mag_view);
+        assert!(
+            mag_view.contains("src=\"https://example.com/photo1.jpg\""),
+            "Hero must render photo: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains("self-stretch"),
+            "Hero photo container must be self-stretch: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains("Hero Suggested Headline"),
+            "Hero must render suggested title: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains("AI summary brief for hero article"),
+            "Hero must render brief: {}",
+            mag_view
+        );
 
         // Priority 2 checks: 6 featured cards with small photo + brief
-        assert!(mag_view.contains("Brief for standard article 1"), "Priority 2 must render brief: {}", mag_view);
-        assert!(mag_view.contains("Brief for standard article 6"), "Priority 2 must render all 6 items: {}", mag_view);
+        assert!(
+            mag_view.contains("Brief for standard article 1"),
+            "Priority 2 must render brief: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains("Brief for standard article 6"),
+            "Priority 2 must render all 6 items: {}",
+            mag_view
+        );
 
         // Priority 3 checks: Renders title in right column with normal font weight and tooltip brief
-        assert!(mag_view.contains("Compact Bottom Article"), "Priority 3 must render title: {}", mag_view);
-        assert!(mag_view.contains(r#"title="Summary for Priority 3""#), "Priority 3 title must have tooltip brief: {}", mag_view);
-        assert!(!right_col.contains("magazine-brief"), "Priority 3 must NOT render visible brief paragraph: {}", right_col);
-        assert!(mag_view.contains("font-normal"), "Priority 3 title must use normal text font weight: {}", mag_view);
+        assert!(
+            mag_view.contains("Compact Bottom Article"),
+            "Priority 3 must render title: {}",
+            mag_view
+        );
+        assert!(
+            mag_view.contains(r#"title="Summary for Priority 3""#),
+            "Priority 3 title must have tooltip brief: {}",
+            mag_view
+        );
+        assert!(
+            !right_col.contains("magazine-brief"),
+            "Priority 3 must NOT render visible brief paragraph: {}",
+            right_col
+        );
+        assert!(
+            mag_view.contains("font-normal"),
+            "Priority 3 title must use normal text font weight: {}",
+            mag_view
+        );
 
         // Rule: Do NOT show source and date time for all 3 in magazine view!
-        assert!(!mag_view.contains("10 mins ago"), "Magazine view must NOT show date time: {}", mag_view);
-        assert!(!mag_view.contains("1 hour ago"), "Magazine view must NOT show date time: {}", mag_view);
-        assert!(!mag_view.contains("2 hours ago"), "Magazine view must NOT show date time: {}", mag_view);
+        assert!(
+            !mag_view.contains("10 mins ago"),
+            "Magazine view must NOT show date time: {}",
+            mag_view
+        );
+        assert!(
+            !mag_view.contains("1 hour ago"),
+            "Magazine view must NOT show date time: {}",
+            mag_view
+        );
+        assert!(
+            !mag_view.contains("2 hours ago"),
+            "Magazine view must NOT show date time: {}",
+            mag_view
+        );
         // Note: data-feed-title attribute exists for hot topic tracking, but visible source text is omitted
-        assert!(!mag_view.contains("<span class=\"truncate font-medium\">TechCrunch</span>"), "Must NOT show source text: {}", mag_view);
+        assert!(
+            !mag_view.contains("<span class=\"truncate font-medium\">TechCrunch</span>"),
+            "Must NOT show source text: {}",
+            mag_view
+        );
 
         // Titles and click handler
-        assert!(mag_view.contains("onclick=\"openEntryFromMagazine(101, 'TechCrunch')\""), "Must wire openEntryFromMagazine: {}", mag_view);
+        assert!(
+            mag_view.contains("onclick=\"openEntryFromMagazine(101, 'TechCrunch')\""),
+            "Must wire openEntryFromMagazine: {}",
+            mag_view
+        );
 
         // Read styling in magazine view: entry 102 is read (opacity-50 grayscale), entry 101 is unread (foreground)
-        assert!(mag_view.contains("id=\"mag-title-101\""), "Must have mag-title-101 id");
-        assert!(mag_view.contains("id=\"mag-title-102\""), "Must have mag-title-102 id");
-        assert!(mag_view.contains("read opacity-50 grayscale"), "Read card must have opacity-50 grayscale: {}", mag_view);
+        assert!(
+            mag_view.contains("id=\"mag-title-101\""),
+            "Must have mag-title-101 id"
+        );
+        assert!(
+            mag_view.contains("id=\"mag-title-102\""),
+            "Must have mag-title-102 id"
+        );
+        assert!(
+            mag_view.contains("read opacity-50 grayscale"),
+            "Read card must have opacity-50 grayscale: {}",
+            mag_view
+        );
 
         // Shared bottom pagination
-        assert!(html.contains("aria-label=\"Pagination\""), "Must render pagination nav: {}", html);
-        assert!(html.contains("Page 1 of 3"), "Must display current page: {}", html);
+        assert!(
+            html.contains("aria-label=\"Pagination\""),
+            "Must render pagination nav: {}",
+            html
+        );
+        assert!(
+            html.contains("Page 1 of 3"),
+            "Must display current page: {}",
+            html
+        );
     }
 
     #[test]
@@ -2206,24 +2605,73 @@ mod tests {
             ai_enabled: true,
             auth_enabled: false,
         };
-        let html = template.render().expect("render index template with ai toggle");
+        let html = template
+            .render()
+            .expect("render index template with ai toggle");
 
         // Assert button presence and ordering after theme-toggle-btn
-        let theme_pos = html.find("id=\"theme-toggle-btn\"").expect("must have theme toggle button");
-        let ai_btn_pos = html.find("id=\"ai-toggle-btn\"").expect("must have ai toggle button");
-        assert!(ai_btn_pos > theme_pos, "ai-toggle-btn must be positioned after theme-toggle-btn");
+        let theme_pos = html
+            .find("id=\"theme-toggle-btn\"")
+            .expect("must have theme toggle button");
+        let ai_btn_pos = html
+            .find("id=\"ai-toggle-btn\"")
+            .expect("must have ai toggle button");
+        assert!(
+            ai_btn_pos > theme_pos,
+            "ai-toggle-btn must be positioned after theme-toggle-btn"
+        );
 
-        assert!(html.contains("onclick=\"toggleAiView()\""), "AI toggle button must call toggleAiView()");
-        assert!(html.contains("border-border bg-card hover:bg-muted text-foreground"), "Button must use neutral styling without active background: {}", html);
-        assert!(!html.contains("border-primary bg-primary"), "Button must NOT use primary active background: {}", html);
-        assert!(html.contains("id=\"view-icon-magazine\""), "Must contain magazine icon: {}", html);
-        assert!(html.contains("id=\"view-icon-list\""), "Must contain list icon: {}", html);
-        assert!(html.contains("toggleAiView"), "Must define toggleAiView in script");
-        assert!(html.contains("applyAiViewMode"), "Must define applyAiViewMode in script");
-        assert!(html.contains("recordSourceClick"), "Must define recordSourceClick in script");
-        assert!(html.contains("updateHotTopicHighlighting"), "Must define updateHotTopicHighlighting in script");
-        assert!(html.contains("openEntryFromMagazine"), "Must define openEntryFromMagazine in script");
-        assert!(html.contains("'my_news_view_mode'"), "Must persist view mode in localStorage");
-        assert!(html.contains("savedMode || 'ai'"), "Must default to 'ai' view on first load");
+        assert!(
+            html.contains("onclick=\"toggleAiView()\""),
+            "AI toggle button must call toggleAiView()"
+        );
+        assert!(
+            html.contains("border-border bg-card hover:bg-muted text-foreground"),
+            "Button must use neutral styling without active background: {}",
+            html
+        );
+        assert!(
+            !html.contains("border-primary bg-primary"),
+            "Button must NOT use primary active background: {}",
+            html
+        );
+        assert!(
+            html.contains("id=\"view-icon-magazine\""),
+            "Must contain magazine icon: {}",
+            html
+        );
+        assert!(
+            html.contains("id=\"view-icon-list\""),
+            "Must contain list icon: {}",
+            html
+        );
+        assert!(
+            html.contains("toggleAiView"),
+            "Must define toggleAiView in script"
+        );
+        assert!(
+            html.contains("applyAiViewMode"),
+            "Must define applyAiViewMode in script"
+        );
+        assert!(
+            html.contains("recordSourceClick"),
+            "Must define recordSourceClick in script"
+        );
+        assert!(
+            html.contains("updateHotTopicHighlighting"),
+            "Must define updateHotTopicHighlighting in script"
+        );
+        assert!(
+            html.contains("openEntryFromMagazine"),
+            "Must define openEntryFromMagazine in script"
+        );
+        assert!(
+            html.contains("'my_news_view_mode'"),
+            "Must persist view mode in localStorage"
+        );
+        assert!(
+            html.contains("savedMode || 'ai'"),
+            "Must default to 'ai' view on first load"
+        );
     }
 }

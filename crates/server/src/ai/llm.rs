@@ -25,6 +25,8 @@ pub struct BatchAiItem {
     pub suggested_title: String,
     #[serde(rename = "b")]
     pub brief: String,
+    #[serde(rename = "r", default, skip_serializing_if = "Option::is_none")]
+    pub rewrite: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -106,9 +108,13 @@ impl LlmCliRunner {
             for item in group_items {
                 let trimmed_title = item.title.trim();
                 let mut clean_content = item.content_or_brief.trim();
-                if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}\n\n", trimmed_title)) {
+                if let Some(stripped) =
+                    clean_content.strip_prefix(&format!("Title: {}\n\n", trimmed_title))
+                {
                     clean_content = stripped.trim();
-                } else if let Some(stripped) = clean_content.strip_prefix(&format!("Title: {}", trimmed_title)) {
+                } else if let Some(stripped) =
+                    clean_content.strip_prefix(&format!("Title: {}", trimmed_title))
+                {
                     clean_content = stripped.trim();
                 } else if let Some(stripped) = clean_content.strip_prefix("Title:") {
                     if let Some((_, rest)) = stripped.split_once("\n\n") {
@@ -257,6 +263,7 @@ impl LlmCliRunner {
                         id,
                         suggested_title: title.as_str().replace(r#"\""#, "\""),
                         brief: brief.as_str().replace(r#"\""#, "\""),
+                        rewrite: None,
                     });
                 }
             }
@@ -320,7 +327,8 @@ impl LlmCliRunner {
                 let elapsed = start.elapsed().as_millis();
                 if !output.status.success() {
                     let stderr_preview = String::from_utf8_lossy(&output.stderr);
-                    let err_log = Self::format_error_process_failed(output.status.code(), &stderr_preview);
+                    let err_log =
+                        Self::format_error_process_failed(output.status.code(), &stderr_preview);
                     eprintln!("{}", err_log);
                     tracing::error!(
                         target: "ai::batch",
@@ -395,7 +403,9 @@ impl LlmCliRunner {
         self.summarize_batch_structured(&items).await
     }
 
-    pub fn fallback_extractive_structured(articles: &[BatchArticleInput<'_>]) -> (BatchAiResponse, String) {
+    pub fn fallback_extractive_structured(
+        articles: &[BatchArticleInput<'_>],
+    ) -> (BatchAiResponse, String) {
         tracing::warn!(
             target: "ai::batch",
             "[AI_WARN] reason=\"cli_failure\" fallback_strategy=\"extractive\""
@@ -407,6 +417,7 @@ impl LlmCliRunner {
                     id: item.id,
                     suggested_title: String::new(),
                     brief: item.content_or_brief.to_string(),
+                    rewrite: None,
                 });
             } else {
                 let fallback = miniflux_client::summary::extract_summary(item.content_or_brief, 3);
@@ -419,6 +430,7 @@ impl LlmCliRunner {
                     id: item.id,
                     suggested_title: String::new(),
                     brief: fallback_text,
+                    rewrite: None,
                 });
             }
         }
@@ -456,7 +468,11 @@ impl LlmCliRunner {
             "[AI_DISPATCH_SINGLE] model={} title=\"{}\" prompt_preview=\"{}\"",
             self.model,
             title.trim(),
-            prompt.chars().take(150).collect::<String>().replace('\n', " ")
+            prompt
+                .chars()
+                .take(150)
+                .collect::<String>()
+                .replace('\n', " ")
         );
         println!("{}", dispatch_msg);
         tracing::info!(target: "ai::single", "{}", dispatch_msg);
@@ -496,22 +512,34 @@ impl LlmCliRunner {
                     eprintln!("{}", err_log);
                     tracing::error!(target: "ai::single", "{}", err_log);
                     let fallback = miniflux_client::summary::extract_summary(content, 3);
-                    let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
+                    let fallback_text = if fallback.is_empty() {
+                        content.trim().to_string()
+                    } else {
+                        fallback
+                    };
                     (fallback_text, "extractive-fallback".to_string())
                 } else {
                     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if text.is_empty() {
-                        let err_log = format!("[AI_ERROR_SINGLE] empty_output elapsed_ms={}", elapsed);
+                        let err_log =
+                            format!("[AI_ERROR_SINGLE] empty_output elapsed_ms={}", elapsed);
                         eprintln!("{}", err_log);
                         tracing::error!(target: "ai::single", "{}", err_log);
                         let fallback = miniflux_client::summary::extract_summary(content, 3);
-                        let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
+                        let fallback_text = if fallback.is_empty() {
+                            content.trim().to_string()
+                        } else {
+                            fallback
+                        };
                         (fallback_text, "extractive-fallback".to_string())
                     } else {
                         let return_msg = format!(
                             "[AI_RETURN_SINGLE] elapsed_ms={} output=\"{}\"",
                             elapsed,
-                            text.chars().take(200).collect::<String>().replace('\n', " ")
+                            text.chars()
+                                .take(200)
+                                .collect::<String>()
+                                .replace('\n', " ")
                         );
                         println!("{}", return_msg);
                         tracing::info!(target: "ai::single", "{}", return_msg);
@@ -524,18 +552,70 @@ impl LlmCliRunner {
                 eprintln!("{}", err_log);
                 tracing::error!(target: "ai::single", "{}", err_log);
                 let fallback = miniflux_client::summary::extract_summary(content, 3);
-                let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
+                let fallback_text = if fallback.is_empty() {
+                    content.trim().to_string()
+                } else {
+                    fallback
+                };
                 (fallback_text, "extractive-fallback".to_string())
             }
             Err(_) => {
                 let elapsed = start.elapsed().as_millis();
-                let err_log = format!("[AI_ERROR_SINGLE] timeout_after_{}s elapsed_ms={}", TIMEOUT_SECS, elapsed);
+                let err_log = format!(
+                    "[AI_ERROR_SINGLE] timeout_after_{}s elapsed_ms={}",
+                    TIMEOUT_SECS, elapsed
+                );
                 eprintln!("{}", err_log);
                 tracing::error!(target: "ai::single", "{}", err_log);
                 let fallback = miniflux_client::summary::extract_summary(content, 3);
-                let fallback_text = if fallback.is_empty() { content.trim().to_string() } else { fallback };
+                let fallback_text = if fallback.is_empty() {
+                    content.trim().to_string()
+                } else {
+                    fallback
+                };
                 (fallback_text, "extractive-fallback".to_string())
             }
+        }
+    }
+
+    pub async fn rewrite(&self, title: &str, content: &str) -> (String, String) {
+        let _permit = self.semaphore.acquire().await.ok();
+        let prompt = format!(
+            "Rewrite the following article in an inverted pyramid style:\nTitle: {}\nContent: {}",
+            title, content
+        );
+        let args = self.build_args();
+        const TIMEOUT_SECS: u64 = 30;
+        let prompt_bytes = prompt.into_bytes();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(TIMEOUT_SECS), async {
+            let mut cmd = tokio::process::Command::new(&self.cli_cmd);
+            cmd.args(&args)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .kill_on_drop(true);
+
+            let mut child = cmd.spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(&prompt_bytes).await;
+                drop(stdin);
+            }
+
+            child.wait_with_output().await
+        })
+        .await;
+
+        match result {
+            Ok(Ok(output)) if output.status.success() => {
+                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if text.is_empty() {
+                    (String::new(), "error".to_string())
+                } else {
+                    (text, self.model.clone())
+                }
+            }
+            _ => (String::new(), "error".to_string()),
         }
     }
 }
@@ -550,12 +630,7 @@ pub struct LlmHttpClient {
 }
 
 impl LlmHttpClient {
-    pub fn new(
-        provider: &str,
-        api_key: &str,
-        base_url: Option<&str>,
-        model: &str,
-    ) -> Self {
+    pub fn new(provider: &str, api_key: &str, base_url: Option<&str>, model: &str) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -577,7 +652,12 @@ impl LlmHttpClient {
                 .base_url
                 .as_deref()
                 .unwrap_or("https://generativelanguage.googleapis.com/v1beta");
-            let url = format!("{}/models/{}:generateContent?key={}", base.trim_end_matches('/'), self.model, self.api_key);
+            let url = format!(
+                "{}/models/{}:generateContent?key={}",
+                base.trim_end_matches('/'),
+                self.model,
+                self.api_key
+            );
             let payload = serde_json::json!({
                 "contents": [
                     {
@@ -615,7 +695,9 @@ impl LlmHttpClient {
                 .and_then(|parts| parts.get(0))
                 .and_then(|part| part.get("text"))
                 .and_then(|t| t.as_str())
-                .ok_or_else(|| "Missing candidates[0].content.parts[0].text in Gemini response".to_string())?;
+                .ok_or_else(|| {
+                    "Missing candidates[0].content.parts[0].text in Gemini response".to_string()
+                })?;
 
             Ok(text.to_string())
         } else {
@@ -636,7 +718,10 @@ impl LlmHttpClient {
             let resp = self
                 .client
                 .post(&url)
-                .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", self.api_key))
+                .header(
+                    reqwest::header::AUTHORIZATION,
+                    format!("Bearer {}", self.api_key),
+                )
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .json(&payload)
                 .send()
@@ -656,7 +741,9 @@ impl LlmHttpClient {
                 .and_then(|choice| choice.get("message"))
                 .and_then(|msg| msg.get("content"))
                 .and_then(|content| content.as_str())
-                .ok_or_else(|| "Missing choices[0].message.content in OpenAI response".to_string())?;
+                .ok_or_else(|| {
+                    "Missing choices[0].message.content in OpenAI response".to_string()
+                })?;
 
             Ok(text.to_string())
         }
@@ -741,30 +828,33 @@ impl LlmBackend {
     ) -> (BatchAiResponse, String) {
         match self {
             Self::Cli(cli) => cli.summarize_batch(articles).await,
-            Self::Http { client, fallback } => {
-                match client.summarize_batch(articles).await {
-                    Ok((res, model)) => (res, model),
-                    Err(err) => {
-                        tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
-                        fallback.summarize_batch(articles).await
-                    }
+            Self::Http { client, fallback } => match client.summarize_batch(articles).await {
+                Ok((res, model)) => (res, model),
+                Err(err) => {
+                    tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
+                    fallback.summarize_batch(articles).await
                 }
-            }
+            },
         }
     }
 
     pub async fn summarize(&self, title: &str, content: &str) -> (String, String) {
         match self {
             Self::Cli(cli) => cli.summarize(title, content).await,
-            Self::Http { client, fallback } => {
-                match client.summarize(title, content).await {
-                    Ok((res, model)) => (res, model),
-                    Err(err) => {
-                        tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
-                        fallback.summarize(title, content).await
-                    }
+            Self::Http { client, fallback } => match client.summarize(title, content).await {
+                Ok((res, model)) => (res, model),
+                Err(err) => {
+                    tracing::warn!(target: "ai::llm", "HTTP LLM client failed: {}. Falling back to CLI", err);
+                    fallback.summarize(title, content).await
                 }
-            }
+            },
+        }
+    }
+
+    pub async fn rewrite(&self, title: &str, content: &str) -> (String, String) {
+        match self {
+            Self::Cli(cli) => cli.rewrite(title, content).await,
+            Self::Http { fallback, .. } => fallback.rewrite(title, content).await,
         }
     }
 
@@ -776,10 +866,7 @@ impl LlmBackend {
         (batch_res.top, model)
     }
 
-    pub async fn synthesize_page_brief(
-        &self,
-        articles: &[(i64, &str, &str)],
-    ) -> (String, String) {
+    pub async fn synthesize_page_brief(&self, articles: &[(i64, &str, &str)]) -> (String, String) {
         let (batch_res, model) = self.summarize_batch(articles).await;
         (batch_res.top, model)
     }
@@ -792,8 +879,16 @@ mod tests {
     #[test]
     fn test_batch_prompt_no_duplicate_titles() {
         let articles = [
-            (101, "Article Title One", "Title: Article Title One\n\nBody content of article one."),
-            (102, "Article Title Two", "Body content of article two without title prefix."),
+            (
+                101,
+                "Article Title One",
+                "Title: Article Title One\n\nBody content of article one.",
+            ),
+            (
+                102,
+                "Article Title Two",
+                "Body content of article two without title prefix.",
+            ),
         ];
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
 
@@ -836,7 +931,10 @@ mod tests {
         );
 
         let articles = [(42, "AI Breakthrough", "New models announced at summit.")];
-        let (res, model) = client.summarize_batch(&articles).await.expect("successful http call");
+        let (res, model) = client
+            .summarize_batch(&articles)
+            .await
+            .expect("successful http call");
 
         assert_eq!(model, "gpt-4o-mini");
         assert_eq!(res.top, "Global Tech Summit Brief");
@@ -880,7 +978,10 @@ mod tests {
         );
 
         let articles = [(99, "Speed Increase", "Latency dropped drastically today.")];
-        let (res, model) = client.summarize_batch(&articles).await.expect("successful gemini call");
+        let (res, model) = client
+            .summarize_batch(&articles)
+            .await
+            .expect("successful gemini call");
 
         assert_eq!(model, "gemini-2.5-flash");
         assert_eq!(res.top, "Gemini Fast Digest");
@@ -966,7 +1067,9 @@ mod tests {
 
         // Verify build_args does NOT contain prompt
         let args = runner.build_args();
-        assert!(!args.iter().any(|arg| arg.contains("Articles:") || arg.contains("executive news editor")));
+        assert!(!args
+            .iter()
+            .any(|arg| arg.contains("Articles:") || arg.contains("executive news editor")));
 
         let articles = [(42, "Unique Stdin Title", "Content piped via stdin strictly")];
         let (res, _model) = runner.summarize_batch(&articles).await;
@@ -1007,15 +1110,25 @@ mod tests {
     #[test]
     fn test_multilingual_batch_prompt_and_robust_parsing() {
         let articles = [
-            (101, "Tin tức công nghệ", "Nội dung bài viết tiếng Việt về trí tuệ nhân tạo."),
-            (102, "Global Markets", "Stock indexes reached all-time highs today."),
+            (
+                101,
+                "Tin tức công nghệ",
+                "Nội dung bài viết tiếng Việt về trí tuệ nhân tạo.",
+            ),
+            (
+                102,
+                "Global Markets",
+                "Stock indexes reached all-time highs today.",
+            ),
         ];
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
 
         // Verify critical multilingual instructions are present in prompt
         assert!(prompt.contains("CRITICAL MULTILINGUAL RULE:"));
         assert!(prompt.contains("EXACT SAME LANGUAGE as the source text"));
-        assert!(prompt.contains("If an article is in Vietnamese, its suggested title and brief MUST be in Vietnamese."));
+        assert!(prompt.contains(
+            "If an article is in Vietnamese, its suggested title and brief MUST be in Vietnamese."
+        ));
         assert!(prompt.contains("Do NOT translate articles into a different language."));
 
         // Verify parsing multilingual response with markdown fences and conversational preamble
@@ -1033,14 +1146,23 @@ Sure! Here is the JSON summary:
 Have a great day!
         "#;
         let parsed = LlmCliRunner::parse_batch_response(raw_multilingual);
-        assert_eq!(parsed.top, "Tổng hợp tin tức công nghệ và thị trường tài chính quốc tế.");
+        assert_eq!(
+            parsed.top,
+            "Tổng hợp tin tức công nghệ và thị trường tài chính quốc tế."
+        );
         assert_eq!(parsed.items.len(), 2);
         assert_eq!(parsed.items[0].id, 101);
         assert_eq!(parsed.items[0].suggested_title, "Đột phá AI mới");
-        assert_eq!(parsed.items[0].brief, "Công nghệ AI ghi nhận bước tiến quan trọng.");
+        assert_eq!(
+            parsed.items[0].brief,
+            "Công nghệ AI ghi nhận bước tiến quan trọng."
+        );
         assert_eq!(parsed.items[1].id, 102);
         assert_eq!(parsed.items[1].suggested_title, "Market Highs");
-        assert_eq!(parsed.items[1].brief, "Global stock indices rally to record levels.");
+        assert_eq!(
+            parsed.items[1].brief,
+            "Global stock indices rally to record levels."
+        );
     }
 
     #[test]
@@ -1082,7 +1204,10 @@ Some outro text
         let parsed_fallback = LlmCliRunner::parse_batch_response(raw_snippet);
         assert_eq!(parsed_fallback.items.len(), 1);
         assert_eq!(parsed_fallback.items[0].id, 303);
-        assert_eq!(parsed_fallback.items[0].suggested_title, "Fallback Regex Title");
+        assert_eq!(
+            parsed_fallback.items[0].suggested_title,
+            "Fallback Regex Title"
+        );
         assert_eq!(parsed_fallback.items[0].brief, "Fallback brief content.");
 
         // 4. Complete garbage output -> returns empty BatchAiResponse without crashing
@@ -1100,7 +1225,8 @@ Some outro text
             vec!["--thinking-budget".to_string(), "0".to_string()],
         );
 
-        let prompt = LlmCliRunner::format_prompt("Rust 2026 Released", "Exciting new features landed.");
+        let prompt =
+            LlmCliRunner::format_prompt("Rust 2026 Released", "Exciting new features landed.");
         assert!(prompt.contains("strictly 3 concise sentences"));
         assert!(prompt.contains("Article Title: Rust 2026 Released"));
         assert!(prompt.contains("Article Content:\nExciting new features landed."));
@@ -1122,20 +1248,20 @@ Some outro text
             vec![],
         );
 
-        let content = "First sentence of news. Second sentence of importance. Third sentence ignored.";
+        let content =
+            "First sentence of news. Second sentence of importance. Third sentence ignored.";
         let (summary, model) = runner.summarize("Tech Update", content).await;
 
         assert_eq!(model, "extractive-fallback");
-        assert_eq!(summary, "First sentence of news. Second sentence of importance. Third sentence ignored.");
+        assert_eq!(
+            summary,
+            "First sentence of news. Second sentence of importance. Third sentence ignored."
+        );
     }
 
     #[tokio::test]
     async fn test_llm_cli_concurrency_throttling() {
-        let runner = LlmCliRunner::new(
-            "sh".to_string(),
-            "test-model".to_string(),
-            vec![],
-        );
+        let runner = LlmCliRunner::new("sh".to_string(), "test-model".to_string(), vec![]);
 
         // Verify semaphore starts with exactly 2 permits
         assert_eq!(runner.semaphore.available_permits(), 2);
@@ -1168,7 +1294,8 @@ Some outro text
         assert!(return_log.contains("elapsed_ms=123"));
         assert!(return_log.contains("raw_output=\"{\\\"top\\\":\\\"done\\\"}\""));
 
-        let warn_log = LlmCliRunner::format_warn_fallback("json_parse_fallback", "regex", "{\"i\":1}");
+        let warn_log =
+            LlmCliRunner::format_warn_fallback("json_parse_fallback", "regex", "{\"i\":1}");
         assert!(warn_log.starts_with("[AI_WARN]"));
         assert!(warn_log.contains("reason=\"json_parse_fallback\""));
         assert!(warn_log.contains("fallback_strategy=\"regex\""));
@@ -1194,15 +1321,26 @@ Some outro text
     #[test]
     fn test_format_prompt_strictly_3_sentences() {
         let prompt = LlmCliRunner::format_prompt("Rust 2026", "Content of the article.");
-        assert!(prompt.contains("strictly 3 concise sentences"), "Prompt should require strictly 3 concise sentences: {}", prompt);
-        assert!(!prompt.contains("1 to 2"), "Prompt should not contain 1 to 2 sentences");
+        assert!(
+            prompt.contains("strictly 3 concise sentences"),
+            "Prompt should require strictly 3 concise sentences: {}",
+            prompt
+        );
+        assert!(
+            !prompt.contains("1 to 2"),
+            "Prompt should not contain 1 to 2 sentences"
+        );
     }
 
     #[test]
     fn test_format_batch_prompt_strictly_3_sentences() {
         let articles = [(1, "Title", "Content")];
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
-        assert!(prompt.contains("strictly 3 sentences"), "Batch prompt should require strictly 3 sentences for items: {}", prompt);
+        assert!(
+            prompt.contains("strictly 3 sentences"),
+            "Batch prompt should require strictly 3 sentences for items: {}",
+            prompt
+        );
     }
 
     #[test]
@@ -1211,7 +1349,10 @@ Some outro text
         let articles = [(1, "Title", content)];
         let (res, model) = LlmCliRunner::fallback_extractive(&articles);
         assert_eq!(model, "extractive-fallback");
-        assert_eq!(res.items[0].brief, "Sentence one. Sentence two. Sentence three.");
+        assert_eq!(
+            res.items[0].brief,
+            "Sentence one. Sentence two. Sentence three."
+        );
     }
 
     #[test]
@@ -1244,12 +1385,21 @@ Some outro text
         ];
 
         let prompt = LlmCliRunner::format_batch_prompt_structured(&items);
-        assert!(prompt.contains("### Source: Rust Blog"), "Must contain Source header for Rust Blog");
-        assert!(prompt.contains("### Source: Hacker News"), "Must contain Source header for Hacker News");
+        assert!(
+            prompt.contains("### Source: Rust Blog"),
+            "Must contain Source header for Rust Blog"
+        );
+        assert!(
+            prompt.contains("### Source: Hacker News"),
+            "Must contain Source header for Hacker News"
+        );
 
         let pos_102 = prompt.find("[ID 102]").expect("ID 102 present");
         let pos_101 = prompt.find("[ID 101]").expect("ID 101 present");
-        assert!(pos_102 < pos_101, "Latest article 102 (Nov 22) must appear before older article 101 (Nov 20)");
+        assert!(
+            pos_102 < pos_101,
+            "Latest article 102 (Nov 22) must appear before older article 101 (Nov 20)"
+        );
     }
 
     #[test]
@@ -1278,23 +1428,27 @@ Some outro text
         assert!(prompt.contains("Content:\nFull text of new post"));
 
         assert!(prompt.contains("[ID 102] (Existing Brief) Title: Cached Post"));
-        assert!(prompt.contains("Brief:\nBrief already in db") || prompt.contains("Brief: Brief already in db"));
+        assert!(
+            prompt.contains("Brief:\nBrief already in db")
+                || prompt.contains("Brief: Brief already in db")
+        );
 
-        assert!(prompt.contains("Do not regenerate items for existing briefs") || prompt.contains("For each NEW article id"));
+        assert!(
+            prompt.contains("Do not regenerate items for existing briefs")
+                || prompt.contains("For each NEW article id")
+        );
     }
 
     #[test]
     fn test_format_batch_prompt_suggested_title_one_sentence() {
-        let items = [
-            BatchArticleInput {
-                id: 101,
-                title: "New Post",
-                source: "Tech News",
-                published_at: "2026-11-22T12:00:00Z",
-                content_or_brief: "Full text of new post",
-                is_cached: false,
-            },
-        ];
+        let items = [BatchArticleInput {
+            id: 101,
+            title: "New Post",
+            source: "Tech News",
+            published_at: "2026-11-22T12:00:00Z",
+            content_or_brief: "Full text of new post",
+            is_cached: false,
+        }];
         let prompt = LlmCliRunner::format_batch_prompt_structured(&items);
         assert!(
             prompt.contains("suggested title, strictly in one sentence"),

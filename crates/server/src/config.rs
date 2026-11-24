@@ -27,10 +27,23 @@ pub struct Config {
     pub llm_cli_cmd: String,
     pub llm_model: String,
     pub llm_extra_args: Vec<String>,
-    pub ai_db_path: String,
+    pub database_url: String,
     pub llm_provider: String,
     pub llm_api_key: Option<String>,
     pub llm_api_base_url: Option<String>,
+}
+
+pub fn mask_database_url(url: &str) -> String {
+    if let Some(at_idx) = url.find('@') {
+        if let Some(colon_idx) = url[..at_idx].rfind(':') {
+            if let Some(scheme_end) = url.find("://") {
+                if colon_idx > scheme_end + 2 {
+                    return format!("{}:[REDACTED]@{}", &url[..colon_idx], &url[at_idx + 1..]);
+                }
+            }
+        }
+    }
+    url.to_string()
 }
 
 impl std::fmt::Debug for Config {
@@ -51,7 +64,7 @@ impl std::fmt::Debug for Config {
             .field("llm_cli_cmd", &self.llm_cli_cmd)
             .field("llm_model", &self.llm_model)
             .field("llm_extra_args", &self.llm_extra_args)
-            .field("ai_db_path", &self.ai_db_path)
+            .field("database_url", &mask_database_url(&self.database_url))
             .field("llm_provider", &self.llm_provider)
             .field(
                 "llm_api_key",
@@ -96,12 +109,20 @@ impl Config {
         };
 
         let port: u16 = match map.get("PORT") {
-            Some(p) => p.parse().map_err(|_| ConfigError::InvalidValue("PORT must be a valid u16".to_string()))?,
+            Some(p) => p
+                .parse()
+                .map_err(|_| ConfigError::InvalidValue("PORT must be a valid u16".to_string()))?,
             None => 3000,
         };
 
-        let host = map.get("HOST").cloned().unwrap_or_else(|| "0.0.0.0".to_string());
-        let app_base_url = map.get("APP_BASE_URL").cloned().unwrap_or_else(|| format!("http://{}:{}", host, port));
+        let host = map
+            .get("HOST")
+            .cloned()
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+        let app_base_url = map
+            .get("APP_BASE_URL")
+            .cloned()
+            .unwrap_or_else(|| format!("http://{}:{}", host, port));
 
         let auth_enabled = map
             .get("AUTH_ENABLED")
@@ -180,11 +201,11 @@ impl Config {
             .map(|s| s.split_whitespace().map(|item| item.to_string()).collect())
             .unwrap_or_default();
 
-        let ai_db_path = map
-            .get("AI_DB_PATH")
+        let database_url = map
+            .get("DATABASE_URL")
             .cloned()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "data/summaries.db".to_string());
+            .unwrap_or_else(|| "postgres://my_ui:my_ui_password@localhost:5432/my_ui".to_string());
 
         let llm_provider = map
             .get("LLM_PROVIDER")
@@ -218,7 +239,7 @@ impl Config {
             llm_cli_cmd,
             llm_model,
             llm_extra_args,
-            ai_db_path,
+            database_url,
             llm_provider,
             llm_api_key,
             llm_api_base_url,
@@ -248,7 +269,10 @@ mod tests {
             ("PORT", "8080"),
             ("HOST", "127.0.0.1"),
             ("APP_BASE_URL", "http://127.0.0.1:8080"),
-            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
             ("OIDC_ISSUER_URL", "https://id.example.com"),
             ("OIDC_CLIENT_ID", "client-123"),
             ("OIDC_CLIENT_SECRET", "secret-456"),
@@ -260,11 +284,17 @@ mod tests {
         assert_eq!(config.port, 8080);
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.app_base_url, "http://127.0.0.1:8080");
-        assert_eq!(config.session_secret, "super-secret-key-that-is-at-least-32-bytes-long!");
+        assert_eq!(
+            config.session_secret,
+            "super-secret-key-that-is-at-least-32-bytes-long!"
+        );
         assert_eq!(config.oidc_issuer_url, "https://id.example.com");
         assert_eq!(config.oidc_client_id, "client-123");
         assert_eq!(config.oidc_client_secret, "secret-456");
-        assert_eq!(config.oidc_redirect_url, "http://127.0.0.1:8080/auth/callback");
+        assert_eq!(
+            config.oidc_redirect_url,
+            "http://127.0.0.1:8080/auth/callback"
+        );
         assert_eq!(config.miniflux_base_url, "https://miniflux.example.com");
         assert_eq!(config.miniflux_api_key, "miniflux-key-789");
     }
@@ -291,7 +321,10 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let vars = [
-            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
             ("OIDC_ISSUER_URL", "https://id.example.com"),
             ("OIDC_CLIENT_ID", "client-123"),
             ("OIDC_CLIENT_SECRET", "secret-456"),
@@ -299,16 +332,55 @@ mod tests {
             ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
             ("MINIFLUX_API_KEY", "miniflux-key"),
         ];
-        let config = Config::from_map(&make_test_env(&vars)).expect("Failed to load config with defaults");
+        let config =
+            Config::from_map(&make_test_env(&vars)).expect("Failed to load config with defaults");
         assert_eq!(config.port, 3000);
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.app_base_url, "http://0.0.0.0:3000");
     }
 
     #[test]
+    fn test_config_database_url_from_env_or_default() {
+        let default_vars = [
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
+            ("OIDC_ISSUER_URL", "https://id.example.com"),
+            ("OIDC_CLIENT_ID", "client-123"),
+            ("OIDC_CLIENT_SECRET", "secret-456"),
+            ("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback"),
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+        ];
+
+        // 1. Default fallback
+        let def_config = Config::from_map(&make_test_env(&default_vars)).expect("defaults");
+        assert_eq!(
+            def_config.database_url,
+            "postgres://my_ui:my_ui_password@localhost:5432/my_ui"
+        );
+
+        // 2. Custom DATABASE_URL
+        let mut custom_vars = make_test_env(&default_vars);
+        custom_vars.insert(
+            "DATABASE_URL".to_string(),
+            "postgres://custom_user:custom_pass@postgres-host:5432/custom_db".to_string(),
+        );
+        let custom_config = Config::from_map(&custom_vars).expect("custom");
+        assert_eq!(
+            custom_config.database_url,
+            "postgres://custom_user:custom_pass@postgres-host:5432/custom_db"
+        );
+    }
+
+    #[test]
     fn test_config_parses_ai_settings_and_defaults() {
         let default_vars = [
-            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
             ("OIDC_ISSUER_URL", "https://id.example.com"),
             ("OIDC_CLIENT_ID", "client-123"),
             ("OIDC_CLIENT_SECRET", "secret-456"),
@@ -321,27 +393,45 @@ mod tests {
         assert_eq!(def_config.llm_cli_cmd, "llm");
         assert_eq!(def_config.llm_model, "gpt-4o-mini");
         assert!(def_config.llm_extra_args.is_empty());
-        assert_eq!(def_config.ai_db_path, "data/summaries.db");
+        assert_eq!(
+            def_config.database_url,
+            "postgres://my_ui:my_ui_password@localhost:5432/my_ui"
+        );
 
         let mut custom_vars = make_test_env(&default_vars);
         custom_vars.insert("AI_ENABLED".to_string(), "true".to_string());
         custom_vars.insert("LLM_CLI_CMD".to_string(), "my-llm".to_string());
         custom_vars.insert("LLM_MODEL".to_string(), "claude-3-5".to_string());
-        custom_vars.insert("LLM_EXTRA_ARGS".to_string(), "--thinking-budget 0 --opt foo".to_string());
-        custom_vars.insert("AI_DB_PATH".to_string(), "custom/db.sqlite".to_string());
+        custom_vars.insert(
+            "LLM_EXTRA_ARGS".to_string(),
+            "--thinking-budget 0 --opt foo".to_string(),
+        );
+        custom_vars.insert(
+            "DATABASE_URL".to_string(),
+            "postgres://custom_user:custom_pass@postgres-host:5432/custom_db".to_string(),
+        );
 
         let custom_config = Config::from_map(&custom_vars).expect("custom");
         assert!(custom_config.ai_enabled);
         assert_eq!(custom_config.llm_cli_cmd, "my-llm");
         assert_eq!(custom_config.llm_model, "claude-3-5");
-        assert_eq!(custom_config.llm_extra_args, vec!["--thinking-budget", "0", "--opt", "foo"]);
-        assert_eq!(custom_config.ai_db_path, "custom/db.sqlite");
+        assert_eq!(
+            custom_config.llm_extra_args,
+            vec!["--thinking-budget", "0", "--opt", "foo"]
+        );
+        assert_eq!(
+            custom_config.database_url,
+            "postgres://custom_user:custom_pass@postgres-host:5432/custom_db"
+        );
     }
 
     #[test]
     fn test_config_parses_auth_enabled_and_defaults() {
         let vars = [
-            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
             ("OIDC_ISSUER_URL", "https://id.example.com"),
             ("OIDC_CLIENT_ID", "client-123"),
             ("OIDC_CLIENT_SECRET", "secret-456"),
@@ -350,7 +440,10 @@ mod tests {
             ("MINIFLUX_API_KEY", "miniflux-key"),
         ];
         let def_config = Config::from_map(&make_test_env(&vars)).expect("defaults");
-        assert!(def_config.auth_enabled, "auth_enabled should default to true");
+        assert!(
+            def_config.auth_enabled,
+            "auth_enabled should default to true"
+        );
 
         let mut false_vars = make_test_env(&vars);
         false_vars.insert("AUTH_ENABLED".to_string(), "false".to_string());
@@ -365,7 +458,8 @@ mod tests {
             ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
             ("MINIFLUX_API_KEY", "miniflux-key"),
         ];
-        let config = Config::from_map(&make_test_env(&vars)).expect("should succeed without OIDC vars");
+        let config =
+            Config::from_map(&make_test_env(&vars)).expect("should succeed without OIDC vars");
         assert!(!config.auth_enabled);
         assert!(!config.session_secret.is_empty());
         assert!(!config.oidc_issuer_url.is_empty());
@@ -392,7 +486,10 @@ mod tests {
         let base_vars = [
             ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
             ("MINIFLUX_API_KEY", "miniflux-key"),
-            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
             ("OIDC_ISSUER_URL", "https://id.example.com"),
             ("OIDC_CLIENT_ID", "client-123"),
             ("OIDC_CLIENT_SECRET", "secret-456"),
@@ -425,7 +522,10 @@ mod tests {
         let base_vars = [
             ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
             ("MINIFLUX_API_KEY", "miniflux-key"),
-            ("SESSION_SECRET", "super-secret-key-that-is-at-least-32-bytes-long!"),
+            (
+                "SESSION_SECRET",
+                "super-secret-key-that-is-at-least-32-bytes-long!",
+            ),
             ("OIDC_ISSUER_URL", "https://id.example.com"),
             ("OIDC_CLIENT_ID", "client-123"),
             ("OIDC_CLIENT_SECRET", "secret-456"),
@@ -441,17 +541,64 @@ mod tests {
         // 2. Custom credentials and provider
         let mut custom_vars = make_test_env(&base_vars);
         custom_vars.insert("LLM_PROVIDER".to_string(), "gemini".to_string());
-        custom_vars.insert("LLM_API_KEY".to_string(), "secret-gemini-key-123".to_string());
-        custom_vars.insert("LLM_API_BASE_URL".to_string(), "https://custom.gemini.endpoint".to_string());
+        custom_vars.insert(
+            "LLM_API_KEY".to_string(),
+            "secret-gemini-key-123".to_string(),
+        );
+        custom_vars.insert(
+            "LLM_API_BASE_URL".to_string(),
+            "https://custom.gemini.endpoint".to_string(),
+        );
 
         let custom_config = Config::from_map(&custom_vars).expect("custom");
         assert_eq!(custom_config.llm_provider, "gemini");
-        assert_eq!(custom_config.llm_api_key.as_deref(), Some("secret-gemini-key-123"));
-        assert_eq!(custom_config.llm_api_base_url.as_deref(), Some("https://custom.gemini.endpoint"));
+        assert_eq!(
+            custom_config.llm_api_key.as_deref(),
+            Some("secret-gemini-key-123")
+        );
+        assert_eq!(
+            custom_config.llm_api_base_url.as_deref(),
+            Some("https://custom.gemini.endpoint")
+        );
 
         // 3. Sensitive masking in Debug representation
         let debug_str = format!("{:?}", custom_config);
-        assert!(!debug_str.contains("secret-gemini-key-123"), "LLM_API_KEY must be masked in Debug output");
+        assert!(
+            !debug_str.contains("secret-gemini-key-123"),
+            "LLM_API_KEY must be masked in Debug output"
+        );
         assert!(debug_str.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_mask_database_url_and_debug_output() {
+        assert_eq!(
+            mask_database_url("postgres://my_ui:super_secret_pw@localhost:5432/my_ui"),
+            "postgres://my_ui:[REDACTED]@localhost:5432/my_ui"
+        );
+        assert_eq!(
+            mask_database_url("postgresql://admin:pass123@db.prod.internal:5432/db"),
+            "postgresql://admin:[REDACTED]@db.prod.internal:5432/db"
+        );
+        assert_eq!(
+            mask_database_url("postgres://localhost:5432/my_ui"),
+            "postgres://localhost:5432/my_ui"
+        );
+        assert_eq!(mask_database_url(":memory:"), ":memory:");
+        assert_eq!(mask_database_url("mock:test"), "mock:test");
+
+        let vars = [
+            ("AUTH_ENABLED", "false"),
+            ("MINIFLUX_BASE_URL", "https://miniflux.example.com"),
+            ("MINIFLUX_API_KEY", "miniflux-key"),
+            (
+                "DATABASE_URL",
+                "postgres://user:sensitive_password@localhost:5432/mydb",
+            ),
+        ];
+        let config = Config::from_map(&make_test_env(&vars)).expect("config");
+        let debug_str = format!("{:?}", config);
+        assert!(!debug_str.contains("sensitive_password"));
+        assert!(debug_str.contains("postgres://user:[REDACTED]@localhost:5432/mydb"));
     }
 }

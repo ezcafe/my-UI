@@ -26,13 +26,12 @@ rand = "0.8"
 sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 chrono = "0.4"
-rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1.11"
-r2d2 = "0.8"
-r2d2_sqlite = "0.25"
 scraper = "0.22"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "json", "macros"] }
 
 [dev-dependencies]
 wiremock = "0.6"
 http-body-util = "0.1"
 tempfile = "3"
+serde_urlencoded = "0.7"

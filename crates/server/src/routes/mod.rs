@@ -36,7 +36,7 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: "data/summaries.db".to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
@@ -44,7 +44,7 @@ mod tests {
 
         let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let session = SessionData {
             user_id: "u_1".to_string(),
@@ -91,8 +91,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tmp_db = tempfile::NamedTempFile::new().unwrap();
-        let db_path = tmp_db.path().to_str().unwrap().to_string();
+        let db_path = "mock:list_entries_555";
 
         let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
         let config = Arc::new(Config {
@@ -111,22 +110,24 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: db_path.clone(),
+            database_url: db_path.to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
         });
 
         // Seed DB with suggested title and page executive brief
-        let db = crate::ai::AiDb::new(&db_path).unwrap();
+        let db = crate::ai::AiDb::new(db_path).await.unwrap();
         db.save_summary_and_title(555, Some("Punchy AI Title 555"), "Summary 555", "model-a")
             .await
             .unwrap();
-        db.save_page_brief("Top Page Executive Brief Today").await.unwrap();
+        db.save_page_brief("Top Page Executive Brief Today")
+            .await
+            .unwrap();
 
         let client = MinifluxClient::new(server.uri(), "api-key".to_string());
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let session = SessionData {
             user_id: "u_1".to_string(),
@@ -191,8 +192,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tmp_db = tempfile::NamedTempFile::new().unwrap();
-        let db_path = tmp_db.path().to_str().unwrap().to_string();
+        let db_path = "mock:filter_specific_brief";
 
         let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
         let config = Arc::new(Config {
@@ -211,18 +211,20 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: db_path.clone(),
+            database_url: db_path.to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
         });
 
-        let db = crate::ai::AiDb::new(&db_path).unwrap();
-        db.save_page_brief("Exclusive Top Executive Brief Content").await.unwrap();
+        let db = crate::ai::AiDb::new(db_path).await.unwrap();
+        db.save_page_brief("Exclusive Top Executive Brief Content")
+            .await
+            .unwrap();
 
         let client = MinifluxClient::new(server.uri(), "api-key".to_string());
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let session = SessionData {
             user_id: "u_1".to_string(),
@@ -375,7 +377,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/v1/feeds/counters"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })),
+            )
             .mount(&server)
             .await;
 
@@ -423,7 +427,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/v1/feeds/counters"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })),
+            )
             .mount(&server)
             .await;
 
@@ -443,7 +449,11 @@ mod tests {
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert_eq!(status, StatusCode::OK, "Body: {}", html);
-        assert!(html.contains("Today&#x27;s Article") || html.contains("Today's Article"), "Actual html: {}", html);
+        assert!(
+            html.contains("Today&#x27;s Article") || html.contains("Today's Article"),
+            "Actual html: {}",
+            html
+        );
     }
 
     #[tokio::test]
@@ -798,9 +808,272 @@ mod tests {
         assert!(html.contains("unread-pill"));
     }
 
+    #[tokio::test]
+    async fn test_hx_mark_page_read_advances_offset_when_more_pages_exist() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Count query: limit=1, offset=0
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::query_param("limit", "1"))
+            .and(wiremock::matchers::query_param("offset", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 100,
+                "entries": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Next page fetch: limit=50, offset=50
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::query_param("limit", "50"))
+            .and(wiremock::matchers::query_param("offset", "50"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 100,
+                "entries": [{
+                    "id": 51,
+                    "feed_id": 1,
+                    "title": "Entry 51 Advanced",
+                    "url": "https://example.com/51",
+                    "published_at": "2026-11-23T00:00:00Z",
+                    "status": "unread",
+                    "reading_time": 2,
+                    "feed": {
+                        "id": 1,
+                        "title": "Tech Blog",
+                        "category": { "id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 50 }
+            })))
+            .mount(&server)
+            .await;
+
+        let (app, cookie) = setup_test_app(&server.uri()).await;
+
+        let form_body = "entry_ids=1,2&status=all&offset=0";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-read")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form_body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(
+            html.contains("Entry 51 Advanced"),
+            "Must render next page entries"
+        );
+        assert!(
+            html.contains(r#"<input type="hidden" id="active-offset" name="offset" value="50">"#),
+            "Must render active-offset 50"
+        );
+        assert!(
+            !html.contains("You are on the last page."),
+            "Must not show last page toast when pages remain"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hx_mark_page_read_stays_on_last_page_with_toast() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Count query: limit=1, offset=0
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::query_param("limit", "1"))
+            .and(wiremock::matchers::query_param("offset", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 50,
+                "entries": []
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Renders current page: limit=50, offset=0
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::query_param("limit", "50"))
+            .and(wiremock::matchers::query_param("offset", "0"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 50,
+                "entries": [{
+                    "id": 1,
+                    "feed_id": 1,
+                    "title": "Final Page Entry",
+                    "url": "https://example.com/1",
+                    "published_at": "2026-11-23T00:00:00Z",
+                    "status": "read",
+                    "reading_time": 1,
+                    "feed": {
+                        "id": 1,
+                        "title": "Tech Blog",
+                        "category": { "id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 0 }
+            })))
+            .mount(&server)
+            .await;
+
+        let (app, cookie) = setup_test_app(&server.uri()).await;
+
+        let form_body = "entry_ids=1,2&status=all&offset=0";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-read")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form_body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(
+            html.contains("Final Page Entry"),
+            "Must render current page entries"
+        );
+        assert!(
+            html.contains(r#"<input type="hidden" id="active-offset" name="offset" value="0">"#),
+            "Must render active-offset 0"
+        );
+        assert!(
+            html.contains("Page marked as read. You are on the last page."),
+            "Must show last page toast"
+        );
+        assert!(
+            html.contains(r#"hx-swap-oob="beforeend""#),
+            "Toast must be swapped out-of-band"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hx_mark_page_read_loads_offset_zero_for_unread() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // In unread mode, queries offset=0
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::query_param("limit", "50"))
+            .and(wiremock::matchers::query_param("offset", "0"))
+            .and(wiremock::matchers::query_param("status", "unread"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 30,
+                "entries": [{
+                    "id": 101,
+                    "feed_id": 1,
+                    "title": "Fresh Unread Entry",
+                    "url": "https://example.com/101",
+                    "published_at": "2026-11-23T00:00:00Z",
+                    "status": "unread",
+                    "reading_time": 1,
+                    "feed": {
+                        "id": 1,
+                        "title": "Tech Blog",
+                        "category": { "id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 30 }
+            })))
+            .mount(&server)
+            .await;
+
+        let (app, cookie) = setup_test_app(&server.uri()).await;
+
+        // Even though form passed offset=50, unread status must reset to offset=0
+        let form_body = "entry_ids=51,52&status=unread&offset=50";
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-read")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(form_body))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+        assert!(
+            html.contains("Fresh Unread Entry"),
+            "Must render entries from offset 0"
+        );
+        assert!(
+            html.contains(r#"<input type="hidden" id="active-offset" name="offset" value="0">"#),
+            "Must render active-offset 0"
+        );
+        assert!(
+            !html.contains("You are on the last page."),
+            "Must not show toast in unread mode"
+        );
+    }
+
     async fn setup_test_app_ai(server_uri: &str, ai_enabled: bool) -> (axum::Router, String) {
         let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
-        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let _tmp = tempfile::NamedTempFile::new().unwrap();
         let config = Arc::new(Config {
             host: "127.0.0.1".to_string(),
             port: 3000,
@@ -817,7 +1090,7 @@ mod tests {
             llm_cli_cmd: "non-existent-llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: tmp.path().to_str().unwrap().to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
@@ -825,7 +1098,7 @@ mod tests {
 
         let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let session = SessionData {
             user_id: "u_1".to_string(),
@@ -907,7 +1180,8 @@ mod tests {
             .unwrap();
         let unauth_resp = app.clone().oneshot(unauth_req).await.unwrap();
         assert!(
-            unauth_resp.status() == StatusCode::SEE_OTHER || unauth_resp.status() == StatusCode::UNAUTHORIZED,
+            unauth_resp.status() == StatusCode::SEE_OTHER
+                || unauth_resp.status() == StatusCode::UNAUTHORIZED,
             "Unauthenticated request must be redirected or rejected"
         );
 
@@ -997,7 +1271,9 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/v1/feeds/counters"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": {} })),
+            )
             .mount(&server)
             .await;
 
@@ -1040,7 +1316,7 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: "data/summaries.db".to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
@@ -1048,7 +1324,7 @@ mod tests {
 
         let client = MinifluxClient::new(server_uri.to_string(), "api-key".to_string());
         let schema = build_schema(client);
-        build_app(config, schema)
+        build_app(config, schema).await
     }
 
     #[tokio::test]
@@ -1073,7 +1349,10 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/v1/feeds/counters"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "reads": {}, "unreads": { "1": 1 } })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "reads": {}, "unreads": { "1": 1 } })),
+            )
             .mount(&server)
             .await;
 
@@ -1162,7 +1441,9 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get("HX-Reswap").and_then(|h| h.to_str().ok()),
+            resp.headers()
+                .get("HX-Reswap")
+                .and_then(|h| h.to_str().ok()),
             Some("none")
         );
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
@@ -1184,7 +1465,9 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get("HX-Reswap").and_then(|h| h.to_str().ok()),
+            resp.headers()
+                .get("HX-Reswap")
+                .and_then(|h| h.to_str().ok()),
             Some("none")
         );
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();

@@ -45,10 +45,12 @@ impl RateLimiter {
             buckets.retain(|_, b| now.duration_since(b.last_refill) < prune_threshold);
         }
 
-        let bucket = buckets.entry(ip.to_string()).or_insert_with(|| ClientBucket {
-            tokens: self.capacity,
-            last_refill: now,
-        });
+        let bucket = buckets
+            .entry(ip.to_string())
+            .or_insert_with(|| ClientBucket {
+                tokens: self.capacity,
+                last_refill: now,
+            });
 
         let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
         bucket.tokens = (bucket.tokens + elapsed * self.refill_per_sec).min(self.capacity);
@@ -141,7 +143,10 @@ mod tests {
 
         // First 20 requests should be allowed (burst)
         for _ in 0..20 {
-            assert!(limiter.check(ip).await.is_ok(), "Request within burst should succeed");
+            assert!(
+                limiter.check(ip).await.is_ok(),
+                "Request within burst should succeed"
+            );
         }
 
         // 21st request should be throttled
@@ -167,14 +172,17 @@ mod tests {
             llm_cli_cmd: "llm".to_string(),
             llm_model: "gpt-4o-mini".to_string(),
             llm_extra_args: vec![],
-            ai_db_path: "data/summaries.db".to_string(),
+            database_url: ":memory:".to_string(),
             llm_provider: "openai".to_string(),
             llm_api_key: None,
             llm_api_base_url: None,
         });
-        let client = MinifluxClient::new(config.miniflux_base_url.clone(), config.miniflux_api_key.clone());
+        let client = MinifluxClient::new(
+            config.miniflux_base_url.clone(),
+            config.miniflux_api_key.clone(),
+        );
         let schema = build_schema(client);
-        let app = build_app(config, schema);
+        let app = build_app(config, schema).await;
 
         let large_payload = format!("entry_ids={}", "a".repeat(70 * 1024));
         let req = axum::http::Request::builder()

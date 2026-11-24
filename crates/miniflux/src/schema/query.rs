@@ -64,13 +64,16 @@ fn map_entry(e: crate::models::Entry) -> EntryGql {
         site_url: f.site_url,
         feed_url: f.feed_url,
         checked_at: f.checked_at,
-        category: f.category.map(|c| CategoryGql {
-            id: ID(c.id.to_string()),
-            title: c.title,
-        }).unwrap_or(CategoryGql {
-            id: ID("0".to_string()),
-            title: "Default".to_string(),
-        }),
+        category: f
+            .category
+            .map(|c| CategoryGql {
+                id: ID(c.id.to_string()),
+                title: c.title,
+            })
+            .unwrap_or(CategoryGql {
+                id: ID("0".to_string()),
+                title: "Default".to_string(),
+            }),
         unread_count: f.unread_count,
     });
 
@@ -92,17 +95,31 @@ fn map_entry(e: crate::models::Entry) -> EntryGql {
 
 #[Object]
 impl Query {
-    pub async fn entries(&self, ctx: &Context<'_>, filter: Option<EntryFilterInput>) -> Result<Vec<EntryGql>> {
+    pub async fn entries(
+        &self,
+        ctx: &Context<'_>,
+        filter: Option<EntryFilterInput>,
+    ) -> Result<Vec<EntryGql>> {
         let client = ctx.data::<MinifluxClient>()?;
         let domain_filter = build_domain_filter(filter)?;
-        let result = client.get_entries(&domain_filter).await.map_err(|e| Error::new(e.to_string()))?;
+        let result = client
+            .get_entries(&domain_filter)
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
         Ok(result.entries.into_iter().map(map_entry).collect())
     }
 
-    pub async fn entries_result(&self, ctx: &Context<'_>, filter: Option<EntryFilterInput>) -> Result<EntryResultSetGql> {
+    pub async fn entries_result(
+        &self,
+        ctx: &Context<'_>,
+        filter: Option<EntryFilterInput>,
+    ) -> Result<EntryResultSetGql> {
         let client = ctx.data::<MinifluxClient>()?;
         let domain_filter = build_domain_filter(filter)?;
-        let result = client.get_entries(&domain_filter).await.map_err(|e| Error::new(e.to_string()))?;
+        let result = client
+            .get_entries(&domain_filter)
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
         let entries = result.entries.into_iter().map(map_entry).collect();
         Ok(EntryResultSetGql {
             total: result.total,
@@ -127,13 +144,16 @@ impl Query {
                     site_url: f.site_url,
                     feed_url: f.feed_url,
                     checked_at: f.checked_at,
-                    category: f.category.map(|c| CategoryGql {
-                        id: ID(c.id.to_string()),
-                        title: c.title,
-                    }).unwrap_or(CategoryGql {
-                        id: ID("0".to_string()),
-                        title: "Default".to_string(),
-                    }),
+                    category: f
+                        .category
+                        .map(|c| CategoryGql {
+                            id: ID(c.id.to_string()),
+                            title: c.title,
+                        })
+                        .unwrap_or(CategoryGql {
+                            id: ID("0".to_string()),
+                            title: "Default".to_string(),
+                        }),
                     unread_count: f.unread_count,
                 });
 
@@ -159,7 +179,10 @@ impl Query {
 
     pub async fn feeds(&self, ctx: &Context<'_>) -> Result<Vec<FeedGql>> {
         let client = ctx.data::<MinifluxClient>()?;
-        let feeds = client.get_feeds().await.map_err(|e| Error::new(e.to_string()))?;
+        let feeds = client
+            .get_feeds()
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
 
         let gql_feeds = feeds
             .into_iter()
@@ -169,13 +192,16 @@ impl Query {
                 site_url: f.site_url,
                 feed_url: f.feed_url,
                 checked_at: f.checked_at,
-                category: f.category.map(|c| CategoryGql {
-                    id: ID(c.id.to_string()),
-                    title: c.title,
-                }).unwrap_or(CategoryGql {
-                    id: ID("0".to_string()),
-                    title: "Default".to_string(),
-                }),
+                category: f
+                    .category
+                    .map(|c| CategoryGql {
+                        id: ID(c.id.to_string()),
+                        title: c.title,
+                    })
+                    .unwrap_or(CategoryGql {
+                        id: ID("0".to_string()),
+                        title: "Default".to_string(),
+                    }),
                 unread_count: f.unread_count,
             })
             .collect();
@@ -196,7 +222,10 @@ impl Query {
 
     pub async fn unread_counter(&self, ctx: &Context<'_>) -> Result<i32> {
         let client = ctx.data::<MinifluxClient>()?;
-        let count = client.get_unread_counter().await.map_err(|e| Error::new(e.to_string()))?;
+        let count = client
+            .get_unread_counter()
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
         Ok(count)
     }
 
@@ -213,7 +242,10 @@ impl Query {
             limit: Some(1),
             ..Default::default()
         };
-        let result = client.get_entries(&domain_filter).await.map_err(|e| Error::new(e.to_string()))?;
+        let result = client
+            .get_entries(&domain_filter)
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
         Ok(result.total)
     }
 }

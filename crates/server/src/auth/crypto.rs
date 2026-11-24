@@ -39,7 +39,9 @@ pub fn encrypt_json<T: Serialize>(data: &T, secret: &str) -> Result<String, Cryp
     let nonce = Nonce::from(nonce_bytes);
 
     let plaintext = serde_json::to_vec(data)?;
-    let ciphertext = cipher.encrypt(&nonce, plaintext.as_ref()).map_err(|_| CryptoError::Encryption)?;
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext.as_ref())
+        .map_err(|_| CryptoError::Encryption)?;
 
     let mut combined = Vec::with_capacity(12 + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);
@@ -49,7 +51,10 @@ pub fn encrypt_json<T: Serialize>(data: &T, secret: &str) -> Result<String, Cryp
 }
 
 #[allow(deprecated)]
-pub fn decrypt_json<T: for<'de> Deserialize<'de>>(encrypted_b64: &str, secret: &str) -> Result<T, CryptoError> {
+pub fn decrypt_json<T: for<'de> Deserialize<'de>>(
+    encrypted_b64: &str,
+    secret: &str,
+) -> Result<T, CryptoError> {
     let key = derive_key(secret)?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| CryptoError::Decryption)?;
 
@@ -61,7 +66,9 @@ pub fn decrypt_json<T: for<'de> Deserialize<'de>>(encrypted_b64: &str, secret: &
     let (nonce_bytes, ciphertext) = combined.split_at(12);
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|_| CryptoError::Decryption)?;
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| CryptoError::Decryption)?;
     let data = serde_json::from_slice(&plaintext)?;
     Ok(data)
 }

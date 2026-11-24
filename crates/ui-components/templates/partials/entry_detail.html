@@ -78,9 +78,20 @@
     <!-- AI Brief Card Partial -->
     {% include "brief_card.html" %}
 
+    {% if is_rewrite %}
+    <div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">
+      {{ rewrite }}
+    </div>
+    {% else %}
+    <div id="ai-rewrite-box" class="animate-pulse space-y-3 my-4" hx-get="/hx/entries/{{ entry.id }}/rewrite" hx-trigger="load" hx-swap="outerHTML">
+      <div class="h-4 bg-muted rounded w-3/4"></div>
+      <div class="h-4 bg-muted rounded w-5/6"></div>
+      <div class="h-4 bg-muted rounded w-2/3"></div>
+    </div>
     <!-- Sanitized Article Content with Work Sans and Tabular Figures -->
     <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans">
       {{ sanitized_content|safe }}
     </div>
+    {% endif %}
   </div>
 </div>

@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** full
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 0
 - **Gate B approved:** gen:0
 - **Build armed:** none
@@ -34,3 +34,4 @@
 - **21:23** · lens-api · clean · 05-review-log.md & 05-lens-api.md clean
 - **21:24** · test-full · success · 239 workspace tests & doc tests pass (test-full)
 - **06:04** · gate-c · approved · Gate C approved: commit, push
+- **06:05** · merge · success · committed 859817f and pushed to origin/main · Status done

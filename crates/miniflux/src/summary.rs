@@ -73,10 +73,7 @@ mod tests {
     fn test_extractive_summary_returns_three_sentences() {
         let text = "First sentence. Second sentence. Third sentence. Fourth sentence.";
         let summary = extract_summary(text, 3);
-        assert_eq!(
-            summary,
-            "First sentence. Second sentence. Third sentence."
-        );
+        assert_eq!(summary, "First sentence. Second sentence. Third sentence.");
     }
 
     #[test]

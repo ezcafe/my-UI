@@ -12,9 +12,9 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 use ui_components::templates::{
-    AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate, EntryItemTemplate,
-    EntryListTemplate, EntryViewModel, ErrorCardTemplate, ExecutiveBriefCardTemplate,
-    FeedSummaryGroupViewModel, ToastTemplate,
+    AiErrorCardTemplate, AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate,
+    EntryItemTemplate, EntryListTemplate, EntryViewModel, ErrorCardTemplate,
+    ExecutiveBriefCardTemplate, FeedSummaryGroupViewModel, ToastTemplate,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -674,7 +674,35 @@ pub async fn executive_brief_htmx(
 
     let limit_val = query.limit.unwrap_or(15).clamp(1, 100);
     let offset_val = query.offset.unwrap_or(0).max(0);
+    let status_str = query.status.as_deref().unwrap_or("unread");
     let filter = build_graphql_filter(&query, limit_val, offset_val, config.auth_enabled);
+
+    let build_retry_url = || {
+        let mut retry_url = format!(
+            "/hx/executive-brief?offset={}&limit={}&status={}",
+            offset_val, limit_val, status_str
+        );
+        if let Some(fid) = query.feed_id {
+            retry_url.push_str(&format!("&feed_id={}", fid));
+        }
+        if let Some(cid) = query.category_id {
+            retry_url.push_str(&format!("&category_id={}", cid));
+        }
+        retry_url
+    };
+
+    let render_brief_error = |retry_url: &str| {
+        AiErrorCardTemplate {
+            title: "Executive Brief Unavailable",
+            message: crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE,
+            retry_url,
+            target: "#page-executive-brief",
+            swap: "outerHTML",
+            container_id: "page-executive-brief",
+        }
+        .render()
+        .unwrap_or_default()
+    };
 
     let gql = format!(
         "query {{
@@ -812,12 +840,9 @@ pub async fn executive_brief_htmx(
                     return (StatusCode::OK, headers, Html(full_html)).into_response();
                 }
             }
-            return (
-                StatusCode::OK,
-                headers,
-                Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
-            )
-                .into_response();
+            let retry_url = build_retry_url();
+            let card_html = render_brief_error(&retry_url);
+            return (StatusCode::OK, headers, Html(card_html)).into_response();
         }
         in_flight.insert(page_key.clone());
     }
@@ -901,15 +926,9 @@ pub async fn executive_brief_htmx(
 
     // Failure contract
     if batch_res.top.is_empty() && batch_res.items.is_empty() {
-        let toast = crate::error::render_llm_error_toast();
-        return (
-            StatusCode::OK,
-            headers,
-            Html(format!(
-                r#"<div id="page-executive-brief" class="hidden"></div>{toast}"#
-            )),
-        )
-            .into_response();
+        let retry_url = build_retry_url();
+        let card_html = render_brief_error(&retry_url);
+        return (StatusCode::OK, headers, Html(card_html)).into_response();
     }
 
     let mut summary_inputs = Vec::new();
@@ -951,12 +970,9 @@ pub async fn executive_brief_htmx(
         .await
         .is_err()
     {
-        return (
-            StatusCode::OK,
-            headers,
-            Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
-        )
-            .into_response();
+        let retry_url = build_retry_url();
+        let card_html = render_brief_error(&retry_url);
+        return (StatusCode::OK, headers, Html(card_html)).into_response();
     }
 
     let card_html = if !batch_res.top.is_empty() {
@@ -966,8 +982,8 @@ pub async fn executive_brief_htmx(
         .render()
         .unwrap_or_default()
     } else {
-        let toast = crate::error::render_llm_error_toast();
-        format!(r#"<div id="page-executive-brief" class="hidden"></div>{toast}"#)
+        let retry_url = build_retry_url();
+        render_brief_error(&retry_url)
     };
 
     let mut full_html = card_html;
@@ -1637,9 +1653,19 @@ pub async fn get_entry_analysis_htmx(
             Html(html).into_response()
         }
         Err(_) => {
-            let primary_html = r#"<div id="ai-analysis-box" class="hidden"></div>"#;
-            let toast_html = crate::error::render_llm_error_toast();
-            Html(format!("{primary_html}{toast_html}")).into_response()
+            let retry_url = format!("/hx/entries/{id}/analysis");
+            let card_html = AiErrorCardTemplate {
+                title: "AI Analysis Unavailable",
+                message: crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE,
+                retry_url: &retry_url,
+                target: "#ai-analysis-box",
+                swap: "outerHTML",
+                container_id: "ai-analysis-box",
+            }
+            .render()
+            .unwrap_or_default();
+
+            Html(card_html).into_response()
         }
     }
 }
@@ -1732,9 +1758,27 @@ pub async fn get_entry_rewrite_htmx(
             } else {
                 teaser
             };
-            let primary_html = render_analysis_fragment("", "", &fallback);
-            let toast_html = crate::error::render_llm_error_toast();
-            Html(format!("{primary_html}{toast_html}")).into_response()
+            let retry_url = format!("/hx/entries/{id}/rewrite");
+            let error_card = AiErrorCardTemplate {
+                title: "AI Rewrite Unavailable",
+                message: crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE,
+                retry_url: &retry_url,
+                target: "#ai-rewrite-box",
+                swap: "outerHTML",
+                container_id: "",
+            }
+            .render()
+            .unwrap_or_default();
+
+            let fallback_html = format!(
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+                escape_html(&fallback)
+            );
+
+            let full_html = format!(
+                r#"<div id="ai-rewrite-box" class="space-y-6">{error_card}{fallback_html}</div>"#
+            );
+            Html(full_html).into_response()
         }
     }
 }
@@ -3261,7 +3305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_entry_rewrite_htmx_fallback_on_llm_failure() {
+    async fn test_get_entry_rewrite_htmx_contextual_error_card_on_failure() {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/entries/503"))
@@ -3339,14 +3383,18 @@ mod tests {
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
         assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains("is-error"));
+        assert!(html.contains("AI Rewrite Unavailable"));
+        assert!(html.contains("hx-get=\"/hx/entries/503/rewrite\""));
+        assert!(html.contains("hx-target=\"#ai-rewrite-box\""));
+        assert!(html.contains("Retry"));
         assert!(html.contains("Graceful fallback executive brief."));
-        assert!(html.contains("id=\"toast-container\""));
-        assert!(html.contains("hx-swap-oob=\"beforeend\""));
-        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+        assert!(!html.contains("toast-container"));
+        assert!(!html.contains("hx-swap-oob"));
     }
 
     #[tokio::test]
-    async fn test_get_entry_analysis_htmx_fallback_on_llm_failure() {
+    async fn test_get_entry_analysis_htmx_contextual_error_card_on_failure() {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/entries/504"))
@@ -3416,14 +3464,18 @@ mod tests {
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        assert!(html.contains(r#"<div id="ai-analysis-box" class="hidden"></div>"#));
-        assert!(html.contains("id=\"toast-container\""));
-        assert!(html.contains("hx-swap-oob=\"beforeend\""));
-        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+        assert!(html.contains("id=\"ai-analysis-box\""));
+        assert!(html.contains("is-error"));
+        assert!(html.contains("AI Analysis Unavailable"));
+        assert!(html.contains("hx-get=\"/hx/entries/504/analysis\""));
+        assert!(html.contains("hx-target=\"#ai-analysis-box\""));
+        assert!(html.contains("Retry"));
+        assert!(!html.contains("toast-container"));
+        assert!(!html.contains("class=\"hidden\""));
     }
 
     #[tokio::test]
-    async fn test_render_executive_brief_htmx_toast_on_failure() {
+    async fn test_executive_brief_htmx_contextual_error_card_on_failure() {
         let mock_server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/entries"))
@@ -3518,9 +3570,120 @@ mod tests {
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        assert!(html.contains(r#"<div id="page-executive-brief" class="hidden"></div>"#));
-        assert!(html.contains("id=\"toast-container\""));
-        assert!(html.contains("hx-swap-oob=\"beforeend\""));
-        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+        assert!(html.contains("id=\"page-executive-brief\""));
+        assert!(html.contains("is-error"));
+        assert!(html.contains("Executive Brief Unavailable"));
+        assert!(
+            html.contains("offset=0")
+                && html.contains("limit=15")
+                && html.contains("status=unread")
+        );
+        assert!(html.contains("hx-target=\"#page-executive-brief\""));
+        assert!(html.contains("hx-swap=\"outerHTML\""));
+        assert!(html.contains("Retry"));
+        assert!(!html.contains("toast-container"));
+        assert!(!html.contains("class=\"hidden\""));
+    }
+
+    #[tokio::test]
+    async fn test_executive_brief_retry_url_preserves_query_filters() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 1,
+                "entries": [{
+                    "id": 998,
+                    "user_id": 1,
+                    "feed_id": 42,
+                    "title": "Uncached Item for Query Filters",
+                    "url": "http://example.com/998",
+                    "comments_url": "",
+                    "author": "Author",
+                    "content": "Full article content",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 2,
+                    "created_at": chrono::Utc::now().to_rfc3339(),
+                    "published_at": chrono::Utc::now().to_rfc3339(),
+                    "feed": {
+                        "id": 42,
+                        "user_id": 1,
+                        "title": "Tech Feed",
+                        "checked_at": "2026-11-22T08:00:00Z",
+                        "category": { "id": 7, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db = Arc::new(crate::ai::AiDb::new_mock());
+        let llm = crate::ai::llm::LlmCliRunner::new(
+            "/nonexistent/binary".to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+        let ai_service = Arc::new(crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/nonexistent/binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: "mock:db".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            limit: Some(10),
+            offset: Some(20),
+            feed_id: Some(42),
+            category_id: Some(7),
+            search: None,
+            request_brief: None,
+        };
+
+        let response = executive_brief_htmx(
+            Query(query),
+            State(schema),
+            State(config),
+            State(ai_service),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("id=\"page-executive-brief\""));
+        assert!(html.contains("is-error"));
+        assert!(html.contains("offset=20"));
+        assert!(html.contains("limit=10"));
+        assert!(html.contains("status=unread"));
+        assert!(html.contains("feed_id=42"));
+        assert!(html.contains("category_id=7"));
+        assert!(!html.contains("toast-container"));
     }
 }

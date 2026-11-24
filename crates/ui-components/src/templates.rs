@@ -49,6 +49,17 @@ pub struct AiSummaryCardTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "partials/ai_error_card.html")]
+pub struct AiErrorCardTemplate<'a> {
+    pub title: &'a str,
+    pub message: &'a str,
+    pub retry_url: &'a str,
+    pub target: &'a str,
+    pub swap: &'a str,
+    pub container_id: &'a str,
+}
+
+#[derive(Template)]
 #[template(path = "pages/login.html")]
 pub struct LoginTemplate;
 
@@ -2371,6 +2382,18 @@ mod tests {
             html.contains("isBriefSwap = targetId === 'page-executive-brief'"),
             "Must handle brief swap in htmx:afterSwap"
         );
+        assert!(
+            html.contains("isErrorCard"),
+            "Must check for isErrorCard in brief afterSwap handler"
+        );
+        assert!(
+            html.contains("Executive Brief Unavailable"),
+            "Must render Executive Brief Unavailable into list-executive-brief on error"
+        );
+        assert!(
+            html.contains("htmx.process(listBrief)"),
+            "Must process HTMX on listBrief on error sync"
+        );
     }
 
     #[test]
@@ -2907,7 +2930,8 @@ mod tests {
 
         // Container query workspace context
         assert!(
-            html.contains("container-name: workspace") || html.contains("container: workspace / inline-size"),
+            html.contains("container-name: workspace")
+                || html.contains("container: workspace / inline-size"),
             "base.html must define workspace container query context"
         );
 
@@ -2945,8 +2969,9 @@ mod tests {
             "base.html must not force two-column desktop split on initial load"
         );
         assert!(
-            !html.contains(".workspace-layout .detail-pane #detail-back-btn { display: none !important; }")
-                && !html.contains("#detail-back-btn {\n        display: none !important;"),
+            !html.contains(
+                ".workspace-layout .detail-pane #detail-back-btn { display: none !important; }"
+            ) && !html.contains("#detail-back-btn {\n        display: none !important;"),
             "detail back button must remain accessible on all screen sizes"
         );
 
@@ -3152,5 +3177,52 @@ mod tests {
             html.contains("loading=\"lazy\""),
             "Body images must have lazy loading attribute"
         );
+    }
+
+    #[test]
+    fn test_ai_error_card_template_rendering() {
+        let card_with_id = AiErrorCardTemplate {
+            title: "Executive Brief Unavailable",
+            message: "This model is currently experiencing high demand.",
+            retry_url: "/hx/executive-brief?status=unread",
+            target: "#page-executive-brief",
+            swap: "outerHTML",
+            container_id: "page-executive-brief",
+        };
+
+        let html = card_with_id
+            .render()
+            .expect("Failed to render AiErrorCardTemplate with container_id");
+
+        assert!(html.contains("id=\"page-executive-brief\""));
+        assert!(html.contains("is-error"));
+        assert!(html.contains("Executive Brief Unavailable"));
+        assert!(html.contains("This model is currently experiencing high demand."));
+        assert!(html.contains("hx-get=\"/hx/executive-brief?status=unread\""));
+        assert!(html.contains("hx-target=\"#page-executive-brief\""));
+        assert!(html.contains("hx-swap=\"outerHTML\""));
+        assert!(html.contains("hx-disabled-elt=\"this\""));
+        assert!(html.contains("data-lucide=\"alert-circle\""));
+        assert!(html.contains("data-lucide=\"refresh-cw\""));
+        assert!(html.contains("Retry"));
+
+        let card_without_id = AiErrorCardTemplate {
+            title: "AI Rewrite Unavailable",
+            message: "Temporary error",
+            retry_url: "/hx/entries/123/rewrite",
+            target: "#ai-rewrite-box",
+            swap: "outerHTML",
+            container_id: "",
+        };
+
+        let html_no_id = card_without_id
+            .render()
+            .expect("Failed to render AiErrorCardTemplate without container_id");
+
+        assert!(!html_no_id.contains("id=\"\""));
+        assert!(!html_no_id.contains("id="));
+        assert!(html_no_id.contains("is-error"));
+        assert!(html_no_id.contains("AI Rewrite Unavailable"));
+        assert!(html_no_id.contains("hx-get=\"/hx/entries/123/rewrite\""));
     }
 }

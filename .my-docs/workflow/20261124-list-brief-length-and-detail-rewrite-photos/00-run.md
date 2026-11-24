@@ -4,9 +4,9 @@
 - **Mode:** full
 - **Review profile:** full
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 0
 - **Gate B approved:** gen:0
 - **Build armed:** none
@@ -35,6 +35,8 @@
 - **20:35** · test-full · success · full workspace test suite (237/237 passed) and clippy (-D warnings clean) executed successfully
 - **20:41** · wide-desktop-width · done · implemented wide desktop detail panel width matching column 2 + column 3 (dynamic alignment with mag-col-center + CSS grid fallback), all 237 tests passing
 - **20:43** · gate-c · approved · Gate C approved: commit, push
+- **20:45** · merge · success · committed 3887441 and pushed to origin/main · Status done
+
 
 
 

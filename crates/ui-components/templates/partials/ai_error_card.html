@@ -1,0 +1,20 @@
+<div {% if !container_id.is_empty() %}id="{{ container_id }}" {% endif %}class="rounded-lg p-5 bg-muted/40 border border-border flex flex-col items-start gap-3 is-error">
+  <div class="flex items-center gap-2 text-muted-foreground">
+    <div class="p-1 rounded bg-destructive/10 text-destructive">
+      <i data-lucide="alert-circle" class="w-4 h-4"></i>
+    </div>
+    <span class="text-xs font-bold uppercase tracking-wider text-foreground font-sans">{{ title }}</span>
+  </div>
+  <p class="text-xs text-muted-foreground leading-relaxed font-sans">
+    {{ message }}
+  </p>
+  <button
+    hx-get="{{ retry_url }}"
+    hx-target="{{ target }}"
+    hx-swap="{{ swap }}"
+    hx-disabled-elt="this"
+    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-secondary-foreground text-xs font-medium font-sans hover:bg-secondary/80 transition-colors cursor-pointer">
+    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+    <span>Retry</span>
+  </button>
+</div>

@@ -10,6 +10,8 @@ pub struct AiSummaryRecord {
     pub summary: String,
     pub suggested_title: Option<String>,
     pub rewrite: Option<String>,
+    pub impact: Option<String>,
+    pub fallacies: Option<String>,
     pub model: String,
     pub created_at: String,
 }
@@ -20,6 +22,8 @@ pub struct ArticleSummaryInput {
     pub summary: String,
     pub suggested_title: Option<String>,
     pub rewrite: Option<String>,
+    pub impact: Option<String>,
+    pub fallacies: Option<String>,
     pub model: String,
 }
 
@@ -37,12 +41,16 @@ CREATE TABLE IF NOT EXISTS article_ai_summaries (
     summary TEXT NOT NULL,
     suggested_title TEXT,
     rewrite TEXT,
+    impact TEXT,
+    fallacies TEXT,
     model TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     search_vector tsvector GENERATED ALWAYS AS (
         to_tsvector('english', coalesce(suggested_title, '') || ' ' || coalesce(summary, '') || ' ' || coalesce(rewrite, ''))
     ) STORED
 );
+ALTER TABLE article_ai_summaries ADD COLUMN IF NOT EXISTS impact TEXT;
+ALTER TABLE article_ai_summaries ADD COLUMN IF NOT EXISTS fallacies TEXT;
 CREATE INDEX IF NOT EXISTS idx_article_summaries_created_at ON article_ai_summaries(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_article_summaries_search_gin ON article_ai_summaries USING GIN(search_vector);
 
@@ -60,6 +68,8 @@ struct ArticleSummaryRow {
     summary: String,
     suggested_title: Option<String>,
     rewrite: Option<String>,
+    impact: Option<String>,
+    fallacies: Option<String>,
     model: String,
     created_at: DateTime<Utc>,
 }
@@ -174,7 +184,7 @@ impl AiDb {
             Backend::Pg(pool) => {
                 let row: Option<ArticleSummaryRow> = sqlx::query_as(
                     r#"
-                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    SELECT entry_id, summary, suggested_title, rewrite, impact, fallacies, model, created_at
                     FROM article_ai_summaries
                     WHERE entry_id = $1
                     "#,
@@ -190,6 +200,8 @@ impl AiDb {
                     summary: r.summary,
                     suggested_title: r.suggested_title,
                     rewrite: r.rewrite,
+                    impact: r.impact,
+                    fallacies: r.fallacies,
                     model: r.model,
                     created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 })
@@ -209,7 +221,7 @@ impl AiDb {
             Backend::Pg(pool) => {
                 let rows: Result<Vec<ArticleSummaryRow>, _> = sqlx::query_as(
                     r#"
-                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    SELECT entry_id, summary, suggested_title, rewrite, impact, fallacies, model, created_at
                     FROM article_ai_summaries
                     WHERE entry_id = ANY($1)
                     "#,
@@ -228,6 +240,8 @@ impl AiDb {
                                 summary: r.summary,
                                 suggested_title: r.suggested_title,
                                 rewrite: r.rewrite,
+                                impact: r.impact,
+                                fallacies: r.fallacies,
                                 model: r.model,
                                 created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                             },
@@ -278,17 +292,42 @@ impl AiDb {
         rewrite: Option<&str>,
         model: &str,
     ) -> Result<(), AiDbError> {
+        self.save_summary_and_title_with_analysis(
+            entry_id,
+            suggested_title,
+            summary,
+            rewrite,
+            None,
+            None,
+            model,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_summary_and_title_with_analysis(
+        &self,
+        entry_id: i64,
+        suggested_title: Option<&str>,
+        summary: &str,
+        rewrite: Option<&str>,
+        impact: Option<&str>,
+        fallacies: Option<&str>,
+        model: &str,
+    ) -> Result<(), AiDbError> {
         let now = Utc::now();
         match &self.inner {
             Backend::Pg(pool) => {
                 sqlx::query(
                     r#"
-                    INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, rewrite, model, created_at)
-                    VALUES ($1, $2, $3, $4, $5, NOW())
+                    INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, rewrite, impact, fallacies, model, created_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                     ON CONFLICT (entry_id) DO UPDATE SET
                         summary = EXCLUDED.summary,
                         suggested_title = COALESCE(EXCLUDED.suggested_title, article_ai_summaries.suggested_title),
                         rewrite = COALESCE(EXCLUDED.rewrite, article_ai_summaries.rewrite),
+                        impact = COALESCE(EXCLUDED.impact, article_ai_summaries.impact),
+                        fallacies = COALESCE(EXCLUDED.fallacies, article_ai_summaries.fallacies),
                         model = EXCLUDED.model,
                         created_at = EXCLUDED.created_at
                     "#,
@@ -297,6 +336,8 @@ impl AiDb {
                 .bind(summary)
                 .bind(suggested_title)
                 .bind(rewrite)
+                .bind(impact)
+                .bind(fallacies)
                 .bind(model)
                 .execute(pool)
                 .await?;
@@ -311,6 +352,12 @@ impl AiDb {
                 let final_rewrite = rewrite
                     .map(|s| s.to_string())
                     .or_else(|| existing.as_ref().and_then(|r| r.rewrite.clone()));
+                let final_impact = impact
+                    .map(|s| s.to_string())
+                    .or_else(|| existing.as_ref().and_then(|r| r.impact.clone()));
+                let final_fallacies = fallacies
+                    .map(|s| s.to_string())
+                    .or_else(|| existing.as_ref().and_then(|r| r.fallacies.clone()));
                 guard.summaries.insert(
                     entry_id,
                     (
@@ -319,6 +366,8 @@ impl AiDb {
                             summary: summary.to_string(),
                             suggested_title: final_suggested_title,
                             rewrite: final_rewrite,
+                            impact: final_impact,
+                            fallacies: final_fallacies,
                             model: model.to_string(),
                             created_at: now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                         },
@@ -343,12 +392,14 @@ impl AiDb {
                 for item in items {
                     sqlx::query(
                         r#"
-                        INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, rewrite, model, created_at)
-                        VALUES ($1, $2, $3, $4, $5, NOW())
+                        INSERT INTO article_ai_summaries (entry_id, summary, suggested_title, rewrite, impact, fallacies, model, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
                         ON CONFLICT (entry_id) DO UPDATE SET
                             summary = EXCLUDED.summary,
                             suggested_title = COALESCE(EXCLUDED.suggested_title, article_ai_summaries.suggested_title),
                             rewrite = COALESCE(EXCLUDED.rewrite, article_ai_summaries.rewrite),
+                            impact = COALESCE(EXCLUDED.impact, article_ai_summaries.impact),
+                            fallacies = COALESCE(EXCLUDED.fallacies, article_ai_summaries.fallacies),
                             model = EXCLUDED.model,
                             created_at = EXCLUDED.created_at
                         "#,
@@ -357,6 +408,8 @@ impl AiDb {
                     .bind(&item.summary)
                     .bind(item.suggested_title.as_deref())
                     .bind(item.rewrite.as_deref())
+                    .bind(item.impact.as_deref())
+                    .bind(item.fallacies.as_deref())
                     .bind(&item.model)
                     .execute(&mut *tx)
                     .await?;
@@ -393,6 +446,14 @@ impl AiDb {
                         .rewrite
                         .clone()
                         .or_else(|| existing.as_ref().and_then(|r| r.rewrite.clone()));
+                    let final_impact = item
+                        .impact
+                        .clone()
+                        .or_else(|| existing.as_ref().and_then(|r| r.impact.clone()));
+                    let final_fallacies = item
+                        .fallacies
+                        .clone()
+                        .or_else(|| existing.as_ref().and_then(|r| r.fallacies.clone()));
                     guard.summaries.insert(
                         item.entry_id,
                         (
@@ -401,6 +462,8 @@ impl AiDb {
                                 summary: item.summary.clone(),
                                 suggested_title: final_suggested_title,
                                 rewrite: final_rewrite,
+                                impact: final_impact,
+                                fallacies: final_fallacies,
                                 model: item.model.clone(),
                                 created_at: now.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                             },
@@ -478,7 +541,7 @@ impl AiDb {
             Backend::Pg(pool) => {
                 let rows: Vec<ArticleSummaryRow> = sqlx::query_as(
                     r#"
-                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    SELECT entry_id, summary, suggested_title, rewrite, impact, fallacies, model, created_at
                     FROM article_ai_summaries
                     WHERE search_vector @@ plainto_tsquery('english', $1)
                     ORDER BY ts_rank(search_vector, plainto_tsquery('english', $1)) DESC
@@ -497,6 +560,8 @@ impl AiDb {
                         summary: r.summary,
                         suggested_title: r.suggested_title,
                         rewrite: r.rewrite,
+                        impact: r.impact,
+                        fallacies: r.fallacies,
                         model: r.model,
                         created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                     })
@@ -552,7 +617,7 @@ impl AiDb {
             Backend::Pg(pool) => {
                 let rows: Vec<ArticleSummaryRow> = sqlx::query_as(
                     r#"
-                    SELECT entry_id, summary, suggested_title, rewrite, model, created_at
+                    SELECT entry_id, summary, suggested_title, rewrite, impact, fallacies, model, created_at
                     FROM article_ai_summaries
                     WHERE created_at >= $1
                     ORDER BY created_at DESC
@@ -571,6 +636,8 @@ impl AiDb {
                         summary: r.summary,
                         suggested_title: r.suggested_title,
                         rewrite: r.rewrite,
+                        impact: r.impact,
+                        fallacies: r.fallacies,
                         model: r.model,
                         created_at: r.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
                     })
@@ -772,6 +839,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_ai_db_save_and_retrieve_analysis() {
+        let db = AiDb::new_mock();
+        db.save_summary_and_title_with_analysis(
+            200,
+            Some("Title 200"),
+            "Summary 200",
+            Some("Rewrite 200"),
+            Some("Impact 200"),
+            Some("Fallacy 200"),
+            "test-model",
+        )
+        .await
+        .expect("save analysis");
+
+        let rec = db.get_summary_and_title(200).await.expect("must exist");
+        assert_eq!(rec.entry_id, 200);
+        assert_eq!(rec.suggested_title.as_deref(), Some("Title 200"));
+        assert_eq!(rec.summary, "Summary 200");
+        assert_eq!(rec.rewrite.as_deref(), Some("Rewrite 200"));
+        assert_eq!(rec.impact.as_deref(), Some("Impact 200"));
+        assert_eq!(rec.fallacies.as_deref(), Some("Fallacy 200"));
+        assert_eq!(rec.model, "test-model");
+    }
+
+    #[tokio::test]
     async fn test_ai_db_batch_summaries_and_unprocessed() {
         let db = AiDb::new_mock();
 
@@ -781,6 +873,8 @@ mod tests {
                 summary: "Batch summary 1".to_string(),
                 suggested_title: Some("Title 1".to_string()),
                 rewrite: None,
+                impact: None,
+                fallacies: None,
                 model: "gpt-4o-mini".to_string(),
             },
             ArticleSummaryInput {
@@ -788,6 +882,8 @@ mod tests {
                 summary: "Batch summary 2 fallback".to_string(),
                 suggested_title: None,
                 rewrite: None,
+                impact: None,
+                fallacies: None,
                 model: "extractive-fallback".to_string(),
             },
         ];

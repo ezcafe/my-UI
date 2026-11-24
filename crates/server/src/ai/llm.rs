@@ -47,6 +47,13 @@ pub struct BatchArticleInput<'a> {
     pub is_cached: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq, Eq)]
+pub struct DetailAnalysisResult {
+    pub rewrite: String,
+    pub impact: String,
+    pub fallacies: String,
+}
+
 #[derive(Clone)]
 pub struct LlmCliRunner {
     pub cli_cmd: String,
@@ -150,6 +157,87 @@ impl LlmCliRunner {
             })
             .collect();
         Self::format_batch_prompt_structured(&items)
+    }
+
+    pub fn format_rewrite_and_analyze_prompt(title: &str, content: &str) -> String {
+        format!(
+            "Analyze and rewrite the following article. Output raw JSON only matching this schema:\n\
+            {{\n  \
+              \"rewrite\": \"Inverted pyramid style rewrite. Lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context.\",\n  \
+              \"impact\": \"Analyze the practical consequences and real-world impact of this news (who is affected, industry or social significance, short/long-term stakes).\",\n  \
+              \"fallacies\": \"Identify any informal logical fallacies or rhetorical biases in the text (e.g. ad hominem, straw man, false dilemma, hasty generalization, cherry-picking, emotional appeal). If the reporting is objective, factual, and logically sound, strictly output: 'Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu' (for Vietnamese) or 'No logical fallacies detected — Objective and well-supported reporting' (for English).\"\n\
+            }}\n\n\
+            CRITICAL MULTILINGUAL RULE:\n\
+            Write your response in the EXACT SAME LANGUAGE as the source article text.\n\
+            If an article is in Vietnamese, all fields MUST be in Vietnamese.\n\
+            If an article is in English, all fields MUST be in English.\n\
+            Do NOT translate articles into a different language.\n\n\
+            Output raw JSON only.\n\n\
+            Title: {}\n\
+            Content:\n{}",
+            title.trim(),
+            content.trim()
+        )
+    }
+
+    pub fn parse_rewrite_and_analyze_response(raw_output: &str) -> DetailAnalysisResult {
+        let trimmed = raw_output.trim();
+        let mut parsed: Option<DetailAnalysisResult> = serde_json::from_str(trimmed).ok();
+
+        if parsed.is_none() {
+            if let Some(start) = trimmed.find("```") {
+                let after_start = &trimmed[start + 3..];
+                let code_content = if let Some(first_newline) = after_start.find('\n') {
+                    &after_start[first_newline + 1..]
+                } else {
+                    after_start
+                };
+                if let Some(end) = code_content.rfind("```") {
+                    let candidate = code_content[..end].trim();
+                    parsed = serde_json::from_str(candidate).ok();
+                }
+            }
+        }
+
+        let mut result = parsed.unwrap_or_else(|| DetailAnalysisResult {
+            rewrite: trimmed.to_string(),
+            impact: String::new(),
+            fallacies: String::new(),
+        });
+
+        // Normalize fallacies reassuring indicator
+        let f_lower = result.fallacies.to_lowercase();
+        let is_no_fallacy = f_lower.is_empty()
+            || f_lower.contains("không phát hiện")
+            || f_lower.contains("không có")
+            || f_lower == "none"
+            || f_lower.starts_with("none")
+            || f_lower.contains("no fallacy")
+            || f_lower.contains("no logical fallacies")
+            || f_lower.contains("objective");
+
+        if is_no_fallacy {
+            let is_vietnamese = result
+                .rewrite
+                .chars()
+                .any(|c| matches!(c, 'à'..='ỹ' | 'À'..='Ỹ'))
+                || result
+                    .impact
+                    .chars()
+                    .any(|c| matches!(c, 'à'..='ỹ' | 'À'..='Ỹ'))
+                || f_lower.contains("không");
+            if is_vietnamese {
+                result.fallacies =
+                    "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
+                        .to_string();
+            } else {
+                result.fallacies =
+                    "No logical fallacies detected — Objective and well-supported reporting"
+                        .to_string();
+            }
+        }
+
+        result
     }
 
     pub fn build_args(&self) -> Vec<String> {
@@ -578,12 +666,13 @@ impl LlmCliRunner {
         }
     }
 
-    pub async fn rewrite(&self, title: &str, content: &str) -> (String, String) {
+    pub async fn rewrite_and_analyze(
+        &self,
+        title: &str,
+        content: &str,
+    ) -> (DetailAnalysisResult, String) {
         let _permit = self.semaphore.acquire().await.ok();
-        let prompt = format!(
-            "Rewrite the following article in an inverted pyramid style:\nTitle: {}\nContent: {}",
-            title, content
-        );
+        let prompt = Self::format_rewrite_and_analyze_prompt(title, content);
         let args = self.build_args();
         const TIMEOUT_SECS: u64 = 30;
         let prompt_bytes = prompt.into_bytes();
@@ -610,13 +699,19 @@ impl LlmCliRunner {
             Ok(Ok(output)) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if text.is_empty() {
-                    (String::new(), "error".to_string())
+                    (DetailAnalysisResult::default(), "error".to_string())
                 } else {
-                    (text, self.model.clone())
+                    let parsed = Self::parse_rewrite_and_analyze_response(&text);
+                    (parsed, self.model.clone())
                 }
             }
-            _ => (String::new(), "error".to_string()),
+            _ => (DetailAnalysisResult::default(), "error".to_string()),
         }
+    }
+
+    pub async fn rewrite(&self, title: &str, content: &str) -> (String, String) {
+        let (res, model) = self.rewrite_and_analyze(title, content).await;
+        (res.rewrite, model)
     }
 }
 
@@ -848,6 +943,17 @@ impl LlmBackend {
                     fallback.summarize(title, content).await
                 }
             },
+        }
+    }
+
+    pub async fn rewrite_and_analyze(
+        &self,
+        title: &str,
+        content: &str,
+    ) -> (DetailAnalysisResult, String) {
+        match self {
+            Self::Cli(cli) => cli.rewrite_and_analyze(title, content).await,
+            Self::Http { fallback, .. } => fallback.rewrite_and_analyze(title, content).await,
         }
     }
 
@@ -1460,5 +1566,49 @@ Some outro text
             "Batch prompt must not contain '<=10 words': {}",
             prompt
         );
+    }
+
+    #[test]
+    fn test_llm_rewrite_and_analyze_json_parsing_and_reassurance() {
+        let prompt = LlmCliRunner::format_rewrite_and_analyze_prompt(
+            "Tiêu đề bài viết",
+            "Nội dung bài viết mẫu",
+        );
+        assert!(prompt.contains("\"rewrite\""));
+        assert!(prompt.contains("\"impact\""));
+        assert!(prompt.contains("\"fallacies\""));
+        assert!(prompt.contains("CRITICAL MULTILINGUAL RULE"));
+
+        // 1. Direct JSON parse with explicit fallacies
+        let raw_json = r#"{
+            "rewrite": "Lead sentence.\n\n• Bullet 1",
+            "impact": "Tác động lớn đến thị trường.",
+            "fallacies": "Ngụy biện khái quát hóa vội vã trong đoạn 2."
+        }"#;
+        let res = LlmCliRunner::parse_rewrite_and_analyze_response(raw_json);
+        assert_eq!(res.rewrite, "Lead sentence.\n\n• Bullet 1");
+        assert_eq!(res.impact, "Tác động lớn đến thị trường.");
+        assert_eq!(
+            res.fallacies,
+            "Ngụy biện khái quát hóa vội vã trong đoạn 2."
+        );
+
+        // 2. Fenced markdown block with "Không phát hiện" -> normalized to reassuring indicator
+        let fenced_json = "```json\n{\n  \"rewrite\": \"Inverted pyramid lead.\",\n  \"impact\": \"Economic shift.\",\n  \"fallacies\": \"Không phát hiện\"\n}\n```";
+        let res2 = LlmCliRunner::parse_rewrite_and_analyze_response(fenced_json);
+        assert_eq!(res2.rewrite, "Inverted pyramid lead.");
+        assert_eq!(res2.impact, "Economic shift.");
+        assert!(res2.fallacies.contains("Không phát hiện lỗi ngụy biện"));
+        assert!(res2.fallacies.contains("Lập luận khách quan"));
+
+        // 3. English "none" -> normalized to English reassuring indicator
+        let english_json = r#"{
+            "rewrite": "English lead sentence.",
+            "impact": "Consumer impact.",
+            "fallacies": "None"
+        }"#;
+        let res3 = LlmCliRunner::parse_rewrite_and_analyze_response(english_json);
+        assert!(res3.fallacies.contains("No logical fallacies detected"));
+        assert!(res3.fallacies.contains("Objective"));
     }
 }

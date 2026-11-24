@@ -1,7 +1,7 @@
 use crate::ai::AiService;
 use crate::auth::handlers::{callback_handler, login_handler, logout_handler};
 use crate::cache::MinifluxCache;
-use crate::config::Config;
+use crate::config::{mask_database_url, Config};
 use crate::rate_limit::{rate_limit_middleware, RateLimiter};
 use crate::routes::entries::{
     executive_brief_htmx, get_entry_ai_summary_htmx, get_entry_detail_htmx, get_entry_rewrite_htmx,
@@ -59,6 +59,11 @@ impl FromRef<AppState> for Arc<RateLimiter> {
 pub async fn build_app(config: Arc<Config>, schema: AppSchema) -> Router {
     let ai_service = Arc::new(AiService::new(&config).await.unwrap_or_else(|e| {
         tracing::error!("Failed to initialize AiService: {}", e);
+        eprintln!(
+            "\n[DATABASE ERROR] Failed to connect to database at {}: {}\nHint: Ensure PostgreSQL is running. For local development, run:\n  docker compose -f docker-compose.local.yml up -d db\n",
+            mask_database_url(&config.database_url),
+            e
+        );
         panic!("Database initialization failed: {}", e);
     }));
     build_app_with_ai(config, schema, ai_service)

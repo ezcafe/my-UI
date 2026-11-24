@@ -11,7 +11,6 @@ use miniflux_client::schema::AppSchema;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
-use ui_components::sanitizer::sanitize_html;
 use ui_components::templates::{
     AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate, EntryItemTemplate,
     EntryListTemplate, EntryViewModel, ErrorCardTemplate, ExecutiveBriefCardTemplate,
@@ -890,6 +889,8 @@ pub async fn executive_brief_htmx(
                     Some(item.suggested_title.clone())
                 },
                 rewrite: item.rewrite.clone(),
+                impact: None,
+                fallacies: None,
                 model: model.clone(),
             });
         }
@@ -1266,7 +1267,6 @@ pub async fn get_entry_detail_htmx(
     }
 
     let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let sanitized_content = sanitize_html(content);
     let summary = item
         .get("summary")
         .and_then(|v| v.as_str())
@@ -1285,23 +1285,46 @@ pub async fn get_entry_detail_htmx(
         content
     };
 
-    let (suggested_title, summary, rewrite, is_rewrite) = if config.ai_enabled {
+    let (suggested_title, summary, rewrite, impact, fallacies, is_rewrite) = if config.ai_enabled {
         if let Some(record) = ai_service.db.get_summary_and_title(id).await {
             let (rewrite, is_rewrite) = match record.rewrite {
                 Some(ref r) if !r.trim().is_empty() => (r.clone(), true),
-                _ => (record.summary.clone(), false),
+                _ => (String::new(), false),
             };
-            (record.suggested_title, record.summary, rewrite, is_rewrite)
+            let impact = record.impact.unwrap_or_default();
+            let fallacies = record.fallacies.unwrap_or_default();
+            (
+                record.suggested_title,
+                record.summary,
+                rewrite,
+                impact,
+                fallacies,
+                is_rewrite,
+            )
         } else {
             let fallback_teaser = if !teaser_str.is_empty() {
                 teaser_str.to_string()
             } else {
                 summary.clone()
             };
-            (None, fallback_teaser.clone(), fallback_teaser, false)
+            (
+                None,
+                fallback_teaser.clone(),
+                String::new(),
+                String::new(),
+                String::new(),
+                false,
+            )
         }
     } else {
-        (None, summary.clone(), summary.clone(), false)
+        (
+            None,
+            summary.clone(),
+            String::new(),
+            String::new(),
+            String::new(),
+            false,
+        )
     };
 
     let entry = EntryViewModel {
@@ -1344,8 +1367,9 @@ pub async fn get_entry_detail_htmx(
     let template = EntryDetailTemplate {
         entry,
         summary,
-        sanitized_content,
         rewrite,
+        impact,
+        fallacies,
         is_rewrite,
         auth_enabled: config.auth_enabled,
     };
@@ -1391,6 +1415,52 @@ pub async fn get_entry_detail_htmx(
     Html(html).into_response()
 }
 
+fn render_analysis_fragment(impact: &str, fallacies: &str, rewrite: &str) -> String {
+    let mut html = String::from(r#"<div id="ai-rewrite-box" class="space-y-6">"#);
+
+    html.push_str(&format!(
+        r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+        escape_html(rewrite)
+    ));
+
+    if !impact.is_empty() {
+        html.push_str(&format!(
+            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
+  <div class="flex items-center gap-2 mb-2">
+    <div class="p-1 rounded bg-muted text-foreground">
+      <i data-lucide="trending-up" class="w-4 h-4 text-brand"></i>
+    </div>
+    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Impact Analysis</span>
+  </div>
+  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
+    {}
+  </p>
+</div>"#,
+            escape_html(impact)
+        ));
+    }
+
+    if !fallacies.is_empty() {
+        html.push_str(&format!(
+            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
+  <div class="flex items-center gap-2 mb-2">
+    <div class="p-1 rounded bg-muted text-foreground">
+      <i data-lucide="shield-alert" class="w-4 h-4 text-brand"></i>
+    </div>
+    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Logical Fallacy & Objectivity Check</span>
+  </div>
+  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
+    {}
+  </p>
+</div>"#,
+            escape_html(fallacies)
+        ));
+    }
+
+    html.push_str("</div>");
+    html
+}
+
 pub async fn get_entry_rewrite_htmx(
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
@@ -1407,10 +1477,9 @@ pub async fn get_entry_rewrite_htmx(
     if let Some(record) = ai_service.db.get_summary_and_title(id).await {
         if let Some(ref r) = record.rewrite {
             if !r.trim().is_empty() {
-                let html = format!(
-                    r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
-                    escape_html(r)
-                );
+                let impact = record.impact.as_deref().unwrap_or("");
+                let fallacies = record.fallacies.as_deref().unwrap_or("");
+                let html = render_analysis_fragment(impact, fallacies, r);
                 return Html(html).into_response();
             }
         }
@@ -1460,11 +1529,15 @@ pub async fn get_entry_rewrite_htmx(
         .extractor
         .extract_content(&url, &title, &teaser)
         .await;
-    match ai_service.generate_rewrite(id, &title, &content).await {
-        Ok(rewrite) => {
-            let html = format!(
-                r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
-                escape_html(&rewrite)
+    match ai_service
+        .generate_rewrite_and_analysis(id, &title, &content)
+        .await
+    {
+        Ok(analysis) => {
+            let html = render_analysis_fragment(
+                &analysis.impact,
+                &analysis.fallacies,
+                &analysis.rewrite,
             );
             Html(html).into_response()
         }
@@ -1479,10 +1552,7 @@ pub async fn get_entry_rewrite_htmx(
             } else {
                 teaser
             };
-            let html = format!(
-                r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
-                escape_html(&fallback)
-            );
+            let html = render_analysis_fragment("", "", &fallback);
             Html(html).into_response()
         }
     }
@@ -2694,6 +2764,70 @@ mod tests {
         );
         assert!(html.contains("Cached rewrite lead sentence. Second impact sentence."));
         assert!(html.contains("• Point 1"));
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_rewrite_htmx_serves_impact_and_fallacies() {
+        let db_path = "mock:entry_rewrite_505";
+        let db = AiDb::new(db_path).await.unwrap();
+        db.save_summary_and_title_with_analysis(
+            505,
+            Some("Suggested Title 505"),
+            "Executive brief 505.",
+            Some("Cached rewrite lead sentence for 505."),
+            Some("Crucial impact on tech supply chains."),
+            Some("Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: "http://127.0.0.1:8080".to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client =
+            MinifluxClient::new("http://127.0.0.1:8080".to_string(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/505/rewrite")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains("Impact Analysis"));
+        assert!(html.contains("Crucial impact on tech supply chains."));
+        assert!(html.contains("Logical Fallacy & Objectivity Check"));
+        assert!(html.contains("Không phát hiện lỗi ngụy biện"));
+        assert!(html.contains("Cached rewrite lead sentence for 505."));
     }
 
     #[tokio::test]

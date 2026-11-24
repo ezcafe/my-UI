@@ -107,9 +107,10 @@ pub struct BriefCardTemplate {
 pub struct EntryDetailTemplate {
     pub entry: EntryViewModel,
     pub summary: String,
-    pub sanitized_content: String,
     pub auth_enabled: bool,
     pub rewrite: String,
+    pub impact: String,
+    pub fallacies: String,
     pub is_rewrite: bool,
 }
 
@@ -584,9 +585,10 @@ mod tests {
         let template = EntryDetailTemplate {
             entry,
             summary: "Extractive summary".to_string(),
-            sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: true,
             rewrite: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
             is_rewrite: false,
         };
 
@@ -604,6 +606,59 @@ mod tests {
         // Feed title and publication date must still be present
         assert!(html.contains("Audio Weekly"));
         assert!(html.contains("2 hours ago"));
+    }
+
+    #[test]
+    fn test_entry_detail_template_renders_analysis_cards_without_sanitized_content() {
+        let entry = EntryViewModel {
+            id: 105,
+            title: "Analysis and Rewrite Article".to_string(),
+            suggested_title: None,
+            feed_title: "Tech Wire".to_string(),
+            published_at: "10 mins ago".to_string(),
+            reading_time: 2,
+            summary: "Brief text.".to_string(),
+            url: "https://example.com/article".to_string(),
+            author: None,
+            is_read: false,
+            category_title: None,
+            image_url: None,
+            is_bookmarked: false,
+        };
+
+        let template = EntryDetailTemplate {
+            entry,
+            summary: "Executive brief text.".to_string(),
+            auth_enabled: true,
+            rewrite: "Inverted pyramid rewrite text.".to_string(),
+            impact: "Substantial economic impact across software sector.".to_string(),
+            fallacies: "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
+                .to_string(),
+            is_rewrite: true,
+        };
+
+        let html = template.render().expect("render detail template");
+
+        assert!(html.contains("Executive Brief"));
+        assert!(html.contains("Executive brief text."));
+        assert!(html.contains("Impact Analysis"));
+        assert!(html.contains("Substantial economic impact across software sector."));
+        assert!(html.contains("Logical Fallacy & Objectivity Check"));
+        assert!(html.contains("Không phát hiện lỗi ngụy biện"));
+        assert!(html.contains("Inverted pyramid rewrite text."));
+        assert!(html.contains("id=\"ai-rewrite-box\""));
+
+        let pos_rewrite = html.find("Inverted pyramid rewrite text.").unwrap();
+        let pos_impact = html.find("Impact Analysis").unwrap();
+        let pos_fallacy = html.find("Logical Fallacy & Objectivity Check").unwrap();
+        assert!(
+            pos_rewrite < pos_impact,
+            "Rewrite must appear before Impact Analysis"
+        );
+        assert!(
+            pos_impact < pos_fallacy,
+            "Impact Analysis must appear before Fallacy Check"
+        );
     }
 
     #[test]
@@ -627,9 +682,10 @@ mod tests {
         let template = EntryDetailTemplate {
             entry,
             summary: "XR summary".to_string(),
-            sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: true,
             rewrite: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
             is_rewrite: false,
         };
 
@@ -683,9 +739,10 @@ mod tests {
         let template = EntryDetailTemplate {
             entry,
             summary: "XR summary".to_string(),
-            sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: false,
             rewrite: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
             is_rewrite: false,
         };
 
@@ -732,9 +789,10 @@ mod tests {
         let template = EntryDetailTemplate {
             entry,
             summary: "XR summary".to_string(),
-            sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: true,
             rewrite: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
             is_rewrite: false,
         };
 
@@ -1032,9 +1090,10 @@ mod tests {
         let template = EntryDetailTemplate {
             entry,
             summary: "Summary".to_string(),
-            sanitized_content: "<p>Detail body</p>".to_string(),
             auth_enabled: true,
             rewrite: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
             is_rewrite: false,
         };
         let html = template
@@ -1458,9 +1517,10 @@ mod tests {
         let detail_template = EntryDetailTemplate {
             entry,
             summary: "Summary".to_string(),
-            sanitized_content: "<p>Content</p>".to_string(),
             auth_enabled: false,
             rewrite: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
             is_rewrite: false,
         };
         let detail_html = detail_template

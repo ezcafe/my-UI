@@ -6,7 +6,7 @@ pub mod prefetch;
 use crate::config::Config;
 pub use db::{AiDb, AiDbError, ArticleSummaryInput};
 pub use extractor::ArticleExtractor;
-pub use llm::{LlmBackend, LlmCliRunner, LlmHttpClient};
+pub use llm::{DetailAnalysisResult, LlmBackend, LlmCliRunner, LlmHttpClient};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -29,7 +29,11 @@ pub struct AiService {
 
 impl AiService {
     pub async fn new(config: &Config) -> Result<Self, AiDbError> {
-        let db = Arc::new(AiDb::new(&config.database_url).await?);
+        let db = if !config.ai_enabled {
+            Arc::new(AiDb::new_mock())
+        } else {
+            Arc::new(AiDb::new(&config.database_url).await?)
+        };
         let extractor = ArticleExtractor::new();
         let cli_runner = LlmCliRunner::new(
             config.llm_cli_cmd.clone(),
@@ -79,14 +83,14 @@ impl AiService {
         summary
     }
 
-    pub async fn generate_rewrite(
+    pub async fn generate_rewrite_and_analysis(
         &self,
         entry_id: i64,
         title: &str,
         content: &str,
-    ) -> Result<String, String> {
-        let (rewrite, model) = self.llm.rewrite(title, content).await;
-        if !rewrite.is_empty() && model != "error" {
+    ) -> Result<DetailAnalysisResult, String> {
+        let (analysis, model) = self.llm.rewrite_and_analyze(title, content).await;
+        if !analysis.rewrite.is_empty() && model != "error" {
             let existing = self.db.get_summary_and_title(entry_id).await;
             let summary = existing
                 .as_ref()
@@ -96,18 +100,31 @@ impl AiService {
 
             let _ = self
                 .db
-                .save_summary_and_title_with_rewrite(
+                .save_summary_and_title_with_analysis(
                     entry_id,
                     suggested_title,
                     &summary,
-                    Some(&rewrite),
+                    Some(&analysis.rewrite),
+                    Some(&analysis.impact),
+                    Some(&analysis.fallacies),
                     &model,
                 )
                 .await;
-            Ok(rewrite)
+            Ok(analysis)
         } else {
-            Err("Failed to generate rewrite".to_string())
+            Err("Failed to generate rewrite and analysis".to_string())
         }
+    }
+
+    pub async fn generate_rewrite(
+        &self,
+        entry_id: i64,
+        title: &str,
+        content: &str,
+    ) -> Result<String, String> {
+        self.generate_rewrite_and_analysis(entry_id, title, content)
+            .await
+            .map(|a| a.rewrite)
     }
 }
 

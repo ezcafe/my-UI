@@ -836,3 +836,100 @@ async fn test_e2e_page_load_and_detail_drawer_rewrite_flow() {
         .unwrap();
     assert!(ct.starts_with("text/css"));
 }
+
+#[tokio::test]
+async fn test_e2e_detail_drawer_analysis_flow() {
+    let mock_upstream = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/entries/99"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": 99,
+            "user_id": 1,
+            "feed_id": 10,
+            "title": "Story 99 Title",
+            "url": "https://example.com/99",
+            "comments_url": "",
+            "author": "Tech Author",
+            "content": "<p>Raw article body that must never be shown on details page.</p>",
+            "hash": "hash99",
+            "published_at": "2026-11-24T00:00:00Z",
+            "created_at": "2026-11-24T00:00:00Z",
+            "status": "unread",
+            "starred": false,
+            "reading_time": 2,
+            "feed": {
+                "id": 10,
+                "user_id": 1,
+                "feed_url": "https://example.com/feed",
+                "site_url": "https://example.com",
+                "title": "Tech Feed"
+            }
+        })))
+        .mount(&mock_upstream)
+        .await;
+
+    let db_path = "mock:e2e_analysis_99";
+    let db = server::ai::AiDb::new(db_path).await.unwrap();
+    db.save_summary_and_title_with_analysis(
+        99,
+        Some("Story 99 Title"),
+        "Executive brief 99.",
+        Some("Detailed inverted pyramid rewrite for 99."),
+        Some("Direct disruption to mobile software ecosystems."),
+        Some("Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"),
+        "test-model",
+    )
+    .await
+    .unwrap();
+
+    let config = Arc::new(Config {
+        host: "127.0.0.1".to_string(),
+        port: 3000,
+        app_base_url: "http://127.0.0.1:3000".to_string(),
+        auth_enabled: false,
+        session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+        oidc_issuer_url: "https://id.example.com".to_string(),
+        oidc_client_id: "test-client".to_string(),
+        oidc_client_secret: "test-secret".to_string(),
+        oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+        miniflux_base_url: mock_upstream.uri(),
+        miniflux_api_key: "api-key".to_string(),
+        ai_enabled: true,
+        llm_cli_cmd: "llm".to_string(),
+        llm_model: "test-model".to_string(),
+        llm_extra_args: vec![],
+        database_url: db_path.to_string(),
+        llm_provider: "openai".to_string(),
+        llm_api_key: None,
+        llm_api_base_url: None,
+    });
+
+    let client = MinifluxClient::new(mock_upstream.uri(), "api-key".to_string());
+    let schema = build_schema(client);
+    let app = server::app::build_app(config, schema).await;
+
+    // 1. Open drawer for Entry 99
+    let req = Request::builder()
+        .uri("/hx/entries/99")
+        .header("HX-Request", "true")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+    )
+    .unwrap();
+
+    // Must show Executive Brief, Impact Card, Fallacy Card, and Rewrite
+    assert!(body.contains("Executive Brief"));
+    assert!(body.contains("Executive brief 99."));
+    assert!(body.contains("Impact Analysis"));
+    assert!(body.contains("Direct disruption to mobile software ecosystems."));
+    assert!(body.contains("Logical Fallacy & Objectivity Check"));
+    assert!(body.contains("Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"));
+    assert!(body.contains("Detailed inverted pyramid rewrite for 99."));
+
+    // Must NEVER show raw original content
+    assert!(!body.contains("Raw article body that must never be shown on details page."));
+}

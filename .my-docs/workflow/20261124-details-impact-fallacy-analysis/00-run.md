@@ -1,0 +1,56 @@
+# Run card
+
+- **Slug:** 20261124-details-impact-fallacy-analysis
+- **Mode:** full
+- **Review profile:** full
+- **Has UI / API / DB / auth/PII/schema:** yes | yes | yes | yes
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
+- **Gate B settle gen:** 0
+- **Gate B approved:** gen:0
+- **Build armed:** none
+- **Gate C approved:** user: "Commit and push"
+- **Last Verify:** verify-pass
+- **Last verify-pass at:** 2026-11-24T10:56:09+07:00
+- **Last verify settle-gen:** 0
+- **Lens plan:** api|db
+- **Pending parallel:** none
+- **Notes:** ideation-confirmed, smoke-pass, layout-adjusted-to-bottom
+- **Provenance:** ideation-confirmed: user: "1A, 2A, 3B. Displaying a reassuring indicator"; gate-b-approved: user: "Proceed with TDD build"; smoke-pass-rerun: evidence: Smoke-Task in 06-test-log.md; gate-c-approved: user: "Commit and push"
+- **Test path last run:** full
+
+## Run log
+
+- **10:27** · seed · step-0 · card created
+- **10:28** · ideation · ideation-drafted · idea drafted in 01-idea.md, awaiting user confirmation
+- **10:31** · ideation · ideation-confirmed · user confirmed 1A, 2A, 3B with reassuring indicator
+- **10:31** · gate-a · ok · 01a-gate-a.md approved
+- **10:32** · skim · done · 02-skim.md completed
+- **10:32** · analyze · done · 02-analysis.md completed
+- **10:33** · grill · frontier-empty · 02b-grill.md completed
+- **10:33** · clarity-check · ok · clarity-check ok — design
+- **10:34** · design · done · 03-design.md and 04-tasks.md created
+- **10:34** · clarity-check · ok · clarity-check ok — api|db
+- **10:34** · api-contract-review · clean · 03a-api-contract-review.md clean
+- **10:34** · db-design-review · clean · 03a-db-design-review.md clean
+- **10:34** · clarity-check · ok · clarity-check ok — design-review
+- **10:35** · design-review · clean · 03a-design-review-log.md clean
+- **10:35** · clarity-check · ok · clarity-check ok — tdd-review
+- **10:35** · tdd-review · clean · 04a-tdd-plan-review.md clean
+- **10:35** · gate-b · approved · Gate B approved — gen:0
+- **10:35** · clarity-check · ok · clarity-check ok — build
+- **10:48** · build · verify-pass · 208 tests passing, 0 clippy warnings
+- **10:48** · finalize-lens-plan · done · Lens plan finalized to api|db
+- **10:49** · smoke · smoke-pass · 06-test-log.md updated
+- **10:49** · clarity-check · ok · clarity-check ok — adversarial
+- **10:49** · adversarial · clean · 05-review-log.md clean
+- **10:49** · quality · clean · 05-review-log.md clean
+- **10:49** · lens-api · clean · 05-lens-api.md clean
+- **10:49** · lens-db · clean · 05-lens-db.md clean
+- **10:49** · merge-findings · clean · 05-review-log.md clean
+- **10:49** · test-full · success · 208 tests passed, 0 failures
+- **10:53** · layout · done · moved impact & fallacy cards to bottom below rewrite
+- **10:56** · test-verify · success · 208 tests passed, 0 clippy warnings
+- **10:57** · gate-c · approved · user approved "Commit and push"
+- **10:57** · merge · done · committed and pushed to origin/main

@@ -2,6 +2,8 @@ use scraper::{ElementRef, Html, Node, Selector};
 use std::sync::LazyLock;
 use std::time::Duration;
 
+const MAX_EXTRACTED_WORDS: usize = 250;
+
 static ARTICLE_SELECTOR: LazyLock<Selector> =
     LazyLock::new(|| Selector::parse("article").expect("valid article selector"));
 static BODY_SELECTOR: LazyLock<Selector> =
@@ -40,41 +42,42 @@ impl ArticleExtractor {
 
         // 3. If still empty or too short, fallback to teaser
         if extracted_text.len() < 50 {
-            extracted_text = miniflux_client::summary::extract_summary(teaser, 3);
-            if extracted_text.is_empty() {
-                extracted_text = teaser.trim().to_string();
-            }
+            extracted_text = Self::clean_teaser(teaser);
         }
 
-        Self::truncate_words(&extracted_text, 100)
+        Self::truncate_words(&extracted_text, MAX_EXTRACTED_WORDS)
     }
 
     pub async fn extract_content(&self, url: &str, _title: &str, teaser: &str) -> String {
         // Fast-path: If teaser has >= 50 words, return immediately without network fetch
-        let clean_teaser = miniflux_client::summary::extract_summary(teaser, 3);
-        let teaser_text = if clean_teaser.is_empty() {
-            teaser.trim()
-        } else {
-            &clean_teaser
-        };
+        let teaser_text = Self::clean_teaser(teaser);
         let word_count = teaser_text.split_whitespace().count();
         if word_count >= 50 {
-            return Self::truncate_words(teaser_text, 100);
+            return Self::truncate_words(&teaser_text, MAX_EXTRACTED_WORDS);
         }
 
         if url.trim().is_empty() || !url.starts_with("http") {
-            return Self::truncate_words(teaser_text, 100);
+            return Self::truncate_words(&teaser_text, MAX_EXTRACTED_WORDS);
         }
 
         match self.client.get(url).send().await {
             Ok(resp) if resp.status().is_success() => match resp.text().await {
                 Ok(html) => self.parse_html(&html, _title, teaser),
-                Err(_) => Self::truncate_words(teaser_text, 100),
+                Err(_) => Self::truncate_words(&teaser_text, MAX_EXTRACTED_WORDS),
             },
             _ => {
                 // HTTP 403, 429, Cloudflare challenge, paywall, timeout, or network error
-                Self::truncate_words(teaser_text, 100)
+                Self::truncate_words(&teaser_text, MAX_EXTRACTED_WORDS)
             }
+        }
+    }
+
+    fn clean_teaser(teaser: &str) -> String {
+        let stripped = miniflux_client::summary::strip_html_tags(teaser);
+        if stripped.is_empty() {
+            teaser.trim().to_string()
+        } else {
+            stripped
         }
     }
 
@@ -202,14 +205,19 @@ mod tests {
 
         let extractor = ArticleExtractor::new();
         let blocked_url = format!("{}/blocked", mock_server.uri());
-        let teaser = "Teaser sentence 1. Teaser sentence 2. Teaser sentence 3. Extra sentence 4 that gets truncated.";
+        let teaser = "<p>Teaser sentence 1. Teaser sentence 2. Teaser sentence 3. Extra sentence 4 that must be preserved.</p>";
         let content = extractor
             .extract_content(&blocked_url, "Blocked News", teaser)
             .await;
 
         assert!(content.contains("Teaser sentence 1. Teaser sentence 2. Teaser sentence 3."));
+        assert!(
+            content.contains("Extra sentence 4 that must be preserved."),
+            "Fallback teaser must not pre-clip at 3 sentences: {}",
+            content
+        );
+        assert!(!content.contains("<p>") && !content.contains("</p>"));
         assert!(!content.contains("Title:"));
-        assert!(!content.contains("Extra sentence 4"));
     }
 
     #[test]
@@ -250,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extractor_word_truncation_100() {
+    fn test_extractor_word_truncation_250() {
         let words = (0..300)
             .map(|i| format!("word{}", i))
             .collect::<Vec<_>>()
@@ -260,10 +268,10 @@ mod tests {
             words
         );
         let extractor = ArticleExtractor::new();
-        let content = extractor.parse_html(&html, "100 Test Title", "teaser");
+        let content = extractor.parse_html(&html, "250 Test Title", "teaser");
 
         let word_count = content.split_whitespace().count();
-        assert_eq!(word_count, 100, "Must be truncated to strictly 100 words");
+        assert_eq!(word_count, 250, "Must be truncated to strictly 250 words");
         assert!(!content.starts_with("Title:"));
     }
 }

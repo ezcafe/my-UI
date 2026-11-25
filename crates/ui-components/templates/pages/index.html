@@ -180,9 +180,13 @@
 </div>
 
 <script>
+  const AUTH_ENABLED = {{ auth_enabled }};
   const FILTER_CACHE_TTL_MS = 60000;
   const filterCache = new Map();
   const readSinceLastBriefSet = new Set();
+  const guestEntriesMap = new Map();
+  let currentViewMode = 'ai';
+  let isSearchActive = false;
 
   function escapeHtml(str) {
     if (!str) return '';
@@ -194,20 +198,46 @@
       .replace(/'/g, '&#039;');
   }
 
+  function shouldHideAiToggle(status, searchActive) {
+    return !searchActive && (status === 'today' || status === 'all');
+  }
+
+  function getDefaultViewForState(status, searchActive) {
+    if (searchActive) return 'list';
+    if (status === 'today' || status === 'all' || status === 'starred') return 'list';
+    return 'ai';
+  }
+
+  function updateAiToggleVisibility(status, searchActive) {
+    const btn = document.getElementById('ai-toggle-btn');
+    if (!btn) return;
+    btn.classList.toggle('hidden', shouldHideAiToggle(status, searchActive));
+  }
+
   function initAiViewMode() {
-    const savedMode = localStorage.getItem('my_news_view_mode');
-    const mode = savedMode || 'ai';
-    applyAiViewMode(mode);
+    isSearchActive = false;
+    currentViewMode = 'ai';
+    localStorage.setItem('my_news_view_mode', 'ai');
+    const statusInput = document.getElementById('active-status');
+    const status = statusInput ? statusInput.value : 'unread';
+    applyAiViewMode('ai', status, false);
   }
 
   function toggleAiView() {
-    const current = localStorage.getItem('my_news_view_mode') || 'ai';
-    const next = current === 'ai' ? 'list' : 'ai';
+    const next = currentViewMode === 'ai' ? 'list' : 'ai';
     localStorage.setItem('my_news_view_mode', next);
-    applyAiViewMode(next);
+    const statusInput = document.getElementById('active-status');
+    const activeStatus = statusInput ? statusInput.value : 'unread';
+    applyAiViewMode(next, activeStatus, isSearchActive);
   }
 
-  function applyAiViewMode(mode) {
+  function applyAiViewMode(mode, statusOverride, searchOverride) {
+    const statusInput = document.getElementById('active-status');
+    const activeStatus = statusOverride || (statusInput ? statusInput.value : 'unread');
+    const activeSearch = typeof searchOverride === 'boolean' ? searchOverride : isSearchActive;
+    const effectiveMode = shouldHideAiToggle(activeStatus, activeSearch) ? 'list' : (mode || 'ai');
+    currentViewMode = effectiveMode;
+
     const btn = document.getElementById('ai-toggle-btn');
     const iconMag = document.getElementById('view-icon-magazine');
     const iconList = document.getElementById('view-icon-list');
@@ -216,7 +246,7 @@
 
     if (btn) {
       btn.className = 'p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors cursor-pointer select-none';
-      if (mode === 'ai') {
+      if (effectiveMode === 'ai') {
         btn.title = 'Switch to List view';
         if (iconMag) iconMag.classList.remove('hidden');
         if (iconList) iconList.classList.add('hidden');
@@ -225,12 +255,13 @@
         if (iconMag) iconMag.classList.add('hidden');
         if (iconList) iconList.classList.remove('hidden');
       }
+      updateAiToggleVisibility(activeStatus, activeSearch);
       if (window.lucide && typeof lucide.createIcons === 'function') {
         lucide.createIcons({ root: btn });
       }
     }
 
-    if (mode === 'ai') {
+    if (effectiveMode === 'ai') {
       if (listView) listView.classList.add('hidden');
       if (magView) magView.classList.remove('hidden');
     } else {
@@ -366,7 +397,7 @@
     seedInitialFilterCache();
   }
 
-  function applyCachedList(cachedHtml) {
+  function applyCachedList(cachedHtml, statusOverride) {
     const entriesList = document.getElementById('entries-list');
     if (entriesList) {
       entriesList.innerHTML = cachedHtml;
@@ -376,11 +407,16 @@
       if (window.htmx && typeof htmx.process === 'function') {
         htmx.process(entriesList);
       }
+      if (!AUTH_ENABLED && typeof hydrateGuestEntriesFromDom === 'function') {
+        hydrateGuestEntriesFromDom();
+      }
       if (typeof syncDomReadStates === 'function') {
         syncDomReadStates();
       }
-      const savedMode = localStorage.getItem('my_news_view_mode') || 'ai';
-      applyAiViewMode(savedMode);
+      isSearchActive = false;
+      const statusInput = document.getElementById('active-status');
+      const activeStatus = statusOverride || (statusInput ? statusInput.value : 'unread');
+      applyAiViewMode(getDefaultViewForState(activeStatus, false), activeStatus, false);
     }
   }
 
@@ -388,7 +424,8 @@
     if (typeof closeDetailPanel === 'function') {
       closeDetailPanel();
     }
-    const status = btn.getAttribute('data-status');
+    const status = btn.getAttribute('data-status') || 'unread';
+    isSearchActive = false;
     const searchInput = document.getElementById('search-input');
     const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
 
@@ -416,7 +453,7 @@
           }
         }
         setActiveFilter(btn);
-        applyCachedList(cached.html);
+        applyCachedList(cached.html, status);
         return false;
       }
     }
@@ -428,7 +465,8 @@
   document.addEventListener('htmx:beforeRequest', (evt) => {
     const trigger = evt.detail && evt.detail.elt;
     if (trigger && trigger.classList && trigger.classList.contains('filter-pill')) {
-      const status = trigger.getAttribute('data-status');
+      const status = trigger.getAttribute('data-status') || 'unread';
+      isSearchActive = false;
       if (status === 'all' && typeof renderLocalAllArticles === 'function') {
         evt.preventDefault();
         setActiveFilter(trigger);
@@ -442,7 +480,7 @@
         if (Date.now() - cached.timestamp < FILTER_CACHE_TTL_MS) {
           evt.preventDefault();
           setActiveFilter(trigger);
-          applyCachedList(cached.html);
+          applyCachedList(cached.html, status);
         }
       }
     }
@@ -506,6 +544,9 @@
     if (typeof closeDetailPanel === 'function') {
       closeDetailPanel();
     }
+    const searchInput = document.getElementById('search-input');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+    isSearchActive = Boolean(searchQuery);
     // Allows HTMX to proceed with GET /hx/entries?search=...&status=all
   }
 
@@ -613,9 +654,35 @@
     }
   }
 
+  function formatDetailDates(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return;
+    root.querySelectorAll('time[data-date-format="dd/mm/yyyy"][datetime]').forEach((el) => {
+      const raw = (el.getAttribute('datetime') || '').trim();
+      if (!raw) return;
+      const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+      if (dateOnly) {
+        el.textContent = `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return;
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return;
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      el.textContent = `${dd}/${mm}/${d.getFullYear()}`;
+    });
+  }
+
   async function openEntryDetail(id) {
     const numId = Number(id);
     if (!numId) return;
+
+    if (!AUTH_ENABLED) {
+      if (typeof openGuestEntryDetail === 'function') {
+        await openGuestEntryDetail(numId);
+      }
+      return;
+    }
 
     // Check 30-day IndexedDB cache first
     let cached = null;
@@ -640,6 +707,7 @@
     if (isCacheValid) {
       // Instant render from cache - zero network request, zero skeleton flicker
       panel.innerHTML = cached.html;
+      formatDetailDates(panel);
       panel.classList.add('has-content');
       alignDetailPanelWidth();
       panel.classList.add('animate-slide-in-right');
@@ -950,8 +1018,21 @@
           }
         }
 
+        const triggerElt = evt.detail.requestConfig && evt.detail.requestConfig.elt;
+        const isFilterTabSwap = Boolean(
+          triggerElt && triggerElt.classList && triggerElt.classList.contains('filter-pill')
+        );
+        const isSearchSwap = Boolean(
+          triggerElt &&
+          (triggerElt.id === 'search-form' ||
+            (typeof triggerElt.closest === 'function' && triggerElt.closest('#search-form')))
+        );
+
         let status = null;
-        if (evt.detail.elt && typeof evt.detail.elt.getAttribute === 'function') {
+        if (triggerElt && typeof triggerElt.getAttribute === 'function') {
+          status = triggerElt.getAttribute('data-status');
+        }
+        if (!status && evt.detail.elt && typeof evt.detail.elt.getAttribute === 'function') {
           status = evt.detail.elt.getAttribute('data-status');
         }
         if (!status) {
@@ -967,15 +1048,38 @@
             html: entriesListEl.innerHTML,
           });
         }
+        if (!AUTH_ENABLED && typeof hydrateGuestEntriesFromDom === 'function') {
+          hydrateGuestEntriesFromDom();
+        }
         if (typeof syncDomReadStates === 'function') {
           syncDomReadStates();
         }
-        const currentMode = localStorage.getItem('my_news_view_mode') || 'ai';
-        applyAiViewMode(currentMode);
+        const effectiveStatus = status || 'unread';
+        if (isSearchSwap) {
+          isSearchActive = Boolean(searchQuery);
+          applyAiViewMode(
+            getDefaultViewForState(effectiveStatus, isSearchActive),
+            effectiveStatus,
+            isSearchActive
+          );
+        } else if (isFilterTabSwap) {
+          isSearchActive = false;
+          applyAiViewMode(
+            getDefaultViewForState(effectiveStatus, false),
+            effectiveStatus,
+            false
+          );
+        } else {
+          const nextMode = shouldHideAiToggle(effectiveStatus, isSearchActive)
+            ? 'list'
+            : currentViewMode;
+          applyAiViewMode(nextMode, effectiveStatus, isSearchActive);
+        }
       } else if (targetId === 'detail-panel' || evt.detail.target.closest('#detail-panel')) {
         invalidateFilterCache();
         const panel = document.getElementById('detail-panel');
         if (panel) {
+          formatDetailDates(panel);
           const detail = panel.querySelector('[data-entry-id]');
           if (detail) {
             const entryId = detail.getAttribute('data-entry-id');
@@ -1033,120 +1137,351 @@
   const STORE_NAME = 'read_entries';
   let readSet = new Set();
 
-  function escapeHtml(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+  function safeHref(rawUrl) {
+    if (!rawUrl) return '#';
+    const trimmed = String(rawUrl).trim();
+    if (
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('https://') ||
+      (trimmed.startsWith('/') && !trimmed.startsWith('//'))
+    ) {
+      return trimmed;
+    }
+    return '#';
+  }
+
+  function openGuestDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 2);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('all_articles')) {
+          db.createObjectStore('all_articles', { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = (e) => reject(e);
+    });
+  }
+
+  function readGuestEntriesJson() {
+    const scriptEl = document.getElementById('entries-guest-data');
+    if (!scriptEl || !scriptEl.textContent) return [];
+    try {
+      const parsed = JSON.parse(scriptEl.textContent);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      console.warn('Could not parse entries-guest-data:', e);
+      return [];
+    }
+  }
+
+  function hydrateGuestEntriesFromDom() {
+    const items = readGuestEntriesJson();
+    items.forEach(item => {
+      const numId = Number(item && item.id);
+      if (numId) {
+        guestEntriesMap.set(numId, item);
+      }
+    });
+    return items;
+  }
+
+  async function getGuestArticle(numId) {
+    if (guestEntriesMap.has(numId)) {
+      return guestEntriesMap.get(numId);
+    }
+    hydrateGuestEntriesFromDom();
+    if (guestEntriesMap.has(numId)) {
+      return guestEntriesMap.get(numId);
+    }
+    try {
+      const db = await openGuestDb();
+      if (!db.objectStoreNames.contains('all_articles')) return null;
+      return await new Promise((resolve) => {
+        const tx = db.transaction('all_articles', 'readonly');
+        const store = tx.objectStore('all_articles');
+        const req = store.get(numId);
+        req.onsuccess = (e) => resolve(e.target.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function renderGuestEntryDetail(entry) {
+    const panel = document.getElementById('detail-panel');
+    if (!panel || !entry) return;
+    const numId = Number(entry.id);
+    const titleText = entry.title || '';
+    const feedTitle = entry.feed_title || 'Feed';
+    const rawDate = (entry.published_at || '').trim();
+    const formattedDate = entry.formatted_date || rawDate;
+    const href = safeHref(entry.url);
+    const bodyHtml = entry.sanitized_content && String(entry.sanitized_content).trim()
+      ? entry.sanitized_content
+      : '<p class="text-muted-foreground">No content available.</p>';
+    const dateHtml = rawDate
+      ? `<span>•</span><time datetime="${escapeHtml(rawDate)}" data-date-format="dd/mm/yyyy">${escapeHtml(formattedDate)}</time>`
+      : (formattedDate ? `<span>•</span><span>${escapeHtml(formattedDate)}</span>` : '');
+
+    panel.innerHTML = `
+      <div class="flex flex-col h-full w-full" data-entry-id="${numId}">
+        <div class="flex items-center justify-between mb-6 shrink-0 w-full h-8">
+          <button
+            id="detail-back-btn"
+            onclick="closeDetailPanel()"
+            class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity shrink-0">
+            <i data-lucide="chevron-left" class="w-4 h-4 shrink-0"></i>
+            <span>Back</span>
+          </button>
+
+          <div class="flex items-center gap-2 h-8 shrink-0">
+            <a
+              href="${escapeHtml(href)}"
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick="markArticleRead(${numId})"
+              class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors shrink-0">
+              <span>Original</span>
+              <i data-lucide="external-link" class="w-3.5 h-3.5 shrink-0"></i>
+            </a>
+
+            <button
+              id="detail-toggle-read-btn"
+              onclick="toggleLocalReadStatus(${numId})"
+              class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="Toggle read status">
+              <i data-lucide="circle-dot" class="w-4 h-4 shrink-0"></i>
+            </button>
+
+            <button
+              onclick="triggerNativeBookmark(this.dataset.title, this.dataset.url)"
+              data-title="${escapeHtml(titleText)}"
+              data-url="${escapeHtml(href)}"
+              class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="Bookmark article">
+              <i data-lucide="bookmark" class="w-4 h-4 shrink-0"></i>
+            </button>
+          </div>
+        </div>
+
+        <div class="detail-scrollbar detail-body flex-1 overflow-y-auto pr-2 w-full max-w-[44rem] mx-auto">
+          <div class="mb-6">
+            <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
+              <span class="font-medium text-foreground">${escapeHtml(feedTitle)}</span>
+              ${dateHtml}
+            </div>
+            <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">${escapeHtml(titleText)}</h1>
+          </div>
+
+          <div id="guest-detail-content" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans">${bodyHtml}</div>
+        </div>
+      </div>
+    `;
+
+    formatDetailDates(panel);
+    panel.classList.add('has-content');
+    alignDetailPanelWidth();
+    panel.classList.add('animate-slide-in-right');
+    panel.classList.remove('hidden');
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: panel });
+    }
+    markLocallyRead(numId);
+    syncDomReadStates();
+  }
+
+  async function openGuestEntryDetail(numId) {
+    const panel = document.getElementById('detail-panel');
+    if (!panel) return;
+
+    const currentUrl = new URL(window.location);
+    if (currentUrl.searchParams.get('entry') !== String(numId)) {
+      currentUrl.searchParams.set('entry', numId);
+      history.pushState(null, '', currentUrl.pathname + '?' + currentUrl.searchParams.toString());
+    }
+
+    const entry = await getGuestArticle(numId);
+    if (entry) {
+      renderGuestEntryDetail(entry);
+      return;
+    }
+
+    panel.innerHTML = `
+      <div class="rounded-lg p-6 bg-card border border-border text-center flex flex-col items-center justify-center m-4">
+        <div class="p-2.5 rounded-full bg-muted text-muted-foreground mb-3">
+          <i data-lucide="inbox" class="w-6 h-6"></i>
+        </div>
+        <h3 class="text-sm font-bold font-sans text-foreground mb-1">Article Not Available Offline</h3>
+        <p class="text-xs font-sans text-muted-foreground mb-4 max-w-sm">This article is not in your local list or saved offline cache yet.</p>
+        <button onclick="closeDetailPanel()" class="px-4 py-2 rounded-full bg-primary text-primary-foreground text-xs font-bold font-sans">Back to List</button>
+      </div>
+    `;
+    panel.classList.add('has-content');
+    alignDetailPanelWidth();
+    panel.classList.add('animate-slide-in-right');
+    panel.classList.remove('hidden');
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: panel });
+    }
   }
 
   function initGuestDb() {
-    const req = indexedDB.open(DB_NAME, 2);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('all_articles')) {
-        db.createObjectStore('all_articles', { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = (e) => {
-      const db = e.target.result;
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const getAllReq = store.getAllKeys();
-      getAllReq.onsuccess = (ev) => {
-        readSet = new Set(ev.target.result);
-        syncDomReadStates();
-        cacheLoadedArticlesFromDom();
-      };
-    };
+    hydrateGuestEntriesFromDom();
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          cacheLoadedArticlesFromDom();
+          return;
+        }
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const getAllReq = store.getAllKeys();
+        getAllReq.onsuccess = (ev) => {
+          (ev.target.result || []).forEach(id => readSet.add(id));
+          syncDomReadStates();
+          cacheLoadedArticlesFromDom();
+        };
+      })
+      .catch((e) => console.warn('Could not open guest IndexedDB:', e));
   }
 
   function cacheLoadedArticlesFromDom() {
-    const rows = document.querySelectorAll('#entries-list .annuaire-row');
-    if (!rows || rows.length === 0) return;
-    const articlesToSave = [];
-    rows.forEach(row => {
-      const id = row.getAttribute('data-entry-id');
-      const numId = Number(id);
-      if (!numId) return;
-      const titleEl = row.querySelector('.article-title');
-      const title = titleEl ? titleEl.textContent.trim() : '';
-      const linkEl = row.querySelector('a[title="Open in browser"]');
-      const url = linkEl ? linkEl.getAttribute('href') : '';
-      articlesToSave.push({ id: numId, title, url, saved_at: Date.now() });
+    const guestItems = hydrateGuestEntriesFromDom();
+    const guestById = new Map();
+    guestItems.forEach(item => {
+      const numId = Number(item && item.id);
+      if (numId) guestById.set(numId, item);
     });
 
-    if (articlesToSave.length === 0) return;
-    const req = indexedDB.open(DB_NAME, 2);
-    req.onsuccess = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('all_articles')) return;
-      const tx = db.transaction('all_articles', 'readwrite');
-      const store = tx.objectStore('all_articles');
-      articlesToSave.forEach(art => {
-        store.put(art);
+    const rows = document.querySelectorAll('#entries-list .annuaire-row');
+    const articlesToSave = [];
+    if (rows && rows.length > 0) {
+      rows.forEach(row => {
+        const id = row.getAttribute('data-entry-id');
+        const numId = Number(id);
+        if (!numId) return;
+        const guest = guestById.get(numId);
+        const titleEl = row.querySelector('.article-title');
+        const linkEl = row.querySelector('a[title="Open in browser"]');
+        const title = (guest && guest.title) || (titleEl ? titleEl.textContent.trim() : '');
+        const url = (guest && guest.url) || (linkEl ? linkEl.getAttribute('href') : '') || '';
+        articlesToSave.push({
+          id: numId,
+          title,
+          url,
+          feed_title: (guest && guest.feed_title) || '',
+          published_at: (guest && guest.published_at) || '',
+          formatted_date: (guest && guest.formatted_date) || '',
+          sanitized_content: (guest && guest.sanitized_content) || '',
+          saved_at: Date.now()
+        });
       });
-    };
+    } else if (guestItems.length > 0) {
+      guestItems.forEach(guest => {
+        const numId = Number(guest && guest.id);
+        if (!numId) return;
+        articlesToSave.push({
+          id: numId,
+          title: guest.title || '',
+          url: guest.url || '',
+          feed_title: guest.feed_title || '',
+          published_at: guest.published_at || '',
+          formatted_date: guest.formatted_date || '',
+          sanitized_content: guest.sanitized_content || '',
+          saved_at: Date.now()
+        });
+      });
+    }
+
+    if (articlesToSave.length === 0) return;
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains('all_articles')) return;
+        const tx = db.transaction('all_articles', 'readwrite');
+        const store = tx.objectStore('all_articles');
+        articlesToSave.forEach(art => {
+          store.put(art);
+        });
+      })
+      .catch((e) => console.warn('Could not save guest articles:', e));
   }
 
   function renderLocalAllArticles() {
-    const req = indexedDB.open(DB_NAME, 2);
-    req.onsuccess = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('all_articles')) return;
-      const tx = db.transaction('all_articles', 'readonly');
-      const store = tx.objectStore('all_articles');
-      const getAllReq = store.getAll();
-      getAllReq.onsuccess = (ev) => {
-        const articles = ev.target.result || [];
-        const list = document.getElementById('entries-list');
-        if (!list) return;
-        if (articles.length === 0) {
-          list.innerHTML = `
-            <div id="client-empty-state" class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
-              <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
-              <p class="text-sm font-medium font-sans">No saved titles</p>
-              <p class="text-xs text-muted-foreground mt-1 font-sans">Articles you load will appear here.</p>
-            </div>
-          `;
-        } else {
-          articles.sort((a, b) => b.id - a.id);
-          list.innerHTML = articles.map(art => `
-            <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}" onclick="openEntryDetail(${art.id})">
-              <div id="entry-${art.id}-bar" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>
-              <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                <span id="entry-${art.id}-dot" class="inline-flex shrink-0 empty:hidden"></span>
-                <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
-                  ${escapeHtml(art.title)}
-                </span>
-              </div>
-              <div class="flex items-center gap-1.5 shrink-0">
-                <a 
-                  href="${escapeHtml(art.url)}" 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  onclick="event.stopPropagation(); markArticleRead(${art.id})" 
-                  class="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                  title="Open in browser">
-                  <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
-                </a>
-                <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors"></i>
-              </div>
-            </div>
-          `).join('');
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains('all_articles')) {
+          isSearchActive = false;
+          applyAiViewMode('list', 'all', false);
+          return;
         }
-        if (window.lucide && typeof lucide.createIcons === 'function') {
-          lucide.createIcons({ root: list });
-        }
-        syncDomReadStates();
-      };
-    };
+        const tx = db.transaction('all_articles', 'readonly');
+        const store = tx.objectStore('all_articles');
+        const getAllReq = store.getAll();
+        getAllReq.onsuccess = (ev) => {
+          const articles = ev.target.result || [];
+          articles.forEach(art => {
+            const numId = Number(art && art.id);
+            if (numId && !guestEntriesMap.has(numId)) {
+              guestEntriesMap.set(numId, art);
+            }
+          });
+          const list = document.getElementById('entries-list');
+          if (!list) return;
+          if (articles.length === 0) {
+            list.innerHTML = `
+              <div id="local-all-empty-state" class="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+                <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
+                <p class="text-sm font-medium font-sans">No saved titles</p>
+                <p class="text-xs text-muted-foreground mt-1 font-sans">Articles you load will appear here.</p>
+              </div>
+            `;
+          } else {
+            articles.sort((a, b) => b.id - a.id);
+            const rowsHtml = articles.map(art => `
+              <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}" onclick="openEntryDetail(${art.id})">
+                <div id="entry-${art.id}-bar" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>
+                <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                  <span id="entry-${art.id}-dot" class="inline-flex shrink-0 empty:hidden"></span>
+                  <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
+                    ${escapeHtml(art.title)}
+                  </span>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <a 
+                    href="${escapeHtml(safeHref(art.url))}" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    onclick="event.stopPropagation(); markArticleRead(${art.id})" 
+                    class="p-1.5 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                    title="Open in browser">
+                    <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                  </a>
+                  <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors"></i>
+                </div>
+              </div>
+            `).join('');
+            list.innerHTML = `<div id="entries-list-view" class="space-y-1.5">${rowsHtml}</div>`;
+          }
+          if (window.lucide && typeof lucide.createIcons === 'function') {
+            lucide.createIcons({ root: list });
+          }
+          syncDomReadStates();
+          isSearchActive = false;
+          applyAiViewMode('list', 'all', false);
+        };
+      })
+      .catch((e) => {
+        console.warn('Could not load local articles:', e);
+        isSearchActive = false;
+        applyAiViewMode('list', 'all', false);
+      });
   }
 
   function syncDomReadStates() {
@@ -1267,12 +1602,13 @@
     if (typeof invalidateFilterCache === 'function') {
       invalidateFilterCache();
     }
-    const req = indexedDB.open(DB_NAME, 2);
-    req.onsuccess = (e) => {
-      const db = e.target.result;
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).put({ id: numId, read_at: Date.now() });
-    };
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains(STORE_NAME)) return;
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put({ id: numId, read_at: Date.now() });
+      })
+      .catch(() => {});
   }
 
   function unmarkLocallyRead(id) {
@@ -1283,12 +1619,13 @@
     if (typeof invalidateFilterCache === 'function') {
       invalidateFilterCache();
     }
-    const req = indexedDB.open(DB_NAME, 2);
-    req.onsuccess = (e) => {
-      const db = e.target.result;
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).delete(numId);
-    };
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains(STORE_NAME)) return;
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(numId);
+      })
+      .catch(() => {});
   }
 
   function toggleLocalReadStatus(id) {

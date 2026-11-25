@@ -86,8 +86,8 @@ impl LlmCliRunner {
              1. \"top\": A concise executive brief synthesizing the most important themes across all sources on this page (strictly 3 to 5 sentences).\n\
              2. \"items\": For each NEW article id, provide a punchy \"t\" (suggested title, strictly in one sentence) and \"r\" (inverted pyramid rewrite in strictly 3 to 5 sentences: lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context). Do not regenerate items for existing articles.\n\n\
              REWRITE RULES FOR \"r\":\n\
-             - Length: Strictly 3 to 5 sentences, under 110 words total (sweet spot 30-60 words).\n\
-             - Structure: Inverted pyramid structure — lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context.\n\
+             - Length: Strictly 3 to 5 sentences (around 90-150 words total, max 180 words).\n\
+             - Structure: Inverted pyramid structure — lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points (complete sentences) with essential context.\n\
              - Tone & Style: Plain and simple language. Strictly omit introductory filler or closing boilerplate.\n\n\
              CRITICAL MULTILINGUAL RULE:\n\
              For each article and for the overall brief, write your response in the EXACT SAME LANGUAGE as the source text.\n\
@@ -167,7 +167,7 @@ impl LlmCliRunner {
         format!(
             "Analyze and rewrite the following article. Output raw JSON only matching this schema:\n\
             {{\n  \
-              \"rewrite\": \"Inverted pyramid rewrite: strictly under 110 words total (sweet spot 30-60 words). Lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points with essential context. Plain language, no introductory filler, no closing boilerplate.\",\n  \
+              \"rewrite\": \"Inverted pyramid rewrite: strictly 3 to 5 sentences (around 90-150 words total, max 180 words). Lead with outcome and key impacts in first 2 sentences, followed by 2-3 bullet points (complete sentences) with essential context. Plain language, no introductory filler, no closing boilerplate.\",\n  \
               \"impact\": \"Analyze the practical consequences and real-world impact of this news (who is affected, industry or social significance, short/long-term stakes).\",\n  \
               \"fallacies\": \"Identify any informal logical fallacies or rhetorical biases in the text (e.g. ad hominem, straw man, false dilemma, hasty generalization, cherry-picking, emotional appeal). If the reporting is objective, factual, and logically sound, strictly output: 'Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu' (for Vietnamese) or 'No logical fallacies detected — Objective and well-supported reporting' (for English).\"\n\
             }}\n\n\
@@ -1871,13 +1871,24 @@ Some outro text
         let prompt = LlmCliRunner::format_batch_prompt(&articles);
 
         assert!(
-            prompt.contains("under 110 words"),
-            "Prompt must specify under 110 words: {}",
+            prompt.contains("strictly 3 to 5 sentences")
+                || prompt.to_lowercase().contains("strictly 3 to 5 sentences"),
+            "Prompt must require strictly 3 to 5 sentences: {}",
             prompt
         );
         assert!(
-            prompt.contains("30-60 words") || prompt.contains("30–60 words"),
-            "Prompt must specify 30-60 words sweet spot: {}",
+            prompt.contains("90-150 words") || prompt.contains("90–150 words"),
+            "Prompt must specify 90-150 words target: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("max 180 words"),
+            "Prompt must specify max 180 words: {}",
+            prompt
+        );
+        assert!(
+            !prompt.contains("30-60 words") && !prompt.contains("under 110 words"),
+            "Prompt must not contain legacy short word limits: {}",
             prompt
         );
         assert!(
@@ -1915,18 +1926,33 @@ Some outro text
         let prompt_lower = prompt.to_lowercase();
 
         assert!(
-            prompt_lower.contains("under 110 words"),
-            "Prompt must specify under 110 words: {}",
+            prompt_lower.contains("strictly 3 to 5 sentences"),
+            "Prompt must require strictly 3 to 5 sentences: {}",
             prompt
         );
         assert!(
-            prompt_lower.contains("30-60 words") || prompt_lower.contains("30–60 words"),
-            "Prompt must specify 30-60 words sweet spot: {}",
+            prompt_lower.contains("90-150 words") || prompt_lower.contains("90–150 words"),
+            "Prompt must specify 90-150 words target: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("max 180 words"),
+            "Prompt must specify max 180 words: {}",
+            prompt
+        );
+        assert!(
+            !prompt_lower.contains("30-60 words") && !prompt_lower.contains("under 110 words"),
+            "Prompt must not contain legacy short word limits: {}",
             prompt
         );
         assert!(
             prompt_lower.contains("inverted pyramid"),
             "Prompt must specify inverted pyramid: {}",
+            prompt
+        );
+        assert!(
+            prompt_lower.contains("first 2 sentences"),
+            "Prompt must require outcome in first 2 sentences: {}",
             prompt
         );
         assert!(

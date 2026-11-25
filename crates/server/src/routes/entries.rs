@@ -174,6 +174,78 @@ pub fn build_graphql_filter(
     filter_parts.join(", ")
 }
 
+/// Maps a GraphQL entry JSON object into an `EntryViewModel`, sanitizing
+/// guest detail HTML and suppressing auth-only fields when `auth_enabled` is false.
+pub fn entry_view_model_from_json(
+    item: &serde_json::Value,
+    auth_enabled: bool,
+    force_read: bool,
+) -> Option<EntryViewModel> {
+    let content_str = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let summary_str = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+    let image_url =
+        extract_first_image_url(content_str).or_else(|| extract_first_image_url(summary_str));
+    let sanitized_content = if !auth_enabled {
+        let raw_body = if !content_str.trim().is_empty() {
+            content_str
+        } else {
+            summary_str
+        };
+        Some(ui_components::sanitizer::sanitize_html(raw_body))
+    } else {
+        None
+    };
+    let feed_obj = item.get("feed");
+    let feed_title = feed_obj
+        .and_then(|f| f.get("title"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Feed")
+        .to_string();
+    let category_title = feed_obj
+        .and_then(|f| f.get("category"))
+        .and_then(|c| c.get("title"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    Some(EntryViewModel {
+        id: item.get("id")?.as_str()?.parse().ok()?,
+        title: item.get("title")?.as_str()?.to_string(),
+        suggested_title: None,
+        feed_title,
+        category_title,
+        published_at: item
+            .get("publishedAt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        reading_time: if auth_enabled {
+            item.get("readingTime")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1) as i32
+        } else {
+            0
+        },
+        summary: summary_str.to_string(),
+        sanitized_content,
+        image_url,
+        url: item
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        author: None,
+        is_read: if auth_enabled {
+            force_read || item.get("status").and_then(|v| v.as_str()) == Some("READ")
+        } else {
+            false
+        },
+        is_bookmarked: item
+            .get("isBookmarked")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+    })
+}
+
 pub async fn render_entries_list_html(
     schema: &AppSchema,
     cache: Option<&MinifluxCache>,
@@ -324,63 +396,13 @@ pub async fn render_entries_list_html(
     let prev_offset = (offset - limit).max(0);
     let next_offset = offset + limit;
 
+    let force_read = query.status.as_deref() == Some("read");
     let mut entries: Vec<EntryViewModel> = entries_result
         .and_then(|r| r.get("entries"))
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|item| {
-                    let content_str = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                    let summary_str = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-                    let image_url = extract_first_image_url(content_str)
-                        .or_else(|| extract_first_image_url(summary_str));
-                    let feed_obj = item.get("feed");
-                    let feed_title = feed_obj
-                        .and_then(|f| f.get("title"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Feed")
-                        .to_string();
-                    let category_title = feed_obj
-                        .and_then(|f| f.get("category"))
-                        .and_then(|c| c.get("title"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-
-                    Some(EntryViewModel {
-                        id: item.get("id")?.as_str()?.parse().ok()?,
-                        title: item.get("title")?.as_str()?.to_string(),
-                        suggested_title: None,
-                        feed_title,
-                        category_title,
-                        published_at: item
-                            .get("publishedAt")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        reading_time: item
-                            .get("readingTime")
-                            .and_then(|v| v.as_i64())
-                            .unwrap_or(1) as i32,
-                        summary: summary_str.to_string(),
-                        image_url,
-                        url: item
-                            .get("url")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        author: None,
-                        is_read: if auth_enabled {
-                            item.get("status").and_then(|v| v.as_str()) == Some("READ")
-                                || query.status.as_deref() == Some("read")
-                        } else {
-                            false
-                        },
-                        is_bookmarked: item
-                            .get("isBookmarked")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                    })
-                })
+                .filter_map(|item| entry_view_model_from_json(item, auth_enabled, force_read))
                 .collect()
         })
         .unwrap_or_default();
@@ -556,6 +578,7 @@ pub async fn render_ai_entries_list(
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
+                        sanitized_content: None,
                         image_url: None,
                         url: item
                             .get("url")
@@ -1409,21 +1432,28 @@ pub async fn get_entry_detail_htmx(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        reading_time: item
-            .get("readingTime")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(1) as i32,
+        reading_time: if config.auth_enabled {
+            item.get("readingTime")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(1) as i32
+        } else {
+            0
+        },
         summary: summary.clone(),
+        sanitized_content: None,
         image_url: None,
         url: item
             .get("url")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        author: item
-            .get("author")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+        author: if config.auth_enabled {
+            item.get("author")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        },
         is_read: true,
         is_bookmarked: item
             .get("isBookmarked")
@@ -1920,6 +1950,7 @@ pub async fn mark_entry_read_htmx(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
+            sanitized_content: None,
             image_url: None,
             url: e
                 .get("url")
@@ -1946,6 +1977,7 @@ pub async fn mark_entry_read_htmx(
             published_at: "Just now".to_string(),
             reading_time: 2,
             summary: "Article marked status.".to_string(),
+            sanitized_content: None,
             image_url: None,
             url: "#".to_string(),
             author: None,
@@ -2961,6 +2993,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_entry_detail_formats_published_at_as_ddmmyyyy() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use http_body_util::BodyExt;
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use tower::ServiceExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/778"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 778,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Article 778 Date Format",
+                "url": "https://example.com/778",
+                "content": "<p>Body 778</p>",
+                "published_at": "2026-11-23T12:00:00Z",
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "title": "Tech Feed",
+                    "checked_at": "2026-11-23T12:00:00Z",
+                    "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:entry_detail_778";
+        let db = Arc::new(crate::ai::AiDb::new(db_path).await.unwrap());
+        db.save_summary_and_title_with_rewrite(
+            778,
+            None,
+            "Teaser 778",
+            Some("Rewrite 778."),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = crate::app::build_app(config, schema).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/hx/entries/778")
+            .header("HX-Request", "true")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(
+            html.contains(
+                r#"<time datetime="2026-11-23T12:00:00Z" data-date-format="dd/mm/yyyy">23/11/2026</time>"#
+            ),
+            "Detail route must render DD/MM/YYYY <time> element: {}",
+            html
+        );
+    }
+
+    #[tokio::test]
     async fn test_get_entry_rewrite_htmx_serves_existing_cache() {
         let db_path = "mock:entry_rewrite_501";
         let db = AiDb::new(db_path).await.unwrap();
@@ -3685,5 +3811,284 @@ mod tests {
         assert!(html.contains("feed_id=42"));
         assert!(html.contains("category_id=7"));
         assert!(!html.contains("toast-container"));
+    }
+
+    #[tokio::test]
+    async fn test_list_routes_embed_sanitized_guest_data_only_when_auth_disabled() {
+        use crate::auth::session::{create_session_cookie_value, SessionData};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "reads": {},
+                "unreads": { "10": 1 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 1,
+                "entries": [{
+                    "id": 880,
+                    "user_id": 1,
+                    "feed_id": 10,
+                    "title": "Guest Payload Story",
+                    "url": "https://example.com/880",
+                    "comments_url": "",
+                    "author": "Hidden Guest Author",
+                    "content": "<p>Original Miniflux Body</p><script>alert(1)</script><img src=\"https://example.com/p.jpg\" onerror=\"alert(2)\">",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 7,
+                    "created_at": now_rfc3339,
+                    "published_at": "2026-11-23T12:00:00Z",
+                    "feed": {
+                        "id": 10,
+                        "user_id": 1,
+                        "title": "Tech Feed",
+                        "checked_at": "2026-11-23T12:00:00Z",
+                        "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:guest_list_payload_880";
+        let db = AiDb::new(db_path).await.unwrap();
+        db.save_summary_and_title_with_rewrite(
+            880,
+            Some("AI Suggested Title 880"),
+            "AI list summary that must not replace Miniflux content in guest details",
+            Some("AI rewrite"),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let guest_config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let guest_app = crate::app::build_app(
+            guest_config,
+            build_schema(MinifluxClient::new(
+                mock_server.uri(),
+                "api-key".to_string(),
+            )),
+        )
+        .await;
+
+        for uri in ["/", "/hx/entries?status=unread"] {
+            let resp = guest_app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "uri={uri}");
+            let body = resp.into_body().collect().await.unwrap().to_bytes();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+
+            let marker = r#"<script id="entries-guest-data" type="application/json">"#;
+            let start = html
+                .find(marker)
+                .unwrap_or_else(|| panic!("{uri} must embed #entries-guest-data"))
+                + marker.len();
+            let end = html[start..].find("</script>").unwrap() + start;
+            let payload: serde_json::Value = serde_json::from_str(&html[start..end]).unwrap();
+            let item = &payload.as_array().unwrap()[0];
+
+            assert_eq!(item["id"], 880);
+            assert_eq!(item["title"], "AI Suggested Title 880");
+            assert_eq!(item["formatted_date"], "23/11/2026");
+            let sanitized = item["sanitized_content"].as_str().unwrap();
+            assert!(
+                sanitized.contains("<p>Original Miniflux Body</p>"),
+                "Guest detail payload must preserve sanitized Miniflux content: {sanitized}"
+            );
+            assert!(!sanitized.contains("<script>"));
+            assert!(!sanitized.contains("onerror"));
+            assert!(!sanitized.contains("AI list summary"));
+            assert!(item.get("author").is_none());
+            assert!(item.get("reading_time").is_none());
+            assert!(item.get("readingTime").is_none());
+        }
+
+        // Auth mode must omit #entries-guest-data
+        let auth_config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+        let auth_app = crate::app::build_app(
+            auth_config,
+            build_schema(MinifluxClient::new(
+                mock_server.uri(),
+                "api-key".to_string(),
+            )),
+        )
+        .await;
+        let session = SessionData {
+            user_id: "u_1".to_string(),
+            username: "tester".to_string(),
+            access_token: "tok_123".to_string(),
+            refresh_token: None,
+            expires_at: 1800000000,
+        };
+        let cookie = format!(
+            "__session={}",
+            create_session_cookie_value(&session, secret).unwrap()
+        );
+
+        for uri in ["/", "/hx/entries?status=unread"] {
+            let resp = auth_app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(uri)
+                        .header("Cookie", &cookie)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "auth uri={uri}");
+            let body = resp.into_body().collect().await.unwrap().to_bytes();
+            let html = String::from_utf8(body.to_vec()).unwrap();
+            assert!(
+                !html.contains("entries-guest-data"),
+                "Auth mode {uri} must not embed #entries-guest-data"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_detail_guest_mode_keeps_route_active_and_omits_author_and_reading_time()
+    {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/881"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 881,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Guest Detail Route 881",
+                "url": "https://example.com/881",
+                "author": "Secret Guest Author",
+                "content": "<p>Body 881</p>",
+                "published_at": "2026-11-23T12:00:00Z",
+                "reading_time": 9,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "title": "Tech Feed",
+                    "checked_at": "2026-11-23T12:00:00Z",
+                    "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:guest_detail_881";
+        let db = AiDb::new(db_path).await.unwrap();
+        db.save_summary_and_title_with_rewrite(
+            881,
+            None,
+            "Teaser 881",
+            Some("Rewrite 881."),
+            "test-model",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let app = crate::app::build_app(
+            config,
+            build_schema(MinifluxClient::new(
+                mock_server.uri(),
+                "api-key".to_string(),
+            )),
+        )
+        .await;
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/881")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8(body.to_vec()).unwrap();
+        assert!(html.contains("Guest Detail Route 881"));
+        assert!(!html.contains("Secret Guest Author"));
+        assert!(!html.contains("reading_time"));
+        assert!(!html.contains("readingTime"));
+        assert!(!html.contains("9 min"));
     }
 }

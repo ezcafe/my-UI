@@ -13,6 +13,8 @@ pub struct EntryViewModel {
     pub reading_time: i32,
     pub summary: String,
     #[serde(default)]
+    pub sanitized_content: Option<String>,
+    #[serde(default)]
     pub image_url: Option<String>,
     pub url: String,
     pub author: Option<String>,
@@ -127,6 +129,75 @@ pub struct EntryDetailTemplate {
     pub body_images: Vec<String>,
 }
 
+/// Formats an ISO-8601 / RFC 3339 or `YYYY-MM-DD` date string as `DD/MM/YYYY`.
+/// Falls back to the trimmed input if parsing fails.
+pub fn format_published_date_ddmmyyyy(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return dt.format("%d/%m/%Y").to_string();
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return date.format("%d/%m/%Y").to_string();
+    }
+    trimmed.to_string()
+}
+
+impl EntryDetailTemplate {
+    pub fn formatted_published_at(&self) -> String {
+        format_published_date_ddmmyyyy(&self.entry.published_at)
+    }
+}
+
+#[derive(Serialize)]
+struct GuestEntryPayload<'a> {
+    id: i64,
+    title: &'a str,
+    feed_title: &'a str,
+    published_at: &'a str,
+    formatted_date: String,
+    url: &'a str,
+    sanitized_content: &'a str,
+}
+
+fn escape_json_for_html_script(json: &str) -> String {
+    json.replace('&', r"\u0026")
+        .replace('<', r"\u003c")
+        .replace('>', r"\u003e")
+        .replace('\u{2028}', r"\u2028")
+        .replace('\u{2029}', r"\u2029")
+}
+
+impl EntryListTemplate {
+    pub fn guest_entries_json(&self) -> Option<String> {
+        let payloads: Vec<GuestEntryPayload<'_>> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let sanitized_content = e.sanitized_content.as_deref()?;
+                let title = e.suggested_title.as_deref().unwrap_or(&e.title);
+                Some(GuestEntryPayload {
+                    id: e.id,
+                    title,
+                    feed_title: &e.feed_title,
+                    published_at: &e.published_at,
+                    formatted_date: format_published_date_ddmmyyyy(&e.published_at),
+                    url: &e.url,
+                    sanitized_content,
+                })
+            })
+            .collect();
+        if payloads.is_empty() {
+            return None;
+        }
+        serde_json::to_string(&payloads)
+            .ok()
+            .map(|json| escape_json_for_html_script(&json))
+    }
+}
+
 #[derive(Template)]
 #[template(path = "partials/analysis_cards.html")]
 pub struct AnalysisCardsTemplate<'a> {
@@ -168,6 +239,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         assert_eq!(entry.suggested_title.as_deref(), Some("AI Punchy Title"));
@@ -213,6 +285,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -272,6 +345,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: true,
         };
 
@@ -345,6 +419,7 @@ mod tests {
             is_read: true,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let template_read = EntryItemTemplate {
@@ -377,6 +452,7 @@ mod tests {
                 is_read: false,
                 category_title: None,
                 image_url: None,
+                sanitized_content: None,
                 is_bookmarked: false,
             },
             EntryViewModel {
@@ -392,6 +468,7 @@ mod tests {
                 is_read: true,
                 category_title: None,
                 image_url: None,
+                sanitized_content: None,
                 is_bookmarked: true,
             },
         ];
@@ -564,6 +641,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let group = FeedSummaryGroupViewModel {
@@ -599,6 +677,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -645,6 +724,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -701,6 +781,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -742,6 +823,7 @@ mod tests {
             is_read: true,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -801,6 +883,7 @@ mod tests {
             is_read: true,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -853,6 +936,7 @@ mod tests {
             is_read: true,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -959,6 +1043,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let template = EntryListTemplate {
@@ -1075,6 +1160,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let template = EntryItemTemplate {
@@ -1109,6 +1195,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let template = EntryListTemplate {
@@ -1157,6 +1244,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let template = EntryDetailTemplate {
@@ -1545,6 +1633,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -1680,6 +1769,7 @@ mod tests {
                 is_read: false,
                 category_title: None,
                 image_url: None,
+                sanitized_content: None,
                 is_bookmarked: false,
             },
             unread_count: Some(5),
@@ -2010,6 +2100,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -2100,6 +2191,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let template = EntryListTemplate {
@@ -2174,6 +2266,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -2247,6 +2340,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let list_tpl = EntryListTemplate {
@@ -2296,6 +2390,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         let list_tpl = EntryListTemplate {
@@ -2411,6 +2506,7 @@ mod tests {
             url: "https://example.com/article".into(),
             author: None,
             is_read: false,
+            sanitized_content: None,
             is_bookmarked: false,
         };
         assert_eq!(entry.category_title.as_deref(), Some("Technology"));
@@ -2444,6 +2540,7 @@ mod tests {
             url: "https://example.com/101".into(),
             author: None,
             is_read: false,
+            sanitized_content: None,
             is_bookmarked: false,
         });
         // Entries 1..=6: Priority 2 (6 featured cards in center column)
@@ -2465,6 +2562,7 @@ mod tests {
                 url: format!("https://example.com/{}", 101 + i),
                 author: None,
                 is_read: i == 1, // entry 102 is read
+                sanitized_content: None,
                 is_bookmarked: false,
             });
         }
@@ -2482,6 +2580,7 @@ mod tests {
             url: "https://example.com/108".into(),
             author: None,
             is_read: false,
+            sanitized_content: None,
             is_bookmarked: false,
         });
 
@@ -2819,8 +2918,8 @@ mod tests {
             "Must persist view mode in localStorage"
         );
         assert!(
-            html.contains("savedMode || 'ai'"),
-            "Must default to 'ai' view on first load"
+            html.contains("localStorage.setItem('my_news_view_mode', 'ai')"),
+            "Must force 'ai' (Magazine) view on initial load"
         );
     }
 
@@ -3039,6 +3138,7 @@ mod tests {
             is_read: false,
             category_title: Some("Design".to_string()),
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -3095,6 +3195,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -3143,6 +3244,7 @@ mod tests {
             is_read: false,
             category_title: None,
             image_url: None,
+            sanitized_content: None,
             is_bookmarked: false,
         };
 
@@ -3224,5 +3326,417 @@ mod tests {
         assert!(html_no_id.contains("is-error"));
         assert!(html_no_id.contains("AI Rewrite Unavailable"));
         assert!(html_no_id.contains("hx-get=\"/hx/entries/123/rewrite\""));
+    }
+
+    #[test]
+    fn test_format_published_date_ddmmyyyy_parses_rfc3339_and_falls_back() {
+        assert_eq!(
+            format_published_date_ddmmyyyy("2026-11-23T12:00:00Z"),
+            "23/11/2026"
+        );
+        assert_eq!(
+            format_published_date_ddmmyyyy("2026-01-05T23:30:00-07:00"),
+            "05/01/2026"
+        );
+        assert_eq!(
+            format_published_date_ddmmyyyy("2026-03-09T04:15:30.123456Z"),
+            "09/03/2026"
+        );
+        assert_eq!(format_published_date_ddmmyyyy("2026-07-04"), "04/07/2026");
+        assert_eq!(format_published_date_ddmmyyyy(""), "");
+        assert_eq!(format_published_date_ddmmyyyy("   "), "");
+        assert_eq!(format_published_date_ddmmyyyy("2 hours ago"), "2 hours ago");
+    }
+
+    #[test]
+    fn test_entry_detail_renders_ddmmyyyy_time_element_in_both_headers() {
+        let make_entry = |published_at: &str| EntryViewModel {
+            id: 301,
+            title: "Date Format Test".to_string(),
+            suggested_title: None,
+            feed_title: "Daily Wire".to_string(),
+            published_at: published_at.to_string(),
+            reading_time: 3,
+            summary: "Summary".to_string(),
+            url: "https://example.com/301".to_string(),
+            author: None,
+            is_read: false,
+            category_title: None,
+            image_url: None,
+            sanitized_content: None,
+            is_bookmarked: false,
+        };
+
+        let expected_time = r#"<time datetime="2026-11-23T12:00:00Z" data-date-format="dd/mm/yyyy">23/11/2026</time>"#;
+
+        // Hero header
+        let hero_html = EntryDetailTemplate {
+            entry: make_entry("2026-11-23T12:00:00Z"),
+            summary: String::new(),
+            auth_enabled: false,
+            rewrite: "Rewrite.".to_string(),
+            impact: String::new(),
+            fallacies: String::new(),
+            has_analysis: false,
+            hero_image: Some("https://example.com/hero.jpg".to_string()),
+            body_images: vec![],
+        }
+        .render()
+        .expect("render hero detail template");
+        assert!(
+            hero_html.contains(expected_time),
+            "Hero header must render DD/MM/YYYY <time> element: {}",
+            hero_html
+        );
+
+        // Standard header
+        let standard_html = EntryDetailTemplate {
+            entry: make_entry("2026-11-23T12:00:00Z"),
+            summary: String::new(),
+            auth_enabled: false,
+            rewrite: "Rewrite.".to_string(),
+            impact: String::new(),
+            fallacies: String::new(),
+            has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
+        }
+        .render()
+        .expect("render standard detail template");
+        assert!(
+            standard_html.contains(expected_time),
+            "Standard header must render DD/MM/YYYY <time> element: {}",
+            standard_html
+        );
+
+        // Empty / whitespace-only published_at must omit separator and <time>
+        let empty_html = EntryDetailTemplate {
+            entry: make_entry("   "),
+            summary: String::new(),
+            auth_enabled: false,
+            rewrite: "Rewrite.".to_string(),
+            impact: String::new(),
+            fallacies: String::new(),
+            has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
+        }
+        .render()
+        .expect("render empty date detail template");
+        assert!(!empty_html.contains("data-date-format=\"dd/mm/yyyy\""));
+        assert!(!empty_html.contains("<time"));
+        assert!(!empty_html.contains("<span>•</span>"));
+    }
+
+    #[test]
+    fn test_index_template_formats_detail_dates_on_swap_and_cache_restore() {
+        let html = IndexTemplate {
+            unread_count: 1,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("render IndexTemplate");
+
+        assert!(
+            html.contains("function formatDetailDates(root)"),
+            "IndexTemplate must define formatDetailDates(root)"
+        );
+        assert!(
+            html.contains("time[data-date-format=\"dd/mm/yyyy\"][datetime]"),
+            "formatDetailDates must target <time data-date-format=\"dd/mm/yyyy\" datetime=...>"
+        );
+        assert!(
+            html.contains(r"/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/"),
+            "formatDetailDates must guard new Date(raw) with ISO datetime pattern"
+        );
+
+        // Must run in openEntryDetail cache-hit path
+        let cache_hit_pos = html.find("if (isCacheValid)").expect("isCacheValid branch");
+        let else_pos = html[cache_hit_pos..]
+            .find("} else {")
+            .expect("else branch after isCacheValid");
+        let cache_hit_block = &html[cache_hit_pos..cache_hit_pos + else_pos];
+        assert!(
+            cache_hit_block.contains("formatDetailDates(panel)"),
+            "openEntryDetail cache hit must call formatDetailDates(panel)"
+        );
+
+        // Must run in htmx:afterSwap before saveCachedArticle
+        let after_swap_detail_pos = html
+            .find("saveCachedArticle(entryId, panel.innerHTML)")
+            .expect("saveCachedArticle call");
+        let format_before_save_pos = html[..after_swap_detail_pos]
+            .rfind("formatDetailDates(panel)")
+            .expect("formatDetailDates(panel) before saveCachedArticle");
+        assert!(
+            format_before_save_pos < after_swap_detail_pos,
+            "formatDetailDates(panel) must run before saveCachedArticle"
+        );
+    }
+
+    #[test]
+    fn test_entry_list_guest_json_embeds_sanitized_content_and_escapes_script_tags() {
+        let entry_with_content = EntryViewModel {
+            id: 401,
+            title: "Original </script><script>alert(1)</script> & <Tag>".to_string(),
+            suggested_title: Some("Suggested </script> Title & <More>".to_string()),
+            feed_title: "Feed & Co".to_string(),
+            category_title: None,
+            published_at: "2026-11-23T12:00:00Z".to_string(),
+            reading_time: 5,
+            summary: "Summary".to_string(),
+            sanitized_content: Some("<p>Body &amp; </script> text</p>".to_string()),
+            image_url: None,
+            url: "https://example.com/401".to_string(),
+            author: Some("Alice Author".to_string()),
+            is_read: false,
+            is_bookmarked: false,
+        };
+
+        let template_guest = EntryListTemplate {
+            entries: vec![entry_with_content],
+            top_executive_brief: None,
+            unread_count: Some(1),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: String::new(),
+            limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+
+        let json = template_guest
+            .guest_entries_json()
+            .expect("guest_entries_json must return Some when sanitized_content is Some");
+        assert!(
+            !json.contains("</script>") && !json.contains('<') && !json.contains('>'),
+            "guest_entries_json must WHATWG-escape <, >, and </script>: {}",
+            json
+        );
+        assert!(json.contains(r"\u003c/script\u003e"));
+        assert!(json.contains(r"\u0026"));
+
+        let html = template_guest.render().expect("render guest list template");
+        assert!(
+            html.contains(r#"<script id="entries-guest-data" type="application/json">"#),
+            "EntryListTemplate must render #entries-guest-data script block: {}",
+            html
+        );
+        let start = html
+            .find(r#"<script id="entries-guest-data" type="application/json">"#)
+            .unwrap()
+            + r#"<script id="entries-guest-data" type="application/json">"#.len();
+        let end = html[start..].find("</script>").unwrap() + start;
+        let raw_script_body = &html[start..end];
+        assert!(!raw_script_body.contains("</script>"));
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(raw_script_body).expect("parse guest JSON");
+        let item = &parsed.as_array().unwrap()[0];
+        assert_eq!(item["id"], 401);
+        assert_eq!(item["title"], "Suggested </script> Title & <More>");
+        assert_eq!(item["feed_title"], "Feed & Co");
+        assert_eq!(item["published_at"], "2026-11-23T12:00:00Z");
+        assert_eq!(item["formatted_date"], "23/11/2026");
+        assert_eq!(item["url"], "https://example.com/401");
+        assert_eq!(
+            item["sanitized_content"],
+            "<p>Body &amp; </script> text</p>"
+        );
+        assert!(item.get("author").is_none());
+        assert!(item.get("reading_time").is_none());
+        assert!(item.get("readingTime").is_none());
+
+        // When sanitized_content is None for all entries, no script block is emitted
+        let entry_auth = EntryViewModel {
+            id: 402,
+            title: "Auth Only".to_string(),
+            suggested_title: None,
+            feed_title: "Feed".to_string(),
+            category_title: None,
+            published_at: "2026-11-23T12:00:00Z".to_string(),
+            reading_time: 4,
+            summary: "Summary".to_string(),
+            sanitized_content: None,
+            image_url: None,
+            url: "https://example.com/402".to_string(),
+            author: Some("Bob".to_string()),
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let template_auth = EntryListTemplate {
+            entries: vec![entry_auth],
+            top_executive_brief: None,
+            unread_count: Some(1),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 0,
+            status: "unread".to_string(),
+            search: String::new(),
+            limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+        };
+        assert!(template_auth.guest_entries_json().is_none());
+        let auth_html = template_auth.render().expect("render auth list template");
+        assert!(!auth_html.contains("entries-guest-data"));
+    }
+
+    #[test]
+    fn test_index_template_guest_detail_skips_entry_fetch_and_omits_author_reading_time() {
+        let html = IndexTemplate {
+            unread_count: 2,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("render guest IndexTemplate");
+
+        assert!(html.contains("const AUTH_ENABLED = false;"));
+        assert!(html.contains("function safeHref(rawUrl)"));
+        assert!(html.contains("function readGuestEntriesJson()"));
+        assert!(html.contains("function hydrateGuestEntriesFromDom()"));
+        assert!(html.contains("async function getGuestArticle(numId)"));
+        assert!(html.contains("async function openGuestEntryDetail(numId)"));
+        assert!(html.contains("function renderGuestEntryDetail(entry)"));
+        assert!(html.contains("function openGuestDb()"));
+
+        // openEntryDetail must short-circuit when !AUTH_ENABLED before getCachedArticle or htmx.ajax
+        let open_pos = html
+            .find("async function openEntryDetail(id)")
+            .expect("openEntryDetail");
+        let cache_pos = html[open_pos..]
+            .find("getCachedArticle(numId)")
+            .expect("getCachedArticle inside openEntryDetail");
+        let open_head = &html[open_pos..open_pos + cache_pos];
+        assert!(
+            open_head.contains("if (!AUTH_ENABLED)")
+                && open_head.contains("openGuestEntryDetail(numId)"),
+            "openEntryDetail must short-circuit to openGuestEntryDetail before cache/HTMX"
+        );
+
+        // renderGuestEntryDetail must omit author, readingTime, and /analysis, and render sanitized_content
+        let render_pos = html
+            .find("function renderGuestEntryDetail(entry)")
+            .expect("renderGuestEntryDetail");
+        let render_end = html[render_pos..]
+            .find("async function openGuestEntryDetail(numId)")
+            .expect("openGuestEntryDetail after renderGuestEntryDetail")
+            + render_pos;
+        let render_fn = &html[render_pos..render_end];
+        assert!(render_fn.contains("id=\"guest-detail-content\""));
+        assert!(render_fn.contains("data-date-format=\"dd/mm/yyyy\""));
+        assert!(render_fn.contains("safeHref("));
+        assert!(!render_fn.contains("author"));
+        assert!(!render_fn.contains("readingTime"));
+        assert!(!render_fn.contains("reading_time"));
+        assert!(!render_fn.contains("/analysis"));
+        assert!(!render_fn.contains("/rewrite"));
+
+        // Cold deep-link miss fallback
+        assert!(html.contains("Article Not Available Offline"));
+        assert!(html.contains("Back to List"));
+
+        // renderLocalAllArticles must wrap rows in #entries-list-view and use an isolated empty-state ID
+        let local_all_pos = html
+            .find("function renderLocalAllArticles()")
+            .expect("renderLocalAllArticles");
+        let local_all_end = html[local_all_pos..]
+            .find("function syncDomReadStates()")
+            .expect("syncDomReadStates");
+        let local_all_fn = &html[local_all_pos..local_all_pos + local_all_end];
+        assert!(
+            local_all_fn.contains("<div id=\"entries-list-view\""),
+            "renderLocalAllArticles must wrap rows in #entries-list-view"
+        );
+        assert!(
+            local_all_fn.contains("id=\"local-all-empty-state\"")
+                && !local_all_fn.contains("id=\"client-empty-state\""),
+            "renderLocalAllArticles must not reuse #client-empty-state deleted by syncDomReadStates"
+        );
+
+        // initGuestDb must merge keys into readSet rather than overwriting concurrent deep-link reads
+        let init_db_pos = html.find("function initGuestDb()").expect("initGuestDb");
+        let init_db_end = html[init_db_pos..]
+            .find("function cacheLoadedArticlesFromDom()")
+            .expect("cacheLoadedArticlesFromDom")
+            + init_db_pos;
+        let init_db_fn = &html[init_db_pos..init_db_end];
+        assert!(
+            init_db_fn.contains("readSet.add(id)") && !init_db_fn.contains("readSet = new Set("),
+            "initGuestDb must merge into readSet rather than overwriting it"
+        );
+    }
+
+    #[test]
+    fn test_index_template_tab_view_rules_and_toggle_visibility() {
+        let html = IndexTemplate {
+            unread_count: 2,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("render IndexTemplate");
+
+        assert!(html.contains("let currentViewMode = 'ai';"));
+        assert!(html.contains("let isSearchActive = false;"));
+        assert!(html.contains("function shouldHideAiToggle(status, searchActive)"));
+        assert!(html.contains("function getDefaultViewForState(status, searchActive)"));
+        assert!(html.contains("function updateAiToggleVisibility(status, searchActive)"));
+
+        // shouldHideAiToggle hides on today and all when not searching
+        let hide_pos = html
+            .find("function shouldHideAiToggle(status, searchActive)")
+            .unwrap();
+        let hide_end = html[hide_pos..].find('}').unwrap() + hide_pos;
+        let hide_fn = &html[hide_pos..=hide_end];
+        assert!(hide_fn.contains("status === 'today'") && hide_fn.contains("status === 'all'"));
+        assert!(hide_fn.contains("!searchActive"));
+
+        // getDefaultViewForState: search/today/all/starred -> 'list', unread -> 'ai'
+        let def_pos = html
+            .find("function getDefaultViewForState(status, searchActive)")
+            .unwrap();
+        let def_end = html[def_pos..].find('}').unwrap() + def_pos;
+        let def_fn = &html[def_pos..=def_end];
+        assert!(def_fn.contains("status === 'today'"));
+        assert!(def_fn.contains("status === 'all'"));
+        assert!(def_fn.contains("status === 'starred'"));
+        assert!(def_fn.contains("return 'list'"));
+        assert!(def_fn.contains("return 'ai'"));
+
+        // toggleAiView flips currentViewMode rather than stale localStorage
+        let toggle_pos = html.find("function toggleAiView()").unwrap();
+        let toggle_end = html[toggle_pos..].find('}').unwrap() + toggle_pos;
+        let toggle_fn = &html[toggle_pos..=toggle_end];
+        assert!(
+            toggle_fn.contains("currentViewMode === 'ai' ? 'list' : 'ai'"),
+            "toggleAiView must flip currentViewMode"
+        );
+
+        // htmx:afterSwap must inspect requestConfig.elt for trigger element
+        assert!(
+            html.contains("requestConfig") && html.contains("requestConfig.elt"),
+            "htmx:afterSwap must inspect evt.detail.requestConfig.elt"
+        );
     }
 }

@@ -1233,16 +1233,17 @@ pub async fn mark_page_read_htmx(
     .await;
     match html {
         Ok(entries_html) => {
-            if show_last_page_toast {
-                let toast = ToastTemplate {
-                    message: "Page marked as read. You are on the last page.".to_string(),
-                    is_error: false,
-                };
-                let toast_html = toast.render().unwrap_or_default();
-                Html(format!("{entries_html}{toast_html}")).into_response()
+            let message = if show_last_page_toast {
+                "Page marked as read. You are on the last page."
             } else {
-                Html(entries_html).into_response()
-            }
+                "Page marked as read."
+            };
+            let toast = ToastTemplate {
+                message: message.to_string(),
+                is_error: false,
+            };
+            let toast_html = toast.render().unwrap_or_default();
+            Html(format!("{entries_html}{toast_html}")).into_response()
         }
         Err(resp) => *resp,
     }

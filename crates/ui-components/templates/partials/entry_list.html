@@ -194,9 +194,12 @@
 {% if total_pages > 1 %}
 <nav class="flex items-center justify-between pt-4 pb-2 text-xs text-muted-foreground tabular font-sans" aria-label="Pagination">
   {% if has_prev %}
-  <button hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ prev_offset }}&limit={{ limit }}"
+  <button id="pagination-prev-btn"
+          hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ prev_offset }}&limit={{ limit }}"
           hx-target="#entries-list"
           hx-swap="innerHTML"
+          hx-indicator="#entries-loading-bar"
+          onclick="closeDetailPanel()"
           class="px-3 py-1.5 rounded-full border border-border bg-card hover:bg-muted text-foreground font-bold transition-colors">
     Previous
   </button>
@@ -209,9 +212,12 @@
   <span>Page {{ current_page }} of {{ total_pages }}</span>
 
   {% if has_next %}
-  <button id="pagination-next-btn" hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ next_offset }}&limit={{ limit }}"
+  <button id="pagination-next-btn"
+          hx-get="/hx/entries?status={{ status }}&search={{ search }}&offset={{ next_offset }}&limit={{ limit }}"
           hx-target="#entries-list"
           hx-swap="innerHTML"
+          hx-indicator="#entries-loading-bar"
+          onclick="closeDetailPanel()"
           class="px-3 py-1.5 rounded-full border border-border bg-card hover:bg-muted text-foreground font-bold transition-colors">
     Next
   </button>

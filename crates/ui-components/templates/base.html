@@ -457,10 +457,10 @@
       }
     }
 
-    /* Read Articles Styling (Blur / Gray / Muted) */
+    /* Read Articles Styling (Gray / Muted) */
     .ar-list-item.read {
       opacity: 0.55;
-      filter: grayscale(80%) blur(0.2px);
+      filter: grayscale(80%);
       transition: opacity 150ms ease, filter 150ms ease;
     }
     .ar-list-item.read .article-title {
@@ -468,17 +468,17 @@
     }
     .ar-list-item.read:hover {
       opacity: 0.9;
-      filter: grayscale(0%) blur(0);
+      filter: grayscale(0%);
     }
 
     .magazine-card.read {
       opacity: 0.45;
-      filter: grayscale(85%) blur(0.25px);
+      filter: grayscale(85%);
       transition: opacity 150ms ease, filter 150ms ease;
     }
     .magazine-card.read:hover {
       opacity: 0.9;
-      filter: grayscale(0%) blur(0);
+      filter: grayscale(0%);
     }
     .magazine-card.read .magazine-title {
       color: var(--muted-foreground) !important;

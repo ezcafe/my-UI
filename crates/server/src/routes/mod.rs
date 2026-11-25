@@ -896,6 +896,14 @@ mod tests {
             !html.contains("You are on the last page."),
             "Must not show last page toast when pages remain"
         );
+        assert!(
+            html.contains("Page marked as read."),
+            "Must show success toast when pages remain"
+        );
+        assert!(
+            html.contains(r#"hx-swap-oob="beforeend""#),
+            "Toast must be swapped out-of-band"
+        );
     }
 
     #[tokio::test]
@@ -1067,7 +1075,15 @@ mod tests {
         );
         assert!(
             !html.contains("You are on the last page."),
-            "Must not show toast in unread mode"
+            "Must not show last page toast in unread mode"
+        );
+        assert!(
+            html.contains("Page marked as read."),
+            "Must show success toast in unread mode"
+        );
+        assert!(
+            html.contains(r#"hx-swap-oob="beforeend""#),
+            "Toast must be swapped out-of-band"
         );
     }
 

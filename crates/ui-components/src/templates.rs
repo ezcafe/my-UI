@@ -3739,4 +3739,144 @@ mod tests {
             "htmx:afterSwap must inspect evt.detail.requestConfig.elt"
         );
     }
+
+    #[test]
+    fn test_paging_loading_overlay_and_read_blur_removed() {
+        // 1. Read-item CSS blur removed from base.html
+        let raw_base = include_str!("../templates/base.html");
+        assert!(
+            !raw_base.contains("blur(0.2px)"),
+            "base.html must not apply blur(0.2px) to .ar-list-item.read"
+        );
+        assert!(
+            !raw_base.contains("blur(0.25px)"),
+            "base.html must not apply blur(0.25px) to .magazine-card.read"
+        );
+        assert!(
+            raw_base.contains("filter: grayscale(80%);"),
+            "base.html must keep grayscale(80%) on .ar-list-item.read"
+        );
+        assert!(
+            raw_base.contains("filter: grayscale(85%);"),
+            "base.html must keep grayscale(85%) on .magazine-card.read"
+        );
+
+        // 2. Pagination prev/next buttons have ids, hx-indicator, and closeDetailPanel()
+        let entry = EntryViewModel {
+            id: 1,
+            title: "Sample".to_string(),
+            suggested_title: None,
+            summary: "Summary".to_string(),
+            sanitized_content: None,
+            url: "https://example.com/1".to_string(),
+            author: None,
+            feed_title: "Feed".to_string(),
+            category_title: None,
+            is_read: false,
+            is_bookmarked: false,
+            published_at: "2026-11-25T00:00:00Z".to_string(),
+            reading_time: 1,
+            image_url: None,
+        };
+        let list_template = EntryListTemplate {
+            entries: vec![entry],
+            top_executive_brief: None,
+            unread_count: Some(1),
+            current_page: 2,
+            total_pages: 3,
+            has_prev: true,
+            has_next: true,
+            prev_offset: 0,
+            next_offset: 100,
+            status: "all".to_string(),
+            search: String::new(),
+            limit: 50,
+            is_brief_eligible: false,
+            offset: 50,
+            feed_id: None,
+            category_id: None,
+        };
+        let list_html = list_template.render().expect("Failed to render EntryListTemplate");
+        assert!(
+            list_html.contains("id=\"pagination-prev-btn\""),
+            "entry_list.html must include id=\"pagination-prev-btn\" on Previous button"
+        );
+        assert!(
+            list_html.contains("id=\"pagination-next-btn\""),
+            "entry_list.html must include id=\"pagination-next-btn\" on Next button"
+        );
+        assert!(
+            list_html.matches("hx-indicator=\"#entries-loading-bar\"").count() >= 2,
+            "Both Previous and Next buttons must declare hx-indicator=\"#entries-loading-bar\""
+        );
+        assert!(
+            list_html.matches("onclick=\"closeDetailPanel()\"").count() >= 2,
+            "Both Previous and Next buttons must call onclick=\"closeDetailPanel()\""
+        );
+
+        // 3. IndexTemplate: mark-page-read-btn wiring, #entries-loading-overlay, and JS loading helpers
+        let index_auth = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render auth IndexTemplate");
+
+        assert!(
+            index_auth.contains("id=\"entries-loading-overlay\""),
+            "index.html must include #entries-loading-overlay"
+        );
+        assert!(
+            index_auth.contains("function showEntriesLoadingState()"),
+            "index.html must define showEntriesLoadingState()"
+        );
+        assert!(
+            index_auth.contains("function hideEntriesLoadingState()"),
+            "index.html must define hideEntriesLoadingState()"
+        );
+        assert!(
+            index_auth.contains("htmx:afterRequest"),
+            "index.html must hook hideEntriesLoadingState() into htmx:afterRequest"
+        );
+
+        let mark_btn_pos = index_auth.find("id=\"mark-page-read-btn\"").unwrap();
+        let mark_btn_end = index_auth[mark_btn_pos..].find('>').unwrap() + mark_btn_pos;
+        let mark_btn_tag = &index_auth[mark_btn_pos..=mark_btn_end];
+        assert!(
+            mark_btn_tag.contains("hx-indicator=\"#entries-loading-bar\""),
+            "Auth #mark-page-read-btn must declare hx-indicator=\"#entries-loading-bar\""
+        );
+        assert!(
+            mark_btn_tag.contains("onclick=\"closeDetailPanel()\""),
+            "Auth #mark-page-read-btn must declare onclick=\"closeDetailPanel()\""
+        );
+
+        // 4. Guest mode markVisiblePageLocallyRead() closes detail panel and shows toast
+        let index_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: false,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render guest IndexTemplate");
+
+        let guest_fn_pos = index_guest
+            .find("function markVisiblePageLocallyRead()")
+            .unwrap();
+        let guest_fn_end = index_guest[guest_fn_pos..].find("function showToast").unwrap() + guest_fn_pos;
+        let guest_fn = &index_guest[guest_fn_pos..guest_fn_end];
+        assert!(
+            guest_fn.contains("closeDetailPanel()"),
+            "Guest markVisiblePageLocallyRead() must call closeDetailPanel()"
+        );
+        assert!(
+            guest_fn.contains("showToast('Page marked as read.')"),
+            "Guest markVisiblePageLocallyRead() must show 'Page marked as read.' toast"
+        );
+    }
 }

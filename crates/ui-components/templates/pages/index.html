@@ -45,8 +45,10 @@
           hx-post="/hx/mark-page-read" 
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
+          hx-indicator="#entries-loading-bar"
           hx-include="#active-status, [name='search']"
           hx-vals="js:{entry_ids: getVisibleEntryIds()}"
+          onclick="closeDetailPanel()"
           class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" 
           title="Mark This Page as Read">
           <i data-lucide="check-check" class="w-4 h-4"></i>
@@ -160,6 +162,13 @@
     <div class="workspace-layout flex-1 overflow-hidden relative">
       <!-- Loading Indicator: Absolute zero-height overlay to prevent layout shift / pushing content -->
       <div id="entries-loading-bar" class="htmx-indicator h-0.5 bg-brand animate-pulse absolute top-0 left-0 right-0 z-20 pointer-events-none"></div>
+      <div id="entries-loading-overlay" class="hidden absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-card pointer-events-none">
+        <svg class="w-5 h-5 animate-spin text-brand" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span class="text-xs font-medium font-sans text-muted-foreground">Loading...</span>
+      </div>
       <div id="entries-list" class="entries-pane flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card min-w-0">
         {{ entries_list_html|safe }}
       </div>
@@ -461,6 +470,20 @@
     return true;
   }
 
+  function showEntriesLoadingState() {
+    const entriesList = document.getElementById('entries-list');
+    const overlay = document.getElementById('entries-loading-overlay');
+    if (entriesList) entriesList.classList.add('invisible');
+    if (overlay) overlay.classList.remove('hidden');
+  }
+
+  function hideEntriesLoadingState() {
+    const entriesList = document.getElementById('entries-list');
+    const overlay = document.getElementById('entries-loading-overlay');
+    if (entriesList) entriesList.classList.remove('invisible');
+    if (overlay) overlay.classList.add('hidden');
+  }
+
   // HTMX request interceptor: Cancel server request if valid client cache exists
   document.addEventListener('htmx:beforeRequest', (evt) => {
     const trigger = evt.detail && evt.detail.elt;
@@ -483,6 +506,12 @@
           applyCachedList(cached.html, status);
         }
       }
+    }
+    if (!evt.defaultPrevented && trigger && (trigger.id === 'mark-page-read-btn' || trigger.id === 'pagination-prev-btn' || trigger.id === 'pagination-next-btn')) {
+      if (typeof closeDetailPanel === 'function') {
+        closeDetailPanel();
+      }
+      showEntriesLoadingState();
     }
   });
 
@@ -965,6 +994,9 @@
     if (evt.detail && evt.detail.target) {
       const targetId = evt.detail.target.id || '';
       const isEntriesSwap = targetId === 'entries-list';
+      if (isEntriesSwap) {
+        hideEntriesLoadingState();
+      }
       const isBriefSwap = targetId === 'page-executive-brief' || (evt.detail.target && evt.detail.target.closest('#entries-list') && evt.detail.target.id !== 'detail-panel');
 
       if (isEntriesSwap || isBriefSwap) {
@@ -1096,7 +1128,19 @@
     }
   });
 
+  document.addEventListener('htmx:afterRequest', (evt) => {
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
+      hideEntriesLoadingState();
+    }
+  });
+
   document.addEventListener('htmx:responseError', (evt) => {
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
+      hideEntriesLoadingState();
+      if (typeof showToast === 'function') {
+        showToast('Failed to load articles. Please try again.');
+      }
+    }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'detail-panel') {
       const status = evt.detail.xhr ? evt.detail.xhr.status : 500;
       const msg = status === 429 
@@ -1116,6 +1160,12 @@
   });
 
   document.addEventListener('htmx:sendError', (evt) => {
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
+      hideEntriesLoadingState();
+      if (typeof showToast === 'function') {
+        showToast('Network error while loading articles.');
+      }
+    }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'detail-panel') {
       evt.detail.target.innerHTML = `
         <div class="rounded-lg p-6 bg-card border border-border text-center flex flex-col items-center justify-center m-4">
@@ -1642,6 +1692,9 @@
   }
 
   function markVisiblePageLocallyRead() {
+    if (typeof closeDetailPanel === 'function') {
+      closeDetailPanel();
+    }
     const ids = (typeof getVisibleEntryIds === 'function') ? getVisibleEntryIds() : [];
     if (Array.isArray(ids) && ids.length > 0) {
       ids.forEach(id => markLocallyRead(id));
@@ -1654,6 +1707,7 @@
     if (typeof invalidateFilterCache === 'function') {
       invalidateFilterCache();
     }
+    showToast('Page marked as read.');
   }
 
   function showToast(message) {

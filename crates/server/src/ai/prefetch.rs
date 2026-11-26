@@ -150,6 +150,14 @@ impl AiPrefetchService {
 
         let (batch_res, model) = ai.llm.summarize_batch_structured(&articles_for_llm).await;
 
+        if model == "extractive-fallback" {
+            tracing::warn!(
+                target: "ai::prefetch",
+                "Prefetch skipped persistence because LLM returned extractive-fallback"
+            );
+            return;
+        }
+
         // Save page executive brief if top is provided (both with page_key and legacy)
         if !batch_res.top.is_empty() {
             let _ = ai

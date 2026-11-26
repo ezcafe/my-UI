@@ -69,18 +69,22 @@ impl AiService {
         url: &str,
         title: &str,
         teaser: &str,
-    ) -> String {
+    ) -> Result<String, String> {
         if let Some(record) = self.db.get_summary_and_title(entry_id).await {
             if record.model != "extractive-fallback" && !record.summary.is_empty() {
-                return record.summary;
+                return Ok(record.summary);
             }
         }
 
         let content = self.extractor.extract_content(url, title, teaser).await;
         let (summary, model) = self.llm.summarize(title, &content).await;
 
+        if model == "extractive-fallback" || summary.trim().is_empty() {
+            return Err("LLM summary unavailable".to_string());
+        }
+
         self.db.save_summary(entry_id, &summary, &model).await.ok();
-        summary
+        Ok(summary)
     }
 
     pub async fn generate_rewrite_and_analysis(
@@ -134,10 +138,12 @@ impl AiService {
         content: &str,
     ) -> Result<(String, String), String> {
         if let Some(record) = self.db.get_summary_and_title(entry_id).await {
-            let imp = record.impact.as_deref().unwrap_or("").trim();
-            let fal = record.fallacies.as_deref().unwrap_or("").trim();
-            if !imp.is_empty() || !fal.is_empty() {
-                return Ok((imp.to_string(), fal.to_string()));
+            if record.model != "extractive-fallback" {
+                let imp = record.impact.as_deref().unwrap_or("").trim();
+                let fal = record.fallacies.as_deref().unwrap_or("").trim();
+                if !imp.is_empty() || !fal.is_empty() {
+                    return Ok((imp.to_string(), fal.to_string()));
+                }
             }
         }
 

@@ -4347,4 +4347,210 @@ mod tests {
             "htmx:responseError must guard loading cleanup via clearCurrentEntriesLoadingState(evt.detail.xhr)"
         );
     }
+
+    #[test]
+    fn test_view_aware_entries_skeleton_and_accessibility() {
+        let html = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render IndexTemplate");
+
+        let overlay_start = html
+            .find("id=\"entries-loading-overlay\"")
+            .expect("Missing #entries-loading-overlay");
+        let overlay_end = html[overlay_start..]
+            .find("id=\"entries-list\"")
+            .expect("Missing #entries-list after overlay")
+            + overlay_start;
+        let overlay_html = &html[overlay_start..overlay_end];
+
+        assert!(
+            overlay_html.contains("role=\"status\""),
+            "#entries-loading-overlay must have role=\"status\""
+        );
+        assert!(
+            overlay_html.contains("aria-live=\"polite\""),
+            "#entries-loading-overlay must have aria-live=\"polite\""
+        );
+        assert!(
+            overlay_html.contains("<span class=\"sr-only\">Loading articles...</span>"),
+            "#entries-loading-overlay must include sr-only loading status"
+        );
+        assert!(
+            !overlay_html.contains("animate-spin"),
+            "#entries-loading-overlay must replace spinner with skeleton"
+        );
+        assert!(
+            overlay_html.contains("id=\"entries-skeleton-magazine\""),
+            "Missing #entries-skeleton-magazine"
+        );
+        assert!(
+            overlay_html.contains("magazine-3col-grid")
+                && overlay_html.contains("magazine-p2-grid"),
+            "Magazine skeleton must match 3-col and p2 grid classes"
+        );
+        assert!(
+            overlay_html.contains("id=\"entries-skeleton-list\""),
+            "Missing #entries-skeleton-list"
+        );
+        assert!(
+            overlay_html.contains("min-h-[48px]"),
+            "List skeleton rows must match .ar-list-item min-h-[48px]"
+        );
+        assert!(
+            overlay_html.contains("animate-pulse")
+                && overlay_html.contains("motion-reduce:animate-none")
+                && overlay_html.contains("aria-hidden=\"true\""),
+            "Skeleton containers must include animate-pulse, motion-reduce:animate-none, and aria-hidden"
+        );
+
+        let show_pos = html.find("function showEntriesLoadingState()").unwrap();
+        let hide_pos = html.find("function hideEntriesLoadingState()").unwrap();
+        let after_hide = html[hide_pos..]
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .unwrap()
+            + hide_pos;
+        let show_fn = &html[show_pos..hide_pos];
+        let hide_fn = &html[hide_pos..after_hide];
+
+        assert!(
+            show_fn.contains("currentViewMode === 'ai'"),
+            "showEntriesLoadingState must switch skeleton based on currentViewMode === 'ai'"
+        );
+        assert!(
+            show_fn.contains("entries-skeleton-magazine")
+                && show_fn.contains("entries-skeleton-list"),
+            "showEntriesLoadingState must toggle magazine and list skeleton elements"
+        );
+        assert!(
+            show_fn.contains("aria-busy") && show_fn.contains("'true'"),
+            "showEntriesLoadingState must set aria-busy=\"true\" on #entries-list"
+        );
+        assert!(
+            hide_fn.contains("aria-busy") && hide_fn.contains("'false'"),
+            "hideEntriesLoadingState must set aria-busy=\"false\" on #entries-list"
+        );
+        assert!(
+            hide_fn.contains("entries-skeleton-magazine")
+                && hide_fn.contains("entries-skeleton-list"),
+            "hideEntriesLoadingState must hide both skeleton variants"
+        );
+
+        let grouped_html = AiGroupedListTemplate {
+            groups: vec![FeedSummaryGroupViewModel {
+                feed_title: "AI Daily".to_string(),
+                entries: vec![EntryViewModel {
+                    id: 99,
+                    title: "Autonomous Agent Flow".to_string(),
+                    suggested_title: None,
+                    feed_title: "AI Daily".to_string(),
+                    published_at: "10 mins ago".to_string(),
+                    reading_time: 2,
+                    summary: "Extractive teaser".to_string(),
+                    url: "https://example.com/agent".to_string(),
+                    author: None,
+                    is_read: false,
+                    category_title: None,
+                    image_url: None,
+                    sanitized_content: None,
+                    is_bookmarked: false,
+                }],
+            }],
+        }
+        .render()
+        .expect("Failed to render AiGroupedListTemplate");
+
+        assert!(
+            grouped_html.contains("<div class=\"mt-3\">"),
+            "ai_grouped_list.html must wrap #ai-summary-slot-{{id}} in <div class=\"mt-3\">"
+        );
+        assert!(
+            grouped_html.contains("id=\"ai-summary-slot-99\""),
+            "ai_grouped_list.html must set id=\"ai-summary-slot-99\""
+        );
+        assert!(
+            !grouped_html.contains("class=\"ai-summary-slot mt-3"),
+            "mt-3 should live on the wrapper div rather than .ai-summary-slot"
+        );
+        assert!(
+            grouped_html.contains("animate-pulse")
+                && grouped_html.contains("motion-reduce:animate-none")
+                && grouped_html.contains("Generating summary..."),
+            "ai_grouped_list.html slot must use reduced-motion-safe pulse skeleton"
+        );
+        assert!(
+            !grouped_html.contains("animate-spin"),
+            "ai_grouped_list.html must not use animate-spin"
+        );
+    }
+
+    #[test]
+    fn test_toast_deduplication_and_detail_is_error_cache_guard() {
+        let html = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render IndexTemplate");
+
+        let show_toast_pos = html.find("function showToast(message)").unwrap();
+        let show_toast_end = html[show_toast_pos..]
+            .find("function triggerNativeBookmark")
+            .unwrap()
+            + show_toast_pos;
+        let show_toast_fn = &html[show_toast_pos..show_toast_end];
+        assert!(
+            show_toast_fn.contains("data-auto-dismiss"),
+            "Guest showToast must mark data-auto-dismiss=\"true\" to prevent duplicate OOB timers"
+        );
+
+        let swap_pos = html
+            .find("targetId === 'detail-panel'")
+            .expect("Missing detail-panel swap branch");
+        let swap_end = html[swap_pos..].find("targetId.startsWith('entry-')").unwrap() + swap_pos;
+        let swap_branch = &html[swap_pos..swap_end];
+        assert!(
+            swap_branch.contains("targetId === 'ai-analysis-box'")
+                && swap_branch.contains("targetId === 'ai-rewrite-box'"),
+            "Detail swap branch must explicitly match ai-analysis-box and ai-rewrite-box outerHTML targets"
+        );
+        assert!(
+            swap_branch.contains("evt.target && evt.target.closest"),
+            "Detail swap branch must check live evt.target.closest('#detail-panel')"
+        );
+        assert!(
+            swap_branch.contains(".stroke-destructive, .is-error"),
+            "Detail IndexedDB cache guard must exclude .is-error cards"
+        );
+
+        let base_after_swap_pos = html
+            .find("document.body.addEventListener(\"htmx:afterSwap\"")
+            .unwrap();
+        let base_oob_pos = html
+            .find("document.body.addEventListener(\"htmx:oobAfterSwap\"")
+            .unwrap();
+        let base_end = html[base_oob_pos..].find("</script>").unwrap() + base_oob_pos;
+        let base_after_swap = &html[base_after_swap_pos..base_oob_pos];
+        let base_oob_swap = &html[base_oob_pos..base_end];
+
+        assert!(
+            base_after_swap.contains("swapTarget.isConnected")
+                && base_after_swap.contains("document.getElementById(swapTarget.id)")
+                && base_after_swap.contains("lucide.createIcons({ root: liveRoot })"),
+            "base.html htmx:afterSwap must resolve connected root for outerHTML swaps before lucide.createIcons"
+        );
+        assert!(
+            base_oob_swap.contains("textContent")
+                && base_oob_swap.contains("existing.remove()"),
+            "base.html htmx:oobAfterSwap must deduplicate matching toasts in #toast-container"
+        );
+    }
 }

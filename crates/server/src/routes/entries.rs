@@ -727,6 +727,14 @@ pub async fn executive_brief_htmx(
         .unwrap_or_default()
     };
 
+    let render_brief_error_with_toast = |retry_url: &str| {
+        format!(
+            "{}{}",
+            render_brief_error(retry_url),
+            crate::error::render_llm_error_toast()
+        )
+    };
+
     let gql = format!(
         "query {{
             entriesResult(filter: {{ {} }}) {{
@@ -821,51 +829,64 @@ pub async fn executive_brief_htmx(
     let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
 
     // 3. Fast-path: Check page brief cache
-    if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
-        let card_html = ExecutiveBriefCardTemplate { brief: &brief }
+    let render_cached_brief = |brief: &str,
+                               cached: &std::collections::HashMap<i64, crate::ai::db::AiSummaryRecord>|
+     -> String {
+        let mut full_html = ExecutiveBriefCardTemplate { brief }
             .render()
             .unwrap_or_default();
-        let mut full_html = card_html;
         for entry in &entries {
-            if let Some(rec) = cached_map.get(&entry.id) {
+            if let Some(rec) = cached.get(&entry.id) {
                 if let Some(suggested) = &rec.suggested_title {
                     full_html.push_str(&render_title_oob_span(entry.id, &entry.title, suggested));
                 }
             }
         }
-        return (StatusCode::OK, headers, Html(full_html)).into_response();
+        full_html
+    };
+
+    if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
+        return (StatusCode::OK, headers, Html(render_cached_brief(&brief, &cached_map)))
+            .into_response();
     }
 
-    // 4. In-flight deduplication
+    // 4. In-flight deduplication (wait up to 250s; exit immediately once in_flight clears)
     {
         let mut in_flight = ai_service.in_flight.lock().await;
         if in_flight.contains(&page_key) {
             drop(in_flight);
-            for _ in 0..40 {
+            for _ in 0..2500 {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
-                    let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
-                    let card_html = ExecutiveBriefCardTemplate { brief: &brief }
-                        .render()
-                        .unwrap_or_default();
-                    let mut full_html = card_html;
-                    for entry in &entries {
-                        if let Some(rec) = cached_map.get(&entry.id) {
-                            if let Some(suggested) = &rec.suggested_title {
-                                full_html.push_str(&render_title_oob_span(
-                                    entry.id,
-                                    &entry.title,
-                                    suggested,
-                                ));
-                            }
-                        }
+                    let fresh_map = ai_service.db.get_batch_summaries(&entry_ids).await;
+                    return (
+                        StatusCode::OK,
+                        headers,
+                        Html(render_cached_brief(&brief, &fresh_map)),
+                    )
+                        .into_response();
+                }
+                let still_in_flight = ai_service.in_flight.lock().await.contains(&page_key);
+                if !still_in_flight {
+                    if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
+                        let fresh_map = ai_service.db.get_batch_summaries(&entry_ids).await;
+                        return (
+                            StatusCode::OK,
+                            headers,
+                            Html(render_cached_brief(&brief, &fresh_map)),
+                        )
+                            .into_response();
                     }
-                    return (StatusCode::OK, headers, Html(full_html)).into_response();
+                    break;
                 }
             }
             let retry_url = build_retry_url();
-            let card_html = render_brief_error(&retry_url);
-            return (StatusCode::OK, headers, Html(card_html)).into_response();
+            return (
+                StatusCode::OK,
+                headers,
+                Html(render_brief_error_with_toast(&retry_url)),
+            )
+                .into_response();
         }
         in_flight.insert(page_key.clone());
     }
@@ -948,10 +969,14 @@ pub async fn executive_brief_htmx(
         .await;
 
     // Failure contract
-    if batch_res.top.is_empty() && batch_res.items.is_empty() {
+    if model == "extractive-fallback" || (batch_res.top.is_empty() && batch_res.items.is_empty()) {
         let retry_url = build_retry_url();
-        let card_html = render_brief_error(&retry_url);
-        return (StatusCode::OK, headers, Html(card_html)).into_response();
+        return (
+            StatusCode::OK,
+            headers,
+            Html(render_brief_error_with_toast(&retry_url)),
+        )
+            .into_response();
     }
 
     let mut summary_inputs = Vec::new();
@@ -994,11 +1019,15 @@ pub async fn executive_brief_htmx(
         .is_err()
     {
         let retry_url = build_retry_url();
-        let card_html = render_brief_error(&retry_url);
-        return (StatusCode::OK, headers, Html(card_html)).into_response();
+        return (
+            StatusCode::OK,
+            headers,
+            Html(render_brief_error_with_toast(&retry_url)),
+        )
+            .into_response();
     }
 
-    let card_html = if !batch_res.top.is_empty() {
+    let mut full_html = if !batch_res.top.is_empty() {
         ExecutiveBriefCardTemplate {
             brief: &batch_res.top,
         }
@@ -1009,7 +1038,6 @@ pub async fn executive_brief_htmx(
         render_brief_error(&retry_url)
     };
 
-    let mut full_html = card_html;
     for entry in &entries {
         let suggested = batch_res
             .items
@@ -1024,6 +1052,10 @@ pub async fn executive_brief_htmx(
         if let Some(sug) = suggested {
             full_html.push_str(&render_title_oob_span(entry.id, &entry.title, sug));
         }
+    }
+
+    if batch_res.top.is_empty() {
+        full_html.push_str(&crate::error::render_llm_error_toast());
     }
 
     (StatusCode::OK, headers, Html(full_html)).into_response()
@@ -1092,16 +1124,39 @@ pub async fn get_entry_ai_summary_htmx(
         }
     };
 
-    let summary = ai_service
+    match ai_service
         .get_or_create_summary(id, &url, &title, &teaser)
-        .await;
-
-    let template = AiSummaryCardTemplate { summary };
-    match template.render() {
-        Ok(html) => Html(html).into_response(),
+        .await
+    {
+        Ok(summary) => {
+            let template = AiSummaryCardTemplate { summary };
+            match template.render() {
+                Ok(html) => Html(html).into_response(),
+                Err(_) => {
+                    let fallback_card = r#"<div class="ai-summary-card text-xs text-muted-foreground italic mt-3 pt-3 border-t border-border font-sans">Summary unavailable</div>"#;
+                    Html(fallback_card.to_string()).into_response()
+                }
+            }
+        }
         Err(_) => {
-            let fallback_card = r#"<div class="ai-summary-card text-xs text-muted-foreground italic mt-3 pt-3 border-t border-border font-sans">Summary unavailable</div>"#;
-            Html(fallback_card.to_string()).into_response()
+            let retry_url = format!("/hx/entries/{id}/ai-summary");
+            let target = format!("#ai-summary-slot-{id}");
+            let container_id = format!("ai-summary-slot-{id}");
+            let card_html = AiErrorCardTemplate {
+                title: "AI Summary Unavailable",
+                message: crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE,
+                retry_url: &retry_url,
+                target: &target,
+                swap: "outerHTML",
+                container_id: &container_id,
+            }
+            .render()
+            .unwrap_or_default();
+            Html(format!(
+                "{card_html}{}",
+                crate::error::render_llm_error_toast()
+            ))
+            .into_response()
         }
     }
 }
@@ -1371,7 +1426,12 @@ pub async fn get_entry_detail_htmx(
 
     let (suggested_title, summary, rewrite, impact, fallacies, has_analysis) = if config.ai_enabled
     {
-        if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+        if let Some(record) = ai_service
+            .db
+            .get_summary_and_title(id)
+            .await
+            .filter(|r| r.model != "extractive-fallback")
+        {
             let rewrite = match record.rewrite {
                 Some(ref r) if !r.trim().is_empty() => r.clone(),
                 _ if !record.summary.trim().is_empty() => record.summary.clone(),
@@ -1622,7 +1682,12 @@ pub async fn get_entry_analysis_htmx(
     }
 
     // 1. Check AiDb cache for impact and fallacies
-    if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+    if let Some(record) = ai_service
+        .db
+        .get_summary_and_title(id)
+        .await
+        .filter(|r| r.model != "extractive-fallback")
+    {
         let imp = record.impact.as_deref().unwrap_or("").trim();
         let fal = record.fallacies.as_deref().unwrap_or("").trim();
         if !imp.is_empty() || !fal.is_empty() {
@@ -1696,7 +1761,11 @@ pub async fn get_entry_analysis_htmx(
             .render()
             .unwrap_or_default();
 
-            Html(card_html).into_response()
+            Html(format!(
+                "{card_html}{}",
+                crate::error::render_llm_error_toast()
+            ))
+            .into_response()
         }
     }
 }
@@ -1714,7 +1783,12 @@ pub async fn get_entry_rewrite_htmx(
     }
 
     // 1. Check AiDb cache
-    if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+    if let Some(record) = ai_service
+        .db
+        .get_summary_and_title(id)
+        .await
+        .filter(|r| r.model != "extractive-fallback")
+    {
         if let Some(ref r) = record.rewrite {
             if !r.trim().is_empty() {
                 let impact = record.impact.as_deref().unwrap_or("");
@@ -1780,7 +1854,12 @@ pub async fn get_entry_rewrite_htmx(
         }
         Err(_) => {
             // Graceful fallback: render existing executive brief (or teaser)
-            let fallback = if let Some(record) = ai_service.db.get_summary_and_title(id).await {
+            let fallback = if let Some(record) = ai_service
+                .db
+                .get_summary_and_title(id)
+                .await
+                .filter(|r| r.model != "extractive-fallback")
+            {
                 if !record.summary.is_empty() {
                     record.summary
                 } else {
@@ -1807,7 +1886,8 @@ pub async fn get_entry_rewrite_htmx(
             );
 
             let full_html = format!(
-                r#"<div id="ai-rewrite-box" class="space-y-6">{error_card}{fallback_html}</div>"#
+                r#"<div id="ai-rewrite-box" class="space-y-6">{error_card}{fallback_html}</div>{}"#,
+                crate::error::render_llm_error_toast()
             );
             Html(full_html).into_response()
         }
@@ -3516,8 +3596,9 @@ mod tests {
         assert!(html.contains("hx-target=\"#ai-rewrite-box\""));
         assert!(html.contains("Retry"));
         assert!(html.contains("Graceful fallback executive brief."));
-        assert!(!html.contains("toast-container"));
-        assert!(!html.contains("hx-swap-oob"));
+        assert!(html.contains("toast-container"));
+        assert!(html.contains("hx-swap-oob"));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
     }
 
     #[tokio::test]
@@ -3597,7 +3678,8 @@ mod tests {
         assert!(html.contains("hx-get=\"/hx/entries/504/analysis\""));
         assert!(html.contains("hx-target=\"#ai-analysis-box\""));
         assert!(html.contains("Retry"));
-        assert!(!html.contains("toast-container"));
+        assert!(html.contains("toast-container"));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
         assert!(!html.contains("class=\"hidden\""));
     }
 
@@ -3708,7 +3790,8 @@ mod tests {
         assert!(html.contains("hx-target=\"#page-executive-brief\""));
         assert!(html.contains("hx-swap=\"outerHTML\""));
         assert!(html.contains("Retry"));
-        assert!(!html.contains("toast-container"));
+        assert!(html.contains("toast-container"));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
         assert!(!html.contains("class=\"hidden\""));
     }
 
@@ -3811,7 +3894,8 @@ mod tests {
         assert!(html.contains("status=unread"));
         assert!(html.contains("feed_id=42"));
         assert!(html.contains("category_id=7"));
-        assert!(!html.contains("toast-container"));
+        assert!(html.contains("toast-container"));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
     }
 
     #[tokio::test]
@@ -4091,5 +4175,440 @@ mod tests {
         assert!(!html.contains("reading_time"));
         assert!(!html.contains("readingTime"));
         assert!(!html.contains("9 min"));
+    }
+
+    #[tokio::test]
+    async fn test_executive_brief_waits_for_inflight_and_surfaces_error_with_toast() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 1,
+                "entries": [{
+                    "id": 910,
+                    "user_id": 1,
+                    "feed_id": 10,
+                    "title": "Inflight Brief Story",
+                    "url": "http://example.com/910",
+                    "comments_url": "",
+                    "author": "Author",
+                    "content": "Full content",
+                    "status": "unread",
+                    "starred": false,
+                    "reading_time": 2,
+                    "created_at": chrono::Utc::now().to_rfc3339(),
+                    "published_at": chrono::Utc::now().to_rfc3339(),
+                    "feed": {
+                        "id": 10,
+                        "user_id": 1,
+                        "title": "Tech Feed",
+                        "checked_at": "2026-11-22T08:00:00Z",
+                        "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                    }
+                }]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let make_config = || {
+            Arc::new(Config {
+                host: "127.0.0.1".to_string(),
+                port: 3000,
+                app_base_url: "http://127.0.0.1:3000".to_string(),
+                auth_enabled: false,
+                session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+                oidc_issuer_url: "https://id.example.com".to_string(),
+                oidc_client_id: "test-client".to_string(),
+                oidc_client_secret: "test-secret".to_string(),
+                oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+                miniflux_base_url: mock_server.uri(),
+                miniflux_api_key: "api-key".to_string(),
+                ai_enabled: true,
+                llm_cli_cmd: "/nonexistent/binary".to_string(),
+                llm_model: "test-model".to_string(),
+                llm_extra_args: vec![],
+                database_url: "mock:db".to_string(),
+                llm_provider: "openai".to_string(),
+                llm_api_key: None,
+                llm_api_base_url: None,
+            })
+        };
+
+        let page_key = crate::ai::compute_page_key("unread", &[910]);
+        let make_query = || EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            limit: Some(15),
+            offset: Some(0),
+            feed_id: None,
+            category_id: None,
+            search: None,
+            request_brief: None,
+        };
+
+        // Case A: in_flight takes 4.3s (> old 4s cap) and writes brief -> brief card returned
+        let db_a = Arc::new(crate::ai::AiDb::new_mock());
+        let ai_a = Arc::new(crate::ai::AiService {
+            db: db_a.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: crate::ai::llm::LlmCliRunner::new(
+                "/nonexistent/binary".to_string(),
+                "test-model".to_string(),
+                vec![],
+            )
+            .into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::from([
+                page_key.clone(),
+            ]))),
+        });
+        let ai_a_bg = ai_a.clone();
+        let key_a = page_key.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(4300)).await;
+            ai_a_bg
+                .db
+                .save_page_brief_with_key(&key_a, "Delayed Prefetch Brief")
+                .await
+                .unwrap();
+            ai_a_bg.in_flight.lock().await.remove(&key_a);
+        });
+
+        let schema_a = build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string()));
+        let resp_a = executive_brief_htmx(
+            Query(make_query()),
+            State(schema_a),
+            State(make_config()),
+            State(ai_a),
+        )
+        .await;
+        assert_eq!(resp_a.status(), StatusCode::OK);
+        let html_a = String::from_utf8(
+            resp_a.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(
+            html_a.contains("Delayed Prefetch Brief"),
+            "Must wait past 4s for in-flight prefetch and return brief: {html_a}"
+        );
+        assert!(!html_a.contains("is-error"));
+
+        // Case B: in_flight finishes after 200ms WITHOUT brief -> immediate error card + OOB toast
+        let db_b = Arc::new(crate::ai::AiDb::new_mock());
+        let ai_b = Arc::new(crate::ai::AiService {
+            db: db_b.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: crate::ai::llm::LlmCliRunner::new(
+                "/nonexistent/binary".to_string(),
+                "test-model".to_string(),
+                vec![],
+            )
+            .into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::from([
+                page_key.clone(),
+            ]))),
+        });
+        let ai_b_bg = ai_b.clone();
+        let key_b = page_key.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            ai_b_bg.in_flight.lock().await.remove(&key_b);
+        });
+
+        let start_b = std::time::Instant::now();
+        let schema_b = build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string()));
+        let resp_b = executive_brief_htmx(
+            Query(make_query()),
+            State(schema_b),
+            State(make_config()),
+            State(ai_b),
+        )
+        .await;
+        assert!(
+            start_b.elapsed() < Duration::from_secs(2),
+            "Must exit immediately when in_flight clears without brief instead of waiting 4s/250s"
+        );
+        let html_b = String::from_utf8(
+            resp_b.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(html_b.contains("is-error"));
+        assert!(html_b.contains("Executive Brief Unavailable"));
+        assert!(html_b.contains("toast-container"));
+        assert!(html_b.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+
+        // Case C: Partial real-LLM response (top empty, items non-empty) persists valid items & returns error + OOB + toast
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let mut script_file = tempfile::NamedTempFile::new().unwrap();
+        script_file
+            .write_all(
+                br#"#!/bin/sh
+cat >/dev/null
+printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial rewrite 910."}]}'
+"#,
+            )
+            .unwrap();
+        let mut perms = std::fs::metadata(script_file.path()).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(script_file.path(), perms).unwrap();
+
+        let db_c = Arc::new(crate::ai::AiDb::new_mock());
+        let ai_c = Arc::new(crate::ai::AiService {
+            db: db_c.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: crate::ai::llm::LlmCliRunner::new(
+                script_file.path().to_str().unwrap().to_string(),
+                "test-model".to_string(),
+                vec![],
+            )
+            .into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+        let schema_c = build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string()));
+        let resp_c = executive_brief_htmx(
+            Query(make_query()),
+            State(schema_c),
+            State(make_config()),
+            State(ai_c),
+        )
+        .await;
+        let html_c = String::from_utf8(
+            resp_c.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(html_c.contains("is-error"));
+        assert!(html_c.contains("Partial Title 910"));
+        assert!(html_c.contains("toast-container"));
+        assert!(html_c.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+        assert!(
+            db_c.get_page_brief_by_key(&page_key).await.is_none(),
+            "Empty top must not persist page brief"
+        );
+        let saved_910 = db_c
+            .get_summary_and_title(910)
+            .await
+            .expect("Valid partial item should be persisted");
+        assert_eq!(saved_910.suggested_title.as_deref(), Some("Partial Title 910"));
+    }
+
+    #[tokio::test]
+    async fn test_ai_endpoints_return_error_card_and_toast_after_retry_exhausted() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/920"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 920,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Original Miniflux Title 920",
+                "url": "https://example.com/920",
+                "comments_url": "",
+                "author": "Reporter",
+                "content": "<p>Original Miniflux teaser 920</p>",
+                "published_at": "2026-11-24T00:00:00Z",
+                "created_at": "2026-11-24T00:00:00Z",
+                "status": "unread",
+                "starred": false,
+                "reading_time": 2,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "feed_url": "https://example.com/feed",
+                    "site_url": "https://example.com",
+                    "title": "Tech Source"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/921"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:ai_endpoints_920";
+        let db = Arc::new(AiDb::new(db_path).await.unwrap());
+
+        // 1. AiPrefetchService skips persisting extractive-fallback on failure
+        let failing_llm = crate::ai::llm::LlmCliRunner::new(
+            "/nonexistent/binary".to_string(),
+            "test-model".to_string(),
+            vec![],
+        );
+        let ai_prefetch = Arc::new(crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: failing_llm.into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+        crate::ai::prefetch::AiPrefetchService::run_prefetch(
+            ai_prefetch.clone(),
+            "unread".to_string(),
+            vec![922],
+            vec![(
+                922,
+                "Prefetch Fail Title".to_string(),
+                "https://example.com/922".to_string(),
+                "Prefetch Fail Teaser".to_string(),
+            )],
+        )
+        .await;
+        assert!(
+            db.get_summary_and_title(922).await.is_none(),
+            "AiPrefetchService must skip saving extractive-fallback rows"
+        );
+
+        // 2. Legacy extractive-fallback DB row for entry 920 is ignored by detail/analysis/rewrite/summary
+        db.save_summary_and_title_with_analysis(
+            920,
+            Some("Stale Fallback Title"),
+            "Legacy extractive summary",
+            Some("Legacy extractive rewrite"),
+            Some("Legacy impact"),
+            Some("Legacy fallacies"),
+            "extractive-fallback",
+        )
+        .await
+        .unwrap();
+
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/nonexistent/binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let app = crate::app::build_app(
+            config,
+            build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string())),
+        )
+        .await;
+
+        // Detail ignores legacy extractive-fallback title/rewrite/analysis
+        let detail_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/920")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail_resp.status(), StatusCode::OK);
+        let detail_html = String::from_utf8(
+            detail_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(detail_html.contains("Original Miniflux Title 920"));
+        assert!(!detail_html.contains("Stale Fallback Title"));
+        assert!(!detail_html.contains("Legacy extractive rewrite"));
+        assert!(!detail_html.contains("Legacy impact"));
+
+        // /ai-summary on LLM failure returns AiErrorCardTemplate + OOB toast (and does not overwrite with extractive-fallback)
+        let sum_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/920/ai-summary")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sum_resp.status(), StatusCode::OK);
+        let sum_html = String::from_utf8(
+            sum_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(sum_html.contains("id=\"ai-summary-slot-920\""));
+        assert!(sum_html.contains("is-error"));
+        assert!(sum_html.contains("AI Summary Unavailable"));
+        assert!(sum_html.contains("hx-get=\"/hx/entries/920/ai-summary\""));
+        assert!(sum_html.contains("hx-target=\"#ai-summary-slot-920\""));
+        assert!(sum_html.contains("toast-container"));
+        assert!(sum_html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+
+        // /ai-summary on Miniflux 404 keeps "Summary unavailable" without error card or toast
+        let sum_404_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/921/ai-summary")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sum_404_resp.status(), StatusCode::OK);
+        let sum_404_html = String::from_utf8(
+            sum_404_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(sum_404_html.contains("Summary unavailable"));
+        assert!(!sum_404_html.contains("is-error"));
+        assert!(!sum_404_html.contains("toast-container"));
+
+        // /analysis ignores legacy extractive-fallback and returns error card + toast
+        let analysis_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/920/analysis")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(analysis_resp.status(), StatusCode::OK);
+        let analysis_html = String::from_utf8(
+            analysis_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(analysis_html.contains("id=\"ai-analysis-box\""));
+        assert!(analysis_html.contains("is-error"));
+        assert!(analysis_html.contains("toast-container"));
+        assert!(analysis_html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+
+        // /rewrite ignores legacy extractive-fallback summary/rewrite and returns error card + toast
+        let rewrite_resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/920/rewrite")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rewrite_resp.status(), StatusCode::OK);
+        let rewrite_html = String::from_utf8(
+            rewrite_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(rewrite_html.contains("id=\"ai-rewrite-box\""));
+        assert!(rewrite_html.contains("is-error"));
+        assert!(rewrite_html.contains("toast-container"));
+        assert!(rewrite_html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
+        assert!(!rewrite_html.contains("Legacy extractive summary"));
     }
 }

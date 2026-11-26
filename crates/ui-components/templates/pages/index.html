@@ -165,12 +165,113 @@
     <div class="workspace-layout flex-1 overflow-hidden relative">
       <!-- Loading Indicator: Absolute zero-height overlay to prevent layout shift / pushing content -->
       <div id="entries-loading-bar" class="htmx-indicator h-0.5 bg-brand animate-pulse absolute top-0 left-0 right-0 z-20 pointer-events-none"></div>
-      <div id="entries-loading-overlay" class="hidden absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-card pointer-events-none">
-        <svg class="w-5 h-5 animate-spin text-brand" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-        <span class="text-xs font-medium font-sans text-muted-foreground">Loading...</span>
+      <div id="entries-loading-overlay" role="status" aria-live="polite" class="hidden absolute inset-0 z-20 p-4 overflow-hidden bg-card pointer-events-none">
+        <span class="sr-only">Loading articles...</span>
+        <div id="entries-skeleton-magazine" class="hidden magazine-container pt-1 pb-6 w-full animate-pulse motion-reduce:animate-none" aria-hidden="true">
+          <div class="magazine-3col-grid w-full">
+            <div class="w-full flex flex-col">
+              <div class="rounded-lg p-5 bg-muted/40 border border-border space-y-3">
+                <div class="flex items-center gap-2 pb-3 border-b border-border/80">
+                  <div class="w-6 h-6 rounded bg-muted"></div>
+                  <div class="h-3 bg-muted rounded w-32"></div>
+                </div>
+                <div class="h-2.5 bg-muted rounded w-full"></div>
+                <div class="h-2.5 bg-muted rounded w-5/6"></div>
+                <div class="h-2.5 bg-muted rounded w-11/12"></div>
+                <div class="h-2.5 bg-muted rounded w-3/4"></div>
+              </div>
+            </div>
+            <div class="w-full flex flex-col gap-6">
+              <div class="rounded-lg border border-border bg-card overflow-hidden flex flex-col sm:flex-row">
+                <div class="bg-muted min-h-[220px] sm:w-1/2 shrink-0"></div>
+                <div class="p-5 sm:w-1/2 flex flex-col justify-center space-y-3">
+                  <div class="h-4 bg-muted rounded w-full"></div>
+                  <div class="h-4 bg-muted rounded w-4/5"></div>
+                  <div class="h-2.5 bg-muted rounded w-full mt-2"></div>
+                  <div class="h-2.5 bg-muted rounded w-5/6"></div>
+                  <div class="h-2.5 bg-muted rounded w-2/3"></div>
+                </div>
+              </div>
+              <div class="magazine-p2-grid">
+                <div class="rounded-lg border border-border bg-card overflow-hidden">
+                  <div class="h-28 bg-muted"></div>
+                  <div class="p-3.5 space-y-2">
+                    <div class="h-3 bg-muted rounded w-5/6"></div>
+                    <div class="h-2.5 bg-muted rounded w-full"></div>
+                    <div class="h-2.5 bg-muted rounded w-2/3"></div>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-border bg-card overflow-hidden">
+                  <div class="h-28 bg-muted"></div>
+                  <div class="p-3.5 space-y-2">
+                    <div class="h-3 bg-muted rounded w-4/5"></div>
+                    <div class="h-2.5 bg-muted rounded w-full"></div>
+                    <div class="h-2.5 bg-muted rounded w-3/4"></div>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-border bg-card overflow-hidden">
+                  <div class="h-28 bg-muted"></div>
+                  <div class="p-3.5 space-y-2">
+                    <div class="h-3 bg-muted rounded w-11/12"></div>
+                    <div class="h-2.5 bg-muted rounded w-5/6"></div>
+                    <div class="h-2.5 bg-muted rounded w-2/3"></div>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-border bg-card overflow-hidden">
+                  <div class="h-28 bg-muted"></div>
+                  <div class="p-3.5 space-y-2">
+                    <div class="h-3 bg-muted rounded w-3/4"></div>
+                    <div class="h-2.5 bg-muted rounded w-full"></div>
+                    <div class="h-2.5 bg-muted rounded w-4/5"></div>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-border bg-card overflow-hidden">
+                  <div class="h-28 bg-muted"></div>
+                  <div class="p-3.5 space-y-2">
+                    <div class="h-3 bg-muted rounded w-5/6"></div>
+                    <div class="h-2.5 bg-muted rounded w-11/12"></div>
+                    <div class="h-2.5 bg-muted rounded w-1/2"></div>
+                  </div>
+                </div>
+                <div class="rounded-lg border border-border bg-card overflow-hidden">
+                  <div class="h-28 bg-muted"></div>
+                  <div class="p-3.5 space-y-2">
+                    <div class="h-3 bg-muted rounded w-4/5"></div>
+                    <div class="h-2.5 bg-muted rounded w-full"></div>
+                    <div class="h-2.5 bg-muted rounded w-3/5"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="w-full flex flex-col gap-3">
+              <div class="rounded-lg border border-border bg-card p-3.5 space-y-2"><div class="h-3 bg-muted rounded w-5/6"></div><div class="h-3 bg-muted rounded w-2/3"></div></div>
+              <div class="rounded-lg border border-border bg-card p-3.5 space-y-2"><div class="h-3 bg-muted rounded w-11/12"></div><div class="h-3 bg-muted rounded w-1/2"></div></div>
+              <div class="rounded-lg border border-border bg-card p-3.5 space-y-2"><div class="h-3 bg-muted rounded w-4/5"></div><div class="h-3 bg-muted rounded w-3/4"></div></div>
+              <div class="rounded-lg border border-border bg-card p-3.5 space-y-2"><div class="h-3 bg-muted rounded w-full"></div><div class="h-3 bg-muted rounded w-3/5"></div></div>
+              <div class="rounded-lg border border-border bg-card p-3.5 space-y-2"><div class="h-3 bg-muted rounded w-5/6"></div><div class="h-3 bg-muted rounded w-2/3"></div></div>
+            </div>
+          </div>
+        </div>
+        <div id="entries-skeleton-list" class="hidden space-y-1.5 animate-pulse motion-reduce:animate-none" aria-hidden="true">
+          <div class="rounded-lg p-3.5 bg-muted/40 border border-border mb-3 space-y-2">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded bg-muted"></div>
+              <div class="h-3 bg-muted rounded w-36"></div>
+            </div>
+            <div class="h-2.5 bg-muted rounded w-5/6"></div>
+            <div class="h-2.5 bg-muted rounded w-4/6"></div>
+          </div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-3/4"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-2/3"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-5/6"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-4/5"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-1/2"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-11/12"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-3/5"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-4/6"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3 border-b border-border/60"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-5/6"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+          <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-2/3"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
+        </div>
       </div>
       <div id="entries-list" class="entries-pane flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card min-w-0">
         {{ entries_list_html|safe }}
@@ -480,15 +581,30 @@
   function showEntriesLoadingState() {
     const entriesList = document.getElementById('entries-list');
     const overlay = document.getElementById('entries-loading-overlay');
-    if (entriesList) entriesList.classList.add('invisible');
+    const magSkeleton = document.getElementById('entries-skeleton-magazine');
+    const listSkeleton = document.getElementById('entries-skeleton-list');
+    const isMagazine = currentViewMode === 'ai';
+    if (entriesList) {
+      entriesList.classList.add('invisible');
+      entriesList.setAttribute('aria-busy', 'true');
+    }
+    if (magSkeleton) magSkeleton.classList.toggle('hidden', !isMagazine);
+    if (listSkeleton) listSkeleton.classList.toggle('hidden', isMagazine);
     if (overlay) overlay.classList.remove('hidden');
   }
 
   function hideEntriesLoadingState() {
     const entriesList = document.getElementById('entries-list');
     const overlay = document.getElementById('entries-loading-overlay');
+    const magSkeleton = document.getElementById('entries-skeleton-magazine');
+    const listSkeleton = document.getElementById('entries-skeleton-list');
     const loadingBar = document.getElementById('entries-loading-bar');
-    if (entriesList) entriesList.classList.remove('invisible');
+    if (entriesList) {
+      entriesList.classList.remove('invisible');
+      entriesList.setAttribute('aria-busy', 'false');
+    }
+    if (magSkeleton) magSkeleton.classList.add('hidden');
+    if (listSkeleton) listSkeleton.classList.add('hidden');
     if (overlay) overlay.classList.add('hidden');
     if (loadingBar && !activeEntriesRequestXhr) loadingBar.classList.remove('htmx-request');
   }
@@ -1198,7 +1314,13 @@
             : currentViewMode;
           applyAiViewMode(nextMode, effectiveStatus, isSearchActive);
         }
-      } else if (targetId === 'detail-panel' || evt.detail.target.closest('#detail-panel')) {
+      } else if (
+        targetId === 'detail-panel' ||
+        targetId === 'ai-analysis-box' ||
+        targetId === 'ai-rewrite-box' ||
+        (evt.detail.target.closest && evt.detail.target.closest('#detail-panel')) ||
+        (evt.target && evt.target.closest && evt.target.closest('#detail-panel'))
+      ) {
         invalidateFilterCache();
         const panel = document.getElementById('detail-panel');
         if (panel) {
@@ -1208,7 +1330,7 @@
             const entryId = detail.getAttribute('data-entry-id');
             recordReadArticle(entryId);
             // Do not cache error cards
-            if (entryId && !panel.querySelector('.stroke-destructive')) {
+            if (entryId && !panel.querySelector('.stroke-destructive, .is-error')) {
               saveCachedArticle(entryId, panel.innerHTML);
             }
           }
@@ -1920,7 +2042,15 @@
   function showToast(message) {
     const container = document.getElementById('toast-container');
     if (!container) return;
+    const trimmed = String(message).trim();
+    container.querySelectorAll('.pointer-events-auto').forEach((existing) => {
+      const textEl = existing.querySelector('span');
+      if (textEl && textEl.textContent && textEl.textContent.trim() === trimmed) {
+        existing.remove();
+      }
+    });
     const toast = document.createElement('div');
+    toast.setAttribute('data-auto-dismiss', 'true');
     toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
     toast.innerHTML = '<i data-lucide="bookmark" class="w-4 h-4 text-brand shrink-0"></i><span>' + message + '</span><button type="button" onclick="dismissToast(this)" class="p-1 rounded-full text-background/60 hover:text-background hover:bg-background/20 transition-colors shrink-0" title="Close notification" aria-label="Close notification"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>';
     container.appendChild(toast);

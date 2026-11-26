@@ -1255,8 +1255,10 @@ mod tests {
 
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
-        assert!(html.contains("ai-summary-card"));
-        assert!(html.contains("Quantum leap achieved today."));
+        assert!(html.contains("is-error"));
+        assert!(html.contains("AI Summary Unavailable"));
+        assert!(html.contains("toast-container"));
+        assert!(html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
     }
 
     #[tokio::test]

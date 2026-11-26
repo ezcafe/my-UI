@@ -6,6 +6,66 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 
+const LLM_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+async fn retry_once_after_delay<T, E, F, Fut>(
+    operation: &str,
+    delay: Duration,
+    mut op: F,
+) -> Result<T, E>
+where
+    F: FnMut(u8) -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    match op(1).await {
+        Ok(val) => Ok(val),
+        Err(first_err) => {
+            tracing::warn!(
+                target: "ai::retry",
+                "[AI_RETRY] operation=\"{}\" attempt=1 delay_ms={} reason=\"{}\"",
+                operation,
+                delay.as_millis(),
+                first_err
+            );
+            tokio::time::sleep(delay).await;
+            op(2).await
+        }
+    }
+}
+
+#[derive(Debug)]
+enum CliAttemptError {
+    ProcessFailed {
+        exit_code: Option<i32>,
+        stderr: String,
+    },
+    EmptyOutput {
+        elapsed_ms: u128,
+    },
+    Timeout {
+        timeout_secs: u64,
+        elapsed_ms: u128,
+    },
+}
+
+impl std::fmt::Display for CliAttemptError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProcessFailed { exit_code, stderr } => {
+                write!(f, "process_failed exit_code={exit_code:?} stderr={stderr:?}")
+            }
+            Self::EmptyOutput { elapsed_ms } => {
+                write!(f, "empty_output elapsed_ms={elapsed_ms}")
+            }
+            Self::Timeout {
+                timeout_secs,
+                elapsed_ms,
+            } => write!(f, "cli_timeout timeout_secs={timeout_secs} elapsed_ms={elapsed_ms}"),
+        }
+    }
+}
+
 static TOP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#""top"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)""#).expect("valid top regex")
 });
@@ -184,33 +244,20 @@ impl LlmCliRunner {
         )
     }
 
-    pub fn parse_rewrite_and_analyze_response(raw_output: &str) -> DetailAnalysisResult {
-        let trimmed = raw_output.trim();
-        let mut parsed: Option<DetailAnalysisResult> = serde_json::from_str(trimmed).ok();
+    fn extract_fenced_json(trimmed: &str) -> Option<&str> {
+        let start = trimmed.find("```")?;
+        let after_start = &trimmed[start + 3..];
+        let code_content = if let Some(first_newline) = after_start.find('\n') {
+            &after_start[first_newline + 1..]
+        } else {
+            after_start
+        };
+        let end = code_content.rfind("```")?;
+        Some(code_content[..end].trim())
+    }
 
-        if parsed.is_none() {
-            if let Some(start) = trimmed.find("```") {
-                let after_start = &trimmed[start + 3..];
-                let code_content = if let Some(first_newline) = after_start.find('\n') {
-                    &after_start[first_newline + 1..]
-                } else {
-                    after_start
-                };
-                if let Some(end) = code_content.rfind("```") {
-                    let candidate = code_content[..end].trim();
-                    parsed = serde_json::from_str(candidate).ok();
-                }
-            }
-        }
-
-        let mut result = parsed.unwrap_or_else(|| DetailAnalysisResult {
-            rewrite: trimmed.to_string(),
-            impact: String::new(),
-            fallacies: String::new(),
-        });
-
-        // Normalize fallacies reassuring indicator
-        let f_lower = result.fallacies.to_lowercase();
+    fn normalize_fallacies(primary_text: &str, secondary_text: &str, fallacies: String) -> String {
+        let f_lower = fallacies.to_lowercase();
         let is_no_fallacy = f_lower.is_empty()
             || f_lower.contains("không phát hiện")
             || f_lower.contains("không có")
@@ -221,26 +268,42 @@ impl LlmCliRunner {
             || f_lower.contains("objective");
 
         if is_no_fallacy {
-            let is_vietnamese = result
-                .rewrite
+            let is_vietnamese = primary_text
                 .chars()
                 .any(|c| matches!(c, 'à'..='ỹ' | 'À'..='Ỹ'))
-                || result
-                    .impact
+                || secondary_text
                     .chars()
                     .any(|c| matches!(c, 'à'..='ỹ' | 'À'..='Ỹ'))
                 || f_lower.contains("không");
             if is_vietnamese {
-                result.fallacies =
-                    "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
-                        .to_string();
+                "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
+                    .to_string()
             } else {
-                result.fallacies =
-                    "No logical fallacies detected — Objective and well-supported reporting"
-                        .to_string();
+                "No logical fallacies detected — Objective and well-supported reporting".to_string()
+            }
+        } else {
+            fallacies
+        }
+    }
+
+    pub fn parse_rewrite_and_analyze_response(raw_output: &str) -> DetailAnalysisResult {
+        let trimmed = raw_output.trim();
+        let mut parsed: Option<DetailAnalysisResult> = serde_json::from_str(trimmed).ok();
+
+        if parsed.is_none() {
+            if let Some(candidate) = Self::extract_fenced_json(trimmed) {
+                parsed = serde_json::from_str(candidate).ok();
             }
         }
 
+        let mut result = parsed.unwrap_or_else(|| DetailAnalysisResult {
+            rewrite: trimmed.to_string(),
+            impact: String::new(),
+            fallacies: String::new(),
+        });
+
+        result.fallacies =
+            Self::normalize_fallacies(&result.rewrite, &result.impact, result.fallacies);
         result
     }
 
@@ -264,7 +327,7 @@ impl LlmCliRunner {
         )
     }
 
-    pub fn parse_impact_and_fallacies_response(raw_output: &str) -> (String, String) {
+    pub fn try_parse_impact_and_fallacies_response(raw_output: &str) -> Option<(String, String)> {
         #[derive(Deserialize)]
         struct RawAnalysis {
             #[serde(default)]
@@ -277,53 +340,24 @@ impl LlmCliRunner {
         let mut parsed: Option<RawAnalysis> = serde_json::from_str(trimmed).ok();
 
         if parsed.is_none() {
-            if let Some(start) = trimmed.find("```") {
-                let after_start = &trimmed[start + 3..];
-                let code_content = if let Some(first_newline) = after_start.find('\n') {
-                    &after_start[first_newline + 1..]
-                } else {
-                    after_start
-                };
-                if let Some(end) = code_content.rfind("```") {
-                    let candidate = code_content[..end].trim();
-                    parsed = serde_json::from_str(candidate).ok();
-                }
+            if let Some(candidate) = Self::extract_fenced_json(trimmed) {
+                parsed = serde_json::from_str(candidate).ok();
             }
         }
 
-        let raw = parsed.unwrap_or(RawAnalysis {
-            impact: String::new(),
-            fallacies: String::new(),
-        });
-
+        let raw = parsed?;
         let impact = raw.impact;
-        let mut fallacies = raw.fallacies;
+        let fallacies = Self::normalize_fallacies(&impact, "", raw.fallacies);
+        Some((impact, fallacies))
+    }
 
-        let f_lower = fallacies.to_lowercase();
-        let is_no_fallacy = f_lower.is_empty()
-            || f_lower.contains("không phát hiện")
-            || f_lower.contains("không có")
-            || f_lower == "none"
-            || f_lower.starts_with("none")
-            || f_lower.contains("no fallacy")
-            || f_lower.contains("no logical fallacies")
-            || f_lower.contains("objective");
-
-        if is_no_fallacy {
-            let is_vietnamese = impact.chars().any(|c| matches!(c, 'à'..='ỹ' | 'À'..='Ỹ'))
-                || f_lower.contains("không");
-            if is_vietnamese {
-                fallacies =
-                    "Không phát hiện lỗi ngụy biện — Lập luận khách quan, có số liệu đối chiếu"
-                        .to_string();
-            } else {
-                fallacies =
-                    "No logical fallacies detected — Objective and well-supported reporting"
-                        .to_string();
-            }
-        }
-
-        (impact, fallacies)
+    pub fn parse_impact_and_fallacies_response(raw_output: &str) -> (String, String) {
+        Self::try_parse_impact_and_fallacies_response(raw_output).unwrap_or_else(|| {
+            (
+                String::new(),
+                "No logical fallacies detected — Objective and well-supported reporting".to_string(),
+            )
+        })
     }
 
     pub fn build_args(&self) -> Vec<String> {
@@ -471,30 +505,24 @@ impl LlmCliRunner {
         BatchAiResponse::default()
     }
 
-    pub async fn summarize_batch_structured(
-        &self,
-        articles: &[BatchArticleInput<'_>],
-    ) -> (BatchAiResponse, String) {
-        if articles.is_empty() {
-            return (BatchAiResponse::default(), self.model.clone());
+    pub fn try_parse_batch_response(raw_output: &str) -> Option<BatchAiResponse> {
+        let parsed = Self::parse_batch_response(raw_output);
+        if !parsed.top.trim().is_empty() || !parsed.items.is_empty() {
+            Some(parsed)
+        } else {
+            None
         }
+    }
 
+    async fn run_cli_prompt(
+        &self,
+        timeout_secs: u64,
+        prompt_bytes: &[u8],
+    ) -> Result<(String, u128), CliAttemptError> {
         let _permit = self.semaphore.acquire().await.ok();
-        let prompt = Self::format_batch_prompt_structured(articles);
         let args = self.build_args();
-
-        let dispatch_msg = Self::format_dispatch_log(&self.model, articles.len(), &prompt);
-        println!("{}", dispatch_msg);
-        tracing::info!(
-            target: "ai::batch",
-            "{}",
-            dispatch_msg
-        );
-
         let start = std::time::Instant::now();
-        const TIMEOUT_SECS: u64 = 90;
-        let prompt_bytes = prompt.into_bytes();
-        let result = tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), async {
+        let result = tokio::time::timeout(Duration::from_secs(timeout_secs), async {
             let mut cmd = Command::new(&self.cli_cmd);
             cmd.args(&args)
                 .stdin(Stdio::piped())
@@ -505,7 +533,7 @@ impl LlmCliRunner {
             let mut child = cmd.spawn()?;
             if let Some(mut stdin) = child.stdin.take() {
                 use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(&prompt_bytes).await;
+                let _ = stdin.write_all(prompt_bytes).await;
                 drop(stdin);
             }
 
@@ -513,32 +541,60 @@ impl LlmCliRunner {
         })
         .await;
 
+        let elapsed_ms = start.elapsed().as_millis();
         match result {
             Ok(Ok(output)) => {
-                let elapsed = start.elapsed().as_millis();
                 if !output.status.success() {
-                    let stderr_preview = String::from_utf8_lossy(&output.stderr);
-                    let err_log =
-                        Self::format_error_process_failed(output.status.code(), &stderr_preview);
-                    eprintln!("{}", err_log);
-                    tracing::error!(
-                        target: "ai::batch",
-                        "{}",
-                        err_log
-                    );
-                    Self::fallback_extractive_structured(articles)
+                    let stderr_preview = String::from_utf8_lossy(&output.stderr).to_string();
+                    Err(CliAttemptError::ProcessFailed {
+                        exit_code: output.status.code(),
+                        stderr: stderr_preview,
+                    })
                 } else {
                     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if text.is_empty() {
-                        let err_log = Self::format_error_empty_output(elapsed);
-                        eprintln!("{}", err_log);
-                        tracing::error!(
-                            target: "ai::batch",
-                            "{}",
-                            err_log
-                        );
-                        Self::fallback_extractive_structured(articles)
+                        Err(CliAttemptError::EmptyOutput { elapsed_ms })
                     } else {
+                        Ok((text, elapsed_ms))
+                    }
+                }
+            }
+            Ok(Err(e)) => Err(CliAttemptError::ProcessFailed {
+                exit_code: None,
+                stderr: e.to_string(),
+            }),
+            Err(_) => Err(CliAttemptError::Timeout {
+                timeout_secs,
+                elapsed_ms,
+            }),
+        }
+    }
+
+    pub async fn summarize_batch_structured(
+        &self,
+        articles: &[BatchArticleInput<'_>],
+    ) -> (BatchAiResponse, String) {
+        if articles.is_empty() {
+            return (BatchAiResponse::default(), self.model.clone());
+        }
+
+        let prompt = Self::format_batch_prompt_structured(articles);
+        let dispatch_msg = Self::format_dispatch_log(&self.model, articles.len(), &prompt);
+        println!("{}", dispatch_msg);
+        tracing::info!(
+            target: "ai::batch",
+            "{}",
+            dispatch_msg
+        );
+
+        const TIMEOUT_SECS: u64 = 90;
+        let prompt_bytes = prompt.into_bytes();
+
+        let res = retry_once_after_delay("cli_summarize_batch_structured", LLM_RETRY_DELAY, |_| {
+            let bytes = &prompt_bytes;
+            async move {
+                match self.run_cli_prompt(TIMEOUT_SECS, bytes).await {
+                    Ok((text, elapsed)) => {
                         let ret_log = Self::format_return_log(elapsed, &text);
                         println!("{}", ret_log);
                         tracing::info!(
@@ -546,33 +602,39 @@ impl LlmCliRunner {
                             "{}",
                             ret_log
                         );
-                        let parsed = Self::parse_batch_response(&text);
-                        (parsed, self.model.clone())
+                        Self::try_parse_batch_response(&text).ok_or_else(|| {
+                            "Unparseable or empty batch response from CLI".to_string()
+                        })
+                    }
+                    Err(err) => {
+                        let err_log = match &err {
+                            CliAttemptError::ProcessFailed { exit_code, stderr } => {
+                                Self::format_error_process_failed(*exit_code, stderr)
+                            }
+                            CliAttemptError::EmptyOutput { elapsed_ms } => {
+                                Self::format_error_empty_output(*elapsed_ms)
+                            }
+                            CliAttemptError::Timeout {
+                                timeout_secs,
+                                elapsed_ms,
+                            } => Self::format_error_timeout(*timeout_secs, *elapsed_ms),
+                        };
+                        eprintln!("{}", err_log);
+                        tracing::error!(
+                            target: "ai::batch",
+                            "{}",
+                            err_log
+                        );
+                        Err(err.to_string())
                     }
                 }
             }
-            Ok(Err(e)) => {
-                let err_str = e.to_string();
-                let err_log = Self::format_error_process_failed(None, &err_str);
-                eprintln!("{}", err_log);
-                tracing::error!(
-                    target: "ai::batch",
-                    "{}",
-                    err_log
-                );
-                Self::fallback_extractive_structured(articles)
-            }
-            Err(_) => {
-                let elapsed = start.elapsed().as_millis();
-                let err_log = Self::format_error_timeout(TIMEOUT_SECS, elapsed);
-                eprintln!("{}", err_log);
-                tracing::error!(
-                    target: "ai::batch",
-                    "{}",
-                    err_log
-                );
-                Self::fallback_extractive_structured(articles)
-            }
+        })
+        .await;
+
+        match res {
+            Ok(parsed) => (parsed, self.model.clone()),
+            Err(_) => Self::fallback_extractive_structured(articles),
         }
     }
 
@@ -650,11 +712,7 @@ impl LlmCliRunner {
     }
 
     pub async fn summarize(&self, title: &str, content: &str) -> (String, String) {
-        let _permit = self.semaphore.acquire().await.ok();
-
         let prompt = Self::format_prompt(title, content);
-        let args = self.build_args();
-
         let dispatch_msg = format!(
             "[AI_DISPATCH_SINGLE] model={} title=\"{}\" prompt_preview=\"{}\"",
             self.model,
@@ -668,62 +726,13 @@ impl LlmCliRunner {
         println!("{}", dispatch_msg);
         tracing::info!(target: "ai::single", "{}", dispatch_msg);
 
-        let start = std::time::Instant::now();
         const TIMEOUT_SECS: u64 = 30;
         let prompt_bytes = prompt.into_bytes();
-        let result = tokio::time::timeout(Duration::from_secs(TIMEOUT_SECS), async {
-            let mut cmd = Command::new(&self.cli_cmd);
-            cmd.args(&args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true);
-
-            let mut child = cmd.spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(&prompt_bytes).await;
-                drop(stdin);
-            }
-
-            child.wait_with_output().await
-        })
-        .await;
-
-        match result {
-            Ok(Ok(output)) => {
-                let elapsed = start.elapsed().as_millis();
-                if !output.status.success() {
-                    let stderr_preview = String::from_utf8_lossy(&output.stderr);
-                    let err_log = format!(
-                        "[AI_ERROR_SINGLE] status={:?} stderr=\"{}\"",
-                        output.status.code(),
-                        stderr_preview.trim().replace('\n', " ")
-                    );
-                    eprintln!("{}", err_log);
-                    tracing::error!(target: "ai::single", "{}", err_log);
-                    let fallback = miniflux_client::summary::extract_summary(content, 3);
-                    let fallback_text = if fallback.is_empty() {
-                        content.trim().to_string()
-                    } else {
-                        fallback
-                    };
-                    (fallback_text, "extractive-fallback".to_string())
-                } else {
-                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if text.is_empty() {
-                        let err_log =
-                            format!("[AI_ERROR_SINGLE] empty_output elapsed_ms={}", elapsed);
-                        eprintln!("{}", err_log);
-                        tracing::error!(target: "ai::single", "{}", err_log);
-                        let fallback = miniflux_client::summary::extract_summary(content, 3);
-                        let fallback_text = if fallback.is_empty() {
-                            content.trim().to_string()
-                        } else {
-                            fallback
-                        };
-                        (fallback_text, "extractive-fallback".to_string())
-                    } else {
+        let res = retry_once_after_delay("cli_summarize", LLM_RETRY_DELAY, |_| {
+            let bytes = &prompt_bytes;
+            async move {
+                match self.run_cli_prompt(TIMEOUT_SECS, bytes).await {
+                    Ok((text, elapsed)) => {
                         let return_msg = format!(
                             "[AI_RETURN_SINGLE] elapsed_ms={} output=\"{}\"",
                             elapsed,
@@ -734,30 +743,45 @@ impl LlmCliRunner {
                         );
                         println!("{}", return_msg);
                         tracing::info!(target: "ai::single", "{}", return_msg);
-                        (text, self.model.clone())
+                        Ok(text)
+                    }
+                    Err(err) => {
+                        let err_log = match &err {
+                            CliAttemptError::ProcessFailed {
+                                exit_code: Some(code),
+                                stderr,
+                            } => format!(
+                                "[AI_ERROR_SINGLE] status={:?} stderr=\"{}\"",
+                                Some(code),
+                                stderr.trim().replace('\n', " ")
+                            ),
+                            CliAttemptError::ProcessFailed {
+                                exit_code: None,
+                                stderr,
+                            } => format!("[AI_ERROR_SINGLE] process_error=\"{}\"", stderr),
+                            CliAttemptError::EmptyOutput { elapsed_ms } => {
+                                format!("[AI_ERROR_SINGLE] empty_output elapsed_ms={}", elapsed_ms)
+                            }
+                            CliAttemptError::Timeout {
+                                timeout_secs,
+                                elapsed_ms,
+                            } => format!(
+                                "[AI_ERROR_SINGLE] timeout_after_{}s elapsed_ms={}",
+                                timeout_secs, elapsed_ms
+                            ),
+                        };
+                        eprintln!("{}", err_log);
+                        tracing::error!(target: "ai::single", "{}", err_log);
+                        Err(err.to_string())
                     }
                 }
             }
-            Ok(Err(e)) => {
-                let err_log = format!("[AI_ERROR_SINGLE] process_error=\"{}\"", e);
-                eprintln!("{}", err_log);
-                tracing::error!(target: "ai::single", "{}", err_log);
-                let fallback = miniflux_client::summary::extract_summary(content, 3);
-                let fallback_text = if fallback.is_empty() {
-                    content.trim().to_string()
-                } else {
-                    fallback
-                };
-                (fallback_text, "extractive-fallback".to_string())
-            }
+        })
+        .await;
+
+        match res {
+            Ok(text) => (text, self.model.clone()),
             Err(_) => {
-                let elapsed = start.elapsed().as_millis();
-                let err_log = format!(
-                    "[AI_ERROR_SINGLE] timeout_after_{}s elapsed_ms={}",
-                    TIMEOUT_SECS, elapsed
-                );
-                eprintln!("{}", err_log);
-                tracing::error!(target: "ai::single", "{}", err_log);
                 let fallback = miniflux_client::summary::extract_summary(content, 3);
                 let fallback_text = if fallback.is_empty() {
                     content.trim().to_string()
@@ -774,41 +798,30 @@ impl LlmCliRunner {
         title: &str,
         content: &str,
     ) -> (DetailAnalysisResult, String) {
-        let _permit = self.semaphore.acquire().await.ok();
         let prompt = Self::format_rewrite_and_analyze_prompt(title, content);
-        let args = self.build_args();
         const TIMEOUT_SECS: u64 = 30;
         let prompt_bytes = prompt.into_bytes();
-        let result = tokio::time::timeout(std::time::Duration::from_secs(TIMEOUT_SECS), async {
-            let mut cmd = tokio::process::Command::new(&self.cli_cmd);
-            cmd.args(&args)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
 
-            let mut child = cmd.spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(&prompt_bytes).await;
-                drop(stdin);
+        let res = retry_once_after_delay("cli_rewrite_and_analyze", LLM_RETRY_DELAY, |_| {
+            let bytes = &prompt_bytes;
+            async move {
+                let (text, _) = self
+                    .run_cli_prompt(TIMEOUT_SECS, bytes)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let parsed = Self::parse_rewrite_and_analyze_response(&text);
+                if parsed.rewrite.trim().is_empty() {
+                    Err("Empty rewrite from CLI".to_string())
+                } else {
+                    Ok(parsed)
+                }
             }
-
-            child.wait_with_output().await
         })
         .await;
 
-        match result {
-            Ok(Ok(output)) if output.status.success() => {
-                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if text.is_empty() {
-                    (DetailAnalysisResult::default(), "error".to_string())
-                } else {
-                    let parsed = Self::parse_rewrite_and_analyze_response(&text);
-                    (parsed, self.model.clone())
-                }
-            }
-            _ => (DetailAnalysisResult::default(), "error".to_string()),
+        match res {
+            Ok(parsed) => (parsed, self.model.clone()),
+            Err(_) => (DetailAnalysisResult::default(), "error".to_string()),
         }
     }
 
@@ -817,41 +830,27 @@ impl LlmCliRunner {
         title: &str,
         content: &str,
     ) -> ((String, String), String) {
-        let _permit = self.semaphore.acquire().await.ok();
         let prompt = Self::format_impact_and_fallacies_prompt(title, content);
-        let args = self.build_args();
         const TIMEOUT_SECS: u64 = 30;
         let prompt_bytes = prompt.into_bytes();
-        let result = tokio::time::timeout(std::time::Duration::from_secs(TIMEOUT_SECS), async {
-            let mut cmd = tokio::process::Command::new(&self.cli_cmd);
-            cmd.args(&args)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
 
-            let mut child = cmd.spawn()?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(&prompt_bytes).await;
-            }
-            child.wait_with_output().await
-        })
-        .await;
-
-        match result {
-            Ok(Ok(output)) if output.status.success() => {
-                let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if text.is_empty() {
-                    (
-                        Self::parse_impact_and_fallacies_response(""),
-                        "error".to_string(),
-                    )
-                } else {
-                    let parsed = Self::parse_impact_and_fallacies_response(&text);
-                    (parsed, self.model.clone())
+        let res =
+            retry_once_after_delay("cli_analyze_impact_and_fallacies", LLM_RETRY_DELAY, |_| {
+                let bytes = &prompt_bytes;
+                async move {
+                    let (text, _) = self
+                        .run_cli_prompt(TIMEOUT_SECS, bytes)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    Self::try_parse_impact_and_fallacies_response(&text)
+                        .ok_or_else(|| "Unparseable impact/fallacies JSON from CLI".to_string())
                 }
-            }
-            _ => (
+            })
+            .await;
+
+        match res {
+            Ok(parsed) => (parsed, self.model.clone()),
+            Err(_) => (
                 Self::parse_impact_and_fallacies_response(""),
                 "error".to_string(),
             ),
@@ -889,7 +888,7 @@ impl LlmHttpClient {
         }
     }
 
-    pub async fn request_chat_completion(&self, prompt: &str) -> Result<String, String> {
+    async fn request_chat_completion_once(&self, prompt: &str) -> Result<String, String> {
         let is_gemini = self.provider == "gemini";
         if is_gemini {
             let base = self
@@ -943,6 +942,10 @@ impl LlmHttpClient {
                     "Missing candidates[0].content.parts[0].text in Gemini response".to_string()
                 })?;
 
+            if text.trim().is_empty() {
+                return Err("Empty LLM HTTP response".to_string());
+            }
+
             Ok(text.to_string())
         } else {
             // OpenAI format
@@ -989,8 +992,19 @@ impl LlmHttpClient {
                     "Missing choices[0].message.content in OpenAI response".to_string()
                 })?;
 
+            if text.trim().is_empty() {
+                return Err("Empty LLM HTTP response".to_string());
+            }
+
             Ok(text.to_string())
         }
+    }
+
+    pub async fn request_chat_completion(&self, prompt: &str) -> Result<String, String> {
+        retry_once_after_delay("http_chat_completion", LLM_RETRY_DELAY, |_| {
+            self.request_chat_completion_once(prompt)
+        })
+        .await
     }
 
     pub async fn summarize_batch_structured(
@@ -1002,9 +1016,17 @@ impl LlmHttpClient {
         }
 
         let prompt = LlmCliRunner::format_batch_prompt_structured(articles);
-        let raw_output = self.request_chat_completion(&prompt).await?;
-        let parsed = LlmCliRunner::parse_batch_response(&raw_output);
-        Ok((parsed, self.model.clone()))
+        retry_once_after_delay("http_summarize_batch_structured", LLM_RETRY_DELAY, |_| {
+            let prompt_ref = prompt.as_str();
+            async move {
+                let raw_output = self.request_chat_completion_once(prompt_ref).await?;
+                let parsed = LlmCliRunner::try_parse_batch_response(&raw_output).ok_or_else(|| {
+                    "Unparseable batch response from HTTP LLM".to_string()
+                })?;
+                Ok((parsed, self.model.clone()))
+            }
+        })
+        .await
     }
 
     pub async fn summarize_batch(
@@ -1037,9 +1059,22 @@ impl LlmHttpClient {
         content: &str,
     ) -> Result<((String, String), String), String> {
         let prompt = LlmCliRunner::format_impact_and_fallacies_prompt(title, content);
-        let raw_output = self.request_chat_completion(&prompt).await?;
-        let parsed = LlmCliRunner::parse_impact_and_fallacies_response(&raw_output);
-        Ok((parsed, self.model.clone()))
+        retry_once_after_delay(
+            "http_analyze_impact_and_fallacies",
+            LLM_RETRY_DELAY,
+            |_| {
+                let prompt_ref = prompt.as_str();
+                async move {
+                    let raw_output = self.request_chat_completion_once(prompt_ref).await?;
+                    let parsed = LlmCliRunner::try_parse_impact_and_fallacies_response(&raw_output)
+                        .ok_or_else(|| {
+                            "Unparseable impact/fallacies JSON from HTTP LLM".to_string()
+                        })?;
+                    Ok((parsed, self.model.clone()))
+                }
+            },
+        )
+        .await
     }
 }
 
@@ -1972,5 +2007,298 @@ Some outro text
             "Prompt must forbid closing boilerplate: {}",
             prompt
         );
+    }
+
+    fn write_counter_cli_script(
+        dir: &tempfile::TempDir,
+        name: &str,
+        fail_until: usize,
+        success_stdout: &str,
+    ) -> (String, std::path::PathBuf) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let counter_path = dir.path().join(format!("{name}.count"));
+        let script_path = dir.path().join(format!("{name}.sh"));
+        let script = format!(
+            "#!/bin/sh\n\
+             cat >/dev/null\n\
+             COUNT_FILE=\"{counter}\"\n\
+             n=0\n\
+             if [ -f \"$COUNT_FILE\" ]; then n=$(cat \"$COUNT_FILE\"); fi\n\
+             n=$((n + 1))\n\
+             printf '%s' \"$n\" > \"$COUNT_FILE\"\n\
+             if [ \"$n\" -le {fail_until} ]; then\n\
+               echo \"transient error\" >&2\n\
+               exit 1\n\
+             fi\n\
+             printf '%s' '{stdout}'\n",
+            counter = counter_path.display(),
+            fail_until = fail_until,
+            stdout = success_stdout.replace('\'', "'\\''"),
+        );
+        let mut f = std::fs::File::create(&script_path).unwrap();
+        f.write_all(script.as_bytes()).unwrap();
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+        (script_path.to_string_lossy().to_string(), counter_path)
+    }
+
+    #[tokio::test]
+    async fn test_llm_cli_retries_once_after_one_second_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // 1. summarize_batch_structured retries once after >= 1s and succeeds
+        let (batch_cmd, batch_counter) = write_counter_cli_script(
+            &dir,
+            "batch",
+            1,
+            r#"{"top":"Recovered Brief","items":[{"i":1,"t":"Recovered Title","r":"Recovered rewrite."}]}"#,
+        );
+        let mut batch_runner = LlmCliRunner::new(batch_cmd, "test-model".to_string(), vec![]);
+        batch_runner.semaphore = Arc::new(Semaphore::new(1));
+
+        // Spawn a watcher that verifies the permit is released between attempt 1 and attempt 2
+        let sem_clone = Arc::clone(&batch_runner.semaphore);
+        let counter_watch = batch_counter.clone();
+        let watcher = tokio::spawn(async move {
+            for _ in 0..200 {
+                if std::fs::read_to_string(&counter_watch).ok().as_deref() == Some("1") {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    return sem_clone.try_acquire().is_ok();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            false
+        });
+
+        let start = std::time::Instant::now();
+        let articles = [BatchArticleInput {
+            id: 1,
+            title: "T",
+            source: "S",
+            published_at: "",
+            content_or_brief: "Body",
+            is_cached: false,
+        }];
+        let (res, model) = batch_runner.summarize_batch_structured(&articles).await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "Expected >= 900ms retry delay, got {:?}",
+            elapsed
+        );
+        assert!(
+            watcher.await.unwrap(),
+            "CLI semaphore permit must be released during the 1s retry sleep"
+        );
+        assert_eq!(model, "test-model");
+        assert_eq!(res.top, "Recovered Brief");
+        assert_eq!(std::fs::read_to_string(&batch_counter).unwrap(), "2");
+
+        // 2. summarize retries once and succeeds
+        let (sum_cmd, sum_counter) =
+            write_counter_cli_script(&dir, "sum", 1, "Recovered single summary.");
+        let sum_runner = LlmCliRunner::new(sum_cmd, "test-model".to_string(), vec![]);
+        let (sum_text, sum_model) = sum_runner.summarize("Title", "Body content").await;
+        assert_eq!(sum_model, "test-model");
+        assert_eq!(sum_text, "Recovered single summary.");
+        assert_eq!(std::fs::read_to_string(&sum_counter).unwrap(), "2");
+
+        // 3. rewrite_and_analyze retries once and succeeds
+        let (rw_cmd, rw_counter) = write_counter_cli_script(
+            &dir,
+            "rw",
+            1,
+            r#"{"rewrite":"Clean rewrite.","impact":"Big impact.","fallacies":"None"}"#,
+        );
+        let rw_runner = LlmCliRunner::new(rw_cmd, "test-model".to_string(), vec![]);
+        let (rw_res, rw_model) = rw_runner.rewrite_and_analyze("Title", "Body").await;
+        assert_eq!(rw_model, "test-model");
+        assert_eq!(rw_res.rewrite, "Clean rewrite.");
+        assert_eq!(std::fs::read_to_string(&rw_counter).unwrap(), "2");
+
+        // 4. analyze_impact_and_fallacies retries once and succeeds
+        let (an_cmd, an_counter) = write_counter_cli_script(
+            &dir,
+            "an",
+            1,
+            r#"{"impact":"Sector impact.","fallacies":"None"}"#,
+        );
+        let an_runner = LlmCliRunner::new(an_cmd, "test-model".to_string(), vec![]);
+        let ((impact, fallacies), an_model) =
+            an_runner.analyze_impact_and_fallacies("Title", "Body").await;
+        assert_eq!(an_model, "test-model");
+        assert_eq!(impact, "Sector impact.");
+        assert!(fallacies.contains("No logical fallacies detected"));
+        assert_eq!(std::fs::read_to_string(&an_counter).unwrap(), "2");
+
+        // 5. Persistent failure caps at exactly 2 attempts
+        let (fail_cmd, fail_counter) = write_counter_cli_script(&dir, "fail", 99, "unreachable");
+        let fail_runner = LlmCliRunner::new(fail_cmd, "test-model".to_string(), vec![]);
+        let (_fail_rw, fail_model) = fail_runner.rewrite_and_analyze("Title", "Body").await;
+        assert_eq!(fail_model, "error");
+        assert_eq!(std::fs::read_to_string(&fail_counter).unwrap(), "2");
+    }
+
+    #[tokio::test]
+    async fn test_llm_http_client_retries_once_after_one_second() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+        struct SequenceResponder {
+            calls: AtomicUsize,
+            first: ResponseTemplate,
+            second: ResponseTemplate,
+        }
+        impl Respond for SequenceResponder {
+            fn respond(&self, _req: &Request) -> ResponseTemplate {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    self.first.clone()
+                } else {
+                    self.second.clone()
+                }
+            }
+        }
+
+        // 1. HTTP 500 -> 1s sleep -> HTTP 200 on summarize
+        let server_500 = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(SequenceResponder {
+                calls: AtomicUsize::new(0),
+                first: ResponseTemplate::new(500),
+                second: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "Retried summary text." } }]
+                })),
+            })
+            .expect(2)
+            .mount(&server_500)
+            .await;
+
+        let client_500 = LlmHttpClient::new(
+            "openai",
+            "k",
+            Some(&format!("{}/v1", server_500.uri())),
+            "gpt-4o-mini",
+        );
+        let start = std::time::Instant::now();
+        let (summary, model) = client_500.summarize("Title", "Body").await.unwrap();
+        assert!(start.elapsed() >= Duration::from_millis(900));
+        assert_eq!(model, "gpt-4o-mini");
+        assert_eq!(summary, "Retried summary text.");
+
+        // 2. HTTP 200 whitespace content -> 1s sleep -> valid HTTP 200
+        let server_empty = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(SequenceResponder {
+                calls: AtomicUsize::new(0),
+                first: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "   \n  " } }]
+                })),
+                second: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "Non-empty summary." } }]
+                })),
+            })
+            .expect(2)
+            .mount(&server_empty)
+            .await;
+
+        let client_empty = LlmHttpClient::new(
+            "openai",
+            "k",
+            Some(&format!("{}/v1", server_empty.uri())),
+            "gpt-4o-mini",
+        );
+        let (summary2, _) = client_empty.summarize("Title", "Body").await.unwrap();
+        assert_eq!(summary2, "Non-empty summary.");
+
+        // 3. Unparseable batch JSON -> 1s sleep -> valid batch JSON
+        let server_batch = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(SequenceResponder {
+                calls: AtomicUsize::new(0),
+                first: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "not valid json" } }]
+                })),
+                second: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "{\"top\":\"Valid Top\",\"items\":[{\"i\":1,\"t\":\"T\",\"r\":\"R\"}]}" } }]
+                })),
+            })
+            .expect(2)
+            .mount(&server_batch)
+            .await;
+
+        let client_batch = LlmHttpClient::new(
+            "openai",
+            "k",
+            Some(&format!("{}/v1", server_batch.uri())),
+            "gpt-4o-mini",
+        );
+        let (batch, _) = client_batch
+            .summarize_batch(&[(1, "Title", "Body")])
+            .await
+            .unwrap();
+        assert_eq!(batch.top, "Valid Top");
+
+        // 4. Non-JSON analysis -> 1s sleep -> valid analysis JSON
+        let server_analysis = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(SequenceResponder {
+                calls: AtomicUsize::new(0),
+                first: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "plain non-json text" } }]
+                })),
+                second: ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "choices": [{ "message": { "content": "{\"impact\":\"Real impact\",\"fallacies\":\"None\"}" } }]
+                })),
+            })
+            .expect(2)
+            .mount(&server_analysis)
+            .await;
+
+        let client_analysis = LlmHttpClient::new(
+            "openai",
+            "k",
+            Some(&format!("{}/v1", server_analysis.uri())),
+            "gpt-4o-mini",
+        );
+        let ((impact, _), _) = client_analysis
+            .analyze_impact_and_fallacies("Title", "Body")
+            .await
+            .unwrap();
+        assert_eq!(impact, "Real impact");
+
+        // 5. LlmBackend::Http makes exactly 2 HTTP attempts (no 2x2) then falls back to CLI
+        let server_always_bad = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{ "message": { "content": "not json" } }]
+            })))
+            .expect(2)
+            .mount(&server_always_bad)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (cli_cmd, _) = write_counter_cli_script(
+            &dir,
+            "cli_fb",
+            0,
+            r#"{"top":"CLI Fallback","items":[{"i":5,"t":"T5","r":"R5"}]}"#,
+        );
+        let backend = LlmBackend::Http {
+            client: LlmHttpClient::new(
+                "openai",
+                "k",
+                Some(&format!("{}/v1", server_always_bad.uri())),
+                "gpt-4o-mini",
+            ),
+            fallback: LlmCliRunner::new(cli_cmd, "cli-model".to_string(), vec![]),
+        };
+        let (fb_res, fb_model) = backend.summarize_batch(&[(5, "T5", "Body")]).await;
+        assert_eq!(fb_model, "cli-model");
+        assert_eq!(fb_res.top, "CLI Fallback");
     }
 }

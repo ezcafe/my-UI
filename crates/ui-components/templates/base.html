@@ -574,8 +574,13 @@
       updateThemeIcons(currentTheme);
     });
     document.body.addEventListener("htmx:afterSwap", (evt) => {
-      if (window.lucide && typeof lucide.createIcons === 'function') {
-        lucide.createIcons({ root: evt.detail.target });
+      if (window.lucide && typeof lucide.createIcons === 'function' && evt.detail && evt.detail.target) {
+        const swapTarget = evt.detail.target;
+        const liveRoot = swapTarget.isConnected
+          ? swapTarget
+          : (swapTarget.id ? document.getElementById(swapTarget.id) : null) ||
+            (evt.target && evt.target.isConnected ? evt.target : document.body);
+        lucide.createIcons({ root: liveRoot });
       }
     });
     document.body.addEventListener("htmx:oobAfterSwap", (evt) => {
@@ -583,7 +588,19 @@
         if (window.lucide && typeof lucide.createIcons === 'function') {
           lucide.createIcons({ root: evt.detail.target });
         }
-        evt.detail.target.querySelectorAll('.pointer-events-auto:not([data-auto-dismiss])').forEach((toast) => {
+        const container = evt.detail.target;
+        container.querySelectorAll('.pointer-events-auto:not([data-auto-dismiss])').forEach((toast) => {
+          const textEl = toast.querySelector('span');
+          const msg = textEl && textEl.textContent ? textEl.textContent.trim() : '';
+          if (msg) {
+            container.querySelectorAll('.pointer-events-auto').forEach((existing) => {
+              if (existing === toast) return;
+              const existingSpan = existing.querySelector('span');
+              if (existingSpan && existingSpan.textContent && existingSpan.textContent.trim() === msg) {
+                existing.remove();
+              }
+            });
+          }
           toast.setAttribute('data-auto-dismiss', 'true');
           setTimeout(() => {
             toast.style.opacity = '0';

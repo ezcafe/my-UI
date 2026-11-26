@@ -3796,7 +3796,9 @@ mod tests {
             feed_id: None,
             category_id: None,
         };
-        let list_html = list_template.render().expect("Failed to render EntryListTemplate");
+        let list_html = list_template
+            .render()
+            .expect("Failed to render EntryListTemplate");
         assert!(
             list_html.contains("id=\"pagination-prev-btn\""),
             "entry_list.html must include id=\"pagination-prev-btn\" on Previous button"
@@ -3806,7 +3808,10 @@ mod tests {
             "entry_list.html must include id=\"pagination-next-btn\" on Next button"
         );
         assert!(
-            list_html.matches("hx-indicator=\"#entries-loading-bar\"").count() >= 2,
+            list_html
+                .matches("hx-indicator=\"#entries-loading-bar\"")
+                .count()
+                >= 2,
             "Both Previous and Next buttons must declare hx-indicator=\"#entries-loading-bar\""
         );
         assert!(
@@ -3868,7 +3873,10 @@ mod tests {
         let guest_fn_pos = index_guest
             .find("function markVisiblePageLocallyRead()")
             .unwrap();
-        let guest_fn_end = index_guest[guest_fn_pos..].find("function showToast").unwrap() + guest_fn_pos;
+        let guest_fn_end = index_guest[guest_fn_pos..]
+            .find("function showToast")
+            .unwrap()
+            + guest_fn_pos;
         let guest_fn = &index_guest[guest_fn_pos..guest_fn_end];
         assert!(
             guest_fn.contains("closeDetailPanel()"),
@@ -3877,6 +3885,466 @@ mod tests {
         assert!(
             guest_fn.contains("showToast('Page marked as read.')"),
             "Guest markVisiblePageLocallyRead() must show 'Page marked as read.' toast"
+        );
+    }
+
+    #[test]
+    fn test_auth_mark_page_read_button_attributes_and_empty_guard() {
+        let html_auth = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render auth IndexTemplate");
+
+        let mark_btn_pos = html_auth.find("id=\"mark-page-read-btn\"").unwrap();
+        let mark_btn_end = html_auth[mark_btn_pos..].find('>').unwrap() + mark_btn_pos;
+        let mark_btn_tag = &html_auth[mark_btn_pos..=mark_btn_end];
+        assert!(
+            mark_btn_tag.contains("hx-disabled-elt=\"this\""),
+            "Auth #mark-page-read-btn must declare hx-disabled-elt=\"this\""
+        );
+        assert!(
+            mark_btn_tag.contains("hx-include=\"#active-status, #active-offset, [name='search']\""),
+            "Auth #mark-page-read-btn must include #active-status, #active-offset, [name='search']"
+        );
+
+        let before_req_pos = html_auth
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .expect("htmx:beforeRequest listener");
+        let before_req_end = html_auth[before_req_pos..]
+            .find("function setActiveFilter(")
+            .expect("setActiveFilter")
+            + before_req_pos;
+        let before_req_fn = &html_auth[before_req_pos..before_req_end];
+        let guard_pos = before_req_fn
+            .find("getVisibleEntryIds")
+            .expect("htmx:beforeRequest must check getVisibleEntryIds()");
+        let loading_pos = before_req_fn
+            .find("showEntriesLoadingState()")
+            .expect("htmx:beforeRequest must call showEntriesLoadingState()");
+        assert!(
+            guard_pos < loading_pos,
+            "Empty-page guard must run before showEntriesLoadingState()"
+        );
+        assert!(
+            before_req_fn.contains("evt.preventDefault()")
+                && before_req_fn.contains("trigger.disabled = false")
+                && before_req_fn.contains("trigger.classList.remove('htmx-request')"),
+            "Empty-page guard must prevent request and reset disabled/.htmx-request"
+        );
+
+        let cancel_pos = html_auth
+            .find("function cancelPendingMarkPageRead()")
+            .expect("cancelPendingMarkPageRead helper");
+        let cancel_end = html_auth[cancel_pos..].find("\n  function ").unwrap() + cancel_pos;
+        let cancel_fn = &html_auth[cancel_pos..cancel_end];
+        assert!(
+            cancel_fn.contains("typeof cancelPendingGuestMarkRead === 'function'"),
+            "cancelPendingMarkPageRead must guard guest helper with typeof check in Auth mode"
+        );
+        assert!(
+            cancel_fn.contains("htmx:abort")
+                && cancel_fn.contains("markBtn.disabled = false")
+                && cancel_fn.contains("markBtn.classList.remove('htmx-request')")
+                && cancel_fn.contains("hideEntriesLoadingState()"),
+            "cancelPendingMarkPageRead must abort request, reset button state, and hide loading state"
+        );
+    }
+
+    #[test]
+    fn test_entries_scroll_reset_and_filter_cache_invalidation_on_mark_read() {
+        let html_auth = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render auth IndexTemplate");
+
+        let html_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render guest IndexTemplate");
+
+        let apply_pos = html_auth.find("function applyCachedList(").unwrap();
+        let apply_end = html_auth[apply_pos..]
+            .find("function handleFilterClick(")
+            .unwrap()
+            + apply_pos;
+        let apply_fn = &html_auth[apply_pos..apply_end];
+        assert!(
+            apply_fn.contains("entriesList.scrollTop = 0"),
+            "applyCachedList must reset entriesList.scrollTop = 0"
+        );
+
+        let local_all_pos = html_guest
+            .find("function renderLocalAllArticles()")
+            .unwrap();
+        let local_all_end = html_guest[local_all_pos..]
+            .find("function syncDomReadStates()")
+            .unwrap()
+            + local_all_pos;
+        let local_all_fn = &html_guest[local_all_pos..local_all_end];
+        assert!(
+            local_all_fn.contains("list.scrollTop = 0"),
+            "renderLocalAllArticles must reset list.scrollTop = 0"
+        );
+
+        let hide_pos = html_auth
+            .find("function hideEntriesLoadingState()")
+            .unwrap();
+        let hide_end = html_auth[hide_pos..]
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .unwrap()
+            + hide_pos;
+        let hide_fn = &html_auth[hide_pos..hide_end];
+        assert!(
+            hide_fn.contains("entries-loading-bar")
+                && hide_fn.contains("classList.remove('htmx-request')"),
+            "hideEntriesLoadingState must clear .htmx-request on #entries-loading-bar"
+        );
+
+        let after_swap_pos = html_auth
+            .find("document.addEventListener('htmx:afterSwap'")
+            .unwrap();
+        let after_swap_end = html_auth[after_swap_pos..]
+            .find("document.addEventListener('htmx:afterRequest'")
+            .unwrap()
+            + after_swap_pos;
+        let after_swap_fn = &html_auth[after_swap_pos..after_swap_end];
+        assert!(
+            after_swap_fn.contains("evt.detail.target.scrollTop = 0")
+                || after_swap_fn.contains("entriesListEl.scrollTop = 0"),
+            "htmx:afterSwap must reset scrollTop = 0 on #entries-list swap"
+        );
+        let inv_pos = after_swap_fn
+            .find("invalidateFilterCache()")
+            .expect("htmx:afterSwap must call invalidateFilterCache() on mark-page-read swap");
+        let set_pos = after_swap_fn
+            .find("filterCache.set(")
+            .expect("htmx:afterSwap must cache active list");
+        assert!(
+            after_swap_fn.contains("triggerElt.id === 'mark-page-read-btn'") && inv_pos < set_pos,
+            "htmx:afterSwap must invalidateFilterCache() on mark-page-read-btn swap before filterCache.set()"
+        );
+
+        let after_req_pos = html_auth
+            .find("document.addEventListener('htmx:afterRequest'")
+            .unwrap();
+        let after_req_end = html_auth[after_req_pos..]
+            .find("document.addEventListener('htmx:responseError'")
+            .unwrap()
+            + after_req_pos;
+        let after_req_fn = &html_auth[after_req_pos..after_req_end];
+        assert!(
+            after_req_fn.contains("mark-page-read-btn")
+                && after_req_fn.contains("disabled = false")
+                && after_req_fn.contains("classList.remove('htmx-request')"),
+            "htmx:afterRequest must reset disabled and .htmx-request on #mark-page-read-btn"
+        );
+    }
+
+    #[test]
+    fn test_guest_mark_page_read_htmx_next_page_and_deferred_commit() {
+        let html_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render guest IndexTemplate");
+
+        let mark_btn_pos = html_guest.find("id=\"mark-page-read-btn\"").unwrap();
+        let mark_btn_end = html_guest[mark_btn_pos..].find('>').unwrap() + mark_btn_pos;
+        let mark_btn_tag = &html_guest[mark_btn_pos..=mark_btn_end];
+        assert!(
+            mark_btn_tag.contains("hx-indicator=\"#entries-loading-bar\"")
+                && mark_btn_tag.contains("hx-disabled-elt=\"this\""),
+            "Guest #mark-page-read-btn must declare hx-indicator and hx-disabled-elt"
+        );
+
+        // Preserve D-01 slice boundary between renderLocalAllArticles() and syncDomReadStates()
+        let local_all_pos = html_guest
+            .find("function renderLocalAllArticles()")
+            .unwrap();
+        let sync_pos = html_guest.find("function syncDomReadStates()").unwrap();
+        let local_all_slice = &html_guest[local_all_pos..sync_pos];
+        assert!(
+            !local_all_slice.contains("persistLocallyReadIds")
+                && !local_all_slice.contains("pendingGuestMarkRead"),
+            "Guest mark-read helpers must not be inserted between renderLocalAllArticles() and syncDomReadStates()"
+        );
+
+        let mark_local_pos = html_guest.find("function markLocallyRead(").unwrap();
+        let between_sync_and_mark = &html_guest[sync_pos..mark_local_pos];
+        assert!(
+            between_sync_and_mark.contains("let pendingGuestMarkRead")
+                && between_sync_and_mark.contains("function parseVisibleEntryIds()")
+                && between_sync_and_mark.contains("function persistLocallyReadIds(")
+                && between_sync_and_mark.contains("function cancelPendingGuestMarkRead()"),
+            "Guest mark-read helpers must live after syncDomReadStates() and before markLocallyRead()"
+        );
+
+        let persist_pos = html_guest.find("function persistLocallyReadIds(").unwrap();
+        let persist_end = html_guest[persist_pos..]
+            .find("function cancelPendingGuestMarkRead()")
+            .unwrap()
+            + persist_pos;
+        let persist_fn = &html_guest[persist_pos..persist_end];
+        assert!(
+            persist_fn.contains("!readSet.has(id)")
+                && persist_fn.contains("db.transaction(STORE_NAME, 'readwrite')"),
+            "persistLocallyReadIds must deduplicate !readSet.has(id) in one readwrite IndexedDB tx"
+        );
+
+        let guest_fn_pos = html_guest
+            .find("function markVisiblePageLocallyRead()")
+            .unwrap();
+        let guest_fn_end = html_guest[guest_fn_pos..]
+            .find("function showToast")
+            .unwrap()
+            + guest_fn_pos;
+        let guest_fn = &html_guest[guest_fn_pos..guest_fn_end];
+        assert!(
+            guest_fn.contains("closeDetailPanel()")
+                && guest_fn.contains("parseVisibleEntryIds()")
+                && guest_fn.contains("pagination-next-btn")
+                && guest_fn.contains("htmx.ajax('GET', nextUrl")
+                && guest_fn.contains("source: markBtn")
+                && guest_fn.contains("pendingGuestMarkRead === token")
+                && guest_fn.contains("showToast('Page marked as read.')"),
+            "markVisiblePageLocallyRead must fetch next page via htmx.ajax with source: markBtn and token guard"
+        );
+
+        assert!(
+            between_sync_and_mark.contains("htmx:beforeSwap")
+                && between_sync_and_mark.contains("requestConfig.elt")
+                && between_sync_and_mark.contains("mark-page-read-btn")
+                && between_sync_and_mark.contains("shouldSwap !== false")
+                && between_sync_and_mark.contains("!evt.detail.isError")
+                && between_sync_and_mark.contains("persistLocallyReadIds(token.ids, { syncDom: false })"),
+            "Guest htmx:beforeSwap must defer commit strictly for non-error mark-page-read-btn swaps"
+        );
+
+        let filter_pos = html_guest.find("function handleFilterClick(").unwrap();
+        let filter_end = html_guest[filter_pos..]
+            .find("function showEntriesLoadingState()")
+            .unwrap()
+            + filter_pos;
+        assert!(
+            html_guest[filter_pos..filter_end].contains("cancelPendingMarkPageRead()"),
+            "handleFilterClick must cancel pending mark-page-read requests"
+        );
+
+        let search_pos = html_guest.find("function onSearchSubmit(").unwrap();
+        let search_end = html_guest[search_pos..]
+            .find("const ARTICLE_DB_NAME")
+            .unwrap()
+            + search_pos;
+        assert!(
+            html_guest[search_pos..search_end].contains("cancelPendingMarkPageRead()"),
+            "onSearchSubmit must cancel pending mark-page-read requests"
+        );
+
+        let before_req_pos = html_guest
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .unwrap();
+        let before_req_end = html_guest[before_req_pos..]
+            .find("function setActiveFilter(")
+            .unwrap()
+            + before_req_pos;
+        assert!(
+            html_guest[before_req_pos..before_req_end].contains("cancelPendingMarkPageRead()"),
+            "htmx:beforeRequest must cancel pending mark-page-read requests on tab/search/pagination transitions"
+        );
+    }
+
+    #[test]
+    fn test_guest_sync_dom_read_states_hides_magazine_on_empty_unread() {
+        let html_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render guest IndexTemplate");
+
+        let sync_pos = html_guest.find("function syncDomReadStates()").unwrap();
+        let sync_end = html_guest[sync_pos..]
+            .find("let pendingGuestMarkRead")
+            .or_else(|| html_guest[sync_pos..].find("function markLocallyRead("))
+            .unwrap()
+            + sync_pos;
+        let sync_fn = &html_guest[sync_pos..sync_end];
+        assert!(
+            sync_fn.contains("entries-magazine-view")
+                && sync_fn.contains("magView.style.display = 'none'")
+                && sync_fn.contains("magView.style.display = ''"),
+            "syncDomReadStates must hide #entries-magazine-view when Unread reaches 0 visible items and restore otherwise"
+        );
+    }
+
+    #[test]
+    fn test_guest_filter_articles_client_side_keeps_read_hidden_on_unread() {
+        let html_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render guest IndexTemplate");
+
+        let filter_pos = html_guest
+            .find("function filterArticlesClientSide(")
+            .unwrap();
+        let filter_end = html_guest[filter_pos..]
+            .find("function getVisibleEntryIds()")
+            .unwrap()
+            + filter_pos;
+        let filter_fn = &html_guest[filter_pos..filter_end];
+        assert!(
+            filter_fn.contains("active-status")
+                && filter_fn.contains("'unread'")
+                && filter_fn.contains("classList.contains('read')")
+                && filter_fn.contains("item.style.display = 'none'"),
+            "filterArticlesClientSide must keep .read rows hidden when #active-status is 'unread'"
+        );
+
+        let persist_pos = html_guest.find("function persistLocallyReadIds(").unwrap();
+        let persist_end = html_guest[persist_pos..]
+            .find("function cancelPendingGuestMarkRead()")
+            .unwrap()
+            + persist_pos;
+        let persist_fn = &html_guest[persist_pos..persist_end];
+        assert!(
+            persist_fn.contains("!isSearchActive")
+                && persist_fn.contains("filterArticlesClientSide(searchQuery)"),
+            "persistLocallyReadIds with syncDom must re-apply filterArticlesClientSide(searchQuery) when !isSearchActive && searchQuery"
+        );
+    }
+
+    #[test]
+    fn test_entries_loading_bar_preserved_and_stale_xhr_guarded() {
+        let html_auth = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render auth IndexTemplate");
+
+        let html_guest = IndexTemplate {
+            unread_count: 5,
+            today_count: 2,
+            entries_list_html: "<div>entries</div>".to_string(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render guest IndexTemplate");
+
+        let hide_pos = html_auth
+            .find("function hideEntriesLoadingState()")
+            .unwrap();
+        let hide_end = html_auth[hide_pos..]
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .unwrap()
+            + hide_pos;
+        let hide_fn = &html_auth[hide_pos..hide_end];
+        assert!(
+            hide_fn.contains("!activeEntriesRequestXhr"),
+            "hideEntriesLoadingState must preserve #entries-loading-bar .htmx-request while activeEntriesRequestXhr is active"
+        );
+
+        let before_req_pos = html_auth
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .unwrap();
+        let before_req_end = html_auth[before_req_pos..]
+            .find("function setActiveFilter(")
+            .unwrap()
+            + before_req_pos;
+        let before_req_fn = &html_auth[before_req_pos..before_req_end];
+        let set_xhr_pos = before_req_fn
+            .rfind("activeEntriesRequestXhr = evt.detail.xhr || null;")
+            .expect("htmx:beforeRequest must set activeEntriesRequestXhr before cancelling pending mark-read");
+        let cancel_pos = before_req_fn
+            .rfind("cancelPendingMarkPageRead()")
+            .expect("htmx:beforeRequest must call cancelPendingMarkPageRead()");
+        assert!(
+            set_xhr_pos < cancel_pos,
+            "htmx:beforeRequest must assign activeEntriesRequestXhr before cancelPendingMarkPageRead() so incoming request loading bar stays intact"
+        );
+        assert!(
+            before_req_fn.contains("pendingAuthMarkReadXhr"),
+            "htmx:beforeRequest must track pendingAuthMarkReadXhr for Auth mark-page-read cancellation"
+        );
+
+        let cancel_fn_pos = html_auth
+            .find("function cancelPendingMarkPageRead()")
+            .unwrap();
+        let cancel_fn_end =
+            html_auth[cancel_fn_pos..].find("\n  function ").unwrap() + cancel_fn_pos;
+        let cancel_fn = &html_auth[cancel_fn_pos..cancel_fn_end];
+        assert!(
+            cancel_fn.contains("if (!pendingAuthMarkReadXhr) return;"),
+            "cancelPendingMarkPageRead must no-op when no Auth mark-page-read request is pending"
+        );
+
+        let guest_cancel_pos = html_guest
+            .find("function cancelPendingGuestMarkRead()")
+            .unwrap();
+        let guest_cancel_end = html_guest[guest_cancel_pos..]
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .unwrap()
+            + guest_cancel_pos;
+        let guest_cancel_fn = &html_guest[guest_cancel_pos..guest_cancel_end];
+        assert!(
+            guest_cancel_fn.contains("if (!pendingGuestMarkRead) return false;"),
+            "cancelPendingGuestMarkRead must no-op when no Guest mark-page-read request is pending"
+        );
+
+        let after_req_pos = html_auth
+            .find("document.addEventListener('htmx:afterRequest'")
+            .unwrap();
+        let after_req_end = html_auth[after_req_pos..]
+            .find("document.addEventListener('htmx:responseError'")
+            .unwrap()
+            + after_req_pos;
+        assert!(
+            html_auth[after_req_pos..after_req_end]
+                .contains("clearCurrentEntriesLoadingState(xhr)"),
+            "htmx:afterRequest must guard loading cleanup via clearCurrentEntriesLoadingState(xhr)"
+        );
+
+        let resp_err_pos = html_auth
+            .find("document.addEventListener('htmx:responseError'")
+            .unwrap();
+        let resp_err_end = html_auth[resp_err_pos..]
+            .find("document.addEventListener('htmx:sendError'")
+            .unwrap()
+            + resp_err_pos;
+        assert!(
+            html_auth[resp_err_pos..resp_err_end].contains("clearCurrentEntriesLoadingState(evt.detail.xhr)"),
+            "htmx:responseError must guard loading cleanup via clearCurrentEntriesLoadingState(evt.detail.xhr)"
         );
     }
 }

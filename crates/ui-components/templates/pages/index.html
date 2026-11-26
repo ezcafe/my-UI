@@ -46,7 +46,8 @@
           hx-target="#entries-list" 
           hx-swap="innerHTML" 
           hx-indicator="#entries-loading-bar"
-          hx-include="#active-status, [name='search']"
+          hx-disabled-elt="this"
+          hx-include="#active-status, #active-offset, [name='search']"
           hx-vals="js:{entry_ids: getVisibleEntryIds()}"
           onclick="closeDetailPanel()"
           class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" 
@@ -57,6 +58,8 @@
         <button 
           id="mark-page-read-btn"
           type="button" 
+          hx-indicator="#entries-loading-bar"
+          hx-disabled-elt="this"
           onclick="markVisiblePageLocallyRead()" 
           class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" 
           title="Mark This Page as Read">
@@ -196,6 +199,8 @@
   const guestEntriesMap = new Map();
   let currentViewMode = 'ai';
   let isSearchActive = false;
+  let activeEntriesRequestXhr = null;
+  let pendingAuthMarkReadXhr = null;
 
   function escapeHtml(str) {
     if (!str) return '';
@@ -410,6 +415,7 @@
     const entriesList = document.getElementById('entries-list');
     if (entriesList) {
       entriesList.innerHTML = cachedHtml;
+      entriesList.scrollTop = 0;
       if (window.lucide && typeof lucide.createIcons === 'function') {
         lucide.createIcons({ root: entriesList });
       }
@@ -433,6 +439,7 @@
     if (typeof closeDetailPanel === 'function') {
       closeDetailPanel();
     }
+    cancelPendingMarkPageRead();
     const status = btn.getAttribute('data-status') || 'unread';
     isSearchActive = false;
     const searchInput = document.getElementById('search-input');
@@ -480,18 +487,25 @@
   function hideEntriesLoadingState() {
     const entriesList = document.getElementById('entries-list');
     const overlay = document.getElementById('entries-loading-overlay');
+    const loadingBar = document.getElementById('entries-loading-bar');
     if (entriesList) entriesList.classList.remove('invisible');
     if (overlay) overlay.classList.add('hidden');
+    if (loadingBar && !activeEntriesRequestXhr) loadingBar.classList.remove('htmx-request');
   }
 
   // HTMX request interceptor: Cancel server request if valid client cache exists
   document.addEventListener('htmx:beforeRequest', (evt) => {
     const trigger = evt.detail && evt.detail.elt;
+    const target = evt.detail && evt.detail.target;
     if (trigger && trigger.classList && trigger.classList.contains('filter-pill')) {
       const status = trigger.getAttribute('data-status') || 'unread';
       isSearchActive = false;
       if (status === 'all' && typeof renderLocalAllArticles === 'function') {
         evt.preventDefault();
+        cancelPendingMarkPageRead();
+        if (!activeEntriesRequestXhr) {
+          hideEntriesLoadingState();
+        }
         setActiveFilter(trigger);
         renderLocalAllArticles();
         return;
@@ -502,12 +516,45 @@
         const cached = filterCache.get(status);
         if (Date.now() - cached.timestamp < FILTER_CACHE_TTL_MS) {
           evt.preventDefault();
+          cancelPendingMarkPageRead();
+          if (!activeEntriesRequestXhr) {
+            hideEntriesLoadingState();
+          }
           setActiveFilter(trigger);
           applyCachedList(cached.html, status);
+          return;
         }
       }
+      activeEntriesRequestXhr = evt.detail.xhr || null;
+      cancelPendingMarkPageRead();
     }
-    if (!evt.defaultPrevented && trigger && (trigger.id === 'mark-page-read-btn' || trigger.id === 'pagination-prev-btn' || trigger.id === 'pagination-next-btn')) {
+    if (!evt.defaultPrevented && trigger && trigger.id === 'mark-page-read-btn') {
+      const rawIds = (typeof getVisibleEntryIds === 'function') ? getVisibleEntryIds() : '';
+      const hasVisibleIds = Array.isArray(rawIds) ? rawIds.length > 0 : String(rawIds).trim().length > 0;
+      if (!hasVisibleIds) {
+        evt.preventDefault();
+        trigger.disabled = false;
+        trigger.classList.remove('htmx-request');
+        if (!activeEntriesRequestXhr) {
+          hideEntriesLoadingState();
+        }
+        return;
+      }
+      if (typeof closeDetailPanel === 'function') {
+        closeDetailPanel();
+      }
+      activeEntriesRequestXhr = evt.detail.xhr || null;
+      if (AUTH_ENABLED) {
+        pendingAuthMarkReadXhr = evt.detail.xhr || true;
+      }
+      showEntriesLoadingState();
+      return;
+    }
+    if (!evt.defaultPrevented && trigger && trigger.id !== 'mark-page-read-btn' && target && target.id === 'entries-list') {
+      activeEntriesRequestXhr = evt.detail.xhr || null;
+      cancelPendingMarkPageRead();
+    }
+    if (!evt.defaultPrevented && trigger && (trigger.id === 'pagination-prev-btn' || trigger.id === 'pagination-next-btn')) {
       if (typeof closeDetailPanel === 'function') {
         closeDetailPanel();
       }
@@ -532,11 +579,50 @@
     }
   }
 
+  function isCurrentEntriesRequest(xhr) {
+    return !activeEntriesRequestXhr || !xhr || xhr === activeEntriesRequestXhr;
+  }
+
+  function clearCurrentEntriesLoadingState(xhr) {
+    if (!isCurrentEntriesRequest(xhr)) return false;
+    activeEntriesRequestXhr = null;
+    hideEntriesLoadingState();
+    return true;
+  }
+
+  function cancelPendingMarkPageRead() {
+    if (typeof cancelPendingGuestMarkRead === 'function') {
+      if (!cancelPendingGuestMarkRead()) return;
+    } else {
+      if (!pendingAuthMarkReadXhr) return;
+      const abortedXhr = pendingAuthMarkReadXhr;
+      pendingAuthMarkReadXhr = null;
+      if (activeEntriesRequestXhr === abortedXhr) {
+        activeEntriesRequestXhr = null;
+      }
+    }
+    const markBtn = document.getElementById('mark-page-read-btn');
+    if (markBtn) {
+      if (window.htmx && typeof htmx.trigger === 'function') {
+        htmx.trigger(markBtn, 'htmx:abort');
+      }
+      markBtn.disabled = false;
+      markBtn.classList.remove('htmx-request');
+    }
+    hideEntriesLoadingState();
+  }
+
   function filterArticlesClientSide(query) {
     const q = (query || '').toLowerCase().trim();
+    const activeStatusInput = document.getElementById('active-status');
+    const isUnreadFilter = Boolean(activeStatusInput && activeStatusInput.value === 'unread');
     const items = document.querySelectorAll('#entries-list .annuaire-row, #entries-list .ar-list-item');
     let visibleCount = 0;
     items.forEach(item => {
+      if (isUnreadFilter && item.classList.contains('read')) {
+        item.style.display = 'none';
+        return;
+      }
       const titleEl = item.querySelector('.article-title') || item;
       const title = titleEl.textContent.toLowerCase();
       if (!q || title.includes(q)) {
@@ -573,6 +659,7 @@
     if (typeof closeDetailPanel === 'function') {
       closeDetailPanel();
     }
+    cancelPendingMarkPageRead();
     const searchInput = document.getElementById('search-input');
     const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
     isSearchActive = Boolean(searchQuery);
@@ -995,7 +1082,8 @@
       const targetId = evt.detail.target.id || '';
       const isEntriesSwap = targetId === 'entries-list';
       if (isEntriesSwap) {
-        hideEntriesLoadingState();
+        evt.detail.target.scrollTop = 0;
+        clearCurrentEntriesLoadingState(evt.detail.xhr);
       }
       const isBriefSwap = targetId === 'page-executive-brief' || (evt.detail.target && evt.detail.target.closest('#entries-list') && evt.detail.target.id !== 'detail-panel');
 
@@ -1074,6 +1162,9 @@
         const searchInput = document.getElementById('search-input');
         const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
         const entriesListEl = document.getElementById('entries-list');
+        if (triggerElt && triggerElt.id === 'mark-page-read-btn') {
+          invalidateFilterCache();
+        }
         if (status && !searchQuery && entriesListEl) {
           filterCache.set(status, {
             timestamp: Date.now(),
@@ -1130,14 +1221,22 @@
 
   document.addEventListener('htmx:afterRequest', (evt) => {
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
-      hideEntriesLoadingState();
+      const xhr = evt.detail.xhr;
+      const triggerElt = (evt.detail.requestConfig && evt.detail.requestConfig.elt) || evt.detail.elt;
+      if (triggerElt && triggerElt.id === 'mark-page-read-btn') {
+        if (!pendingAuthMarkReadXhr || pendingAuthMarkReadXhr === true || !xhr || pendingAuthMarkReadXhr === xhr) {
+          pendingAuthMarkReadXhr = null;
+          triggerElt.disabled = false;
+          triggerElt.classList.remove('htmx-request');
+        }
+      }
+      clearCurrentEntriesLoadingState(xhr);
     }
   });
 
   document.addEventListener('htmx:responseError', (evt) => {
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
-      hideEntriesLoadingState();
-      if (typeof showToast === 'function') {
+      if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showToast === 'function') {
         showToast('Failed to load articles. Please try again.');
       }
     }
@@ -1161,8 +1260,7 @@
 
   document.addEventListener('htmx:sendError', (evt) => {
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
-      hideEntriesLoadingState();
-      if (typeof showToast === 'function') {
+      if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showToast === 'function') {
         showToast('Network error while loading articles.');
       }
     }
@@ -1519,6 +1617,7 @@
             `).join('');
             list.innerHTML = `<div id="entries-list-view" class="space-y-1.5">${rowsHtml}</div>`;
           }
+          list.scrollTop = 0;
           if (window.lucide && typeof lucide.createIcons === 'function') {
             lucide.createIcons({ root: list });
           }
@@ -1619,8 +1718,12 @@
       filterCount.textContent = '(' + effectiveUnread + ')';
     }
 
+    const magView = document.getElementById('entries-magazine-view');
     let emptyEl = document.getElementById('client-empty-state');
     if (isUnreadFilter && visibleUnreadRowCount === 0 && rows.length > 0) {
+      if (magView) {
+        magView.style.display = 'none';
+      }
       if (!emptyEl) {
         emptyEl = document.createElement('div');
         emptyEl.id = 'client-empty-state';
@@ -1636,29 +1739,110 @@
           lucide.createIcons({ root: emptyEl });
         }
       }
-    } else if (emptyEl) {
-      emptyEl.remove();
+    } else {
+      if (magView) {
+        magView.style.display = '';
+      }
+      if (emptyEl) {
+        emptyEl.remove();
+      }
     }
   }
+
+  let pendingGuestMarkRead = null;
+
+  function parseVisibleEntryIds() {
+    const raw = (typeof getVisibleEntryIds === 'function') ? getVisibleEntryIds() : '';
+    if (Array.isArray(raw)) {
+      return raw.map(Number).filter(Boolean);
+    }
+    return String(raw).split(',').map(s => Number(s.trim())).filter(Boolean);
+  }
+
+  function persistLocallyReadIds(ids, { syncDom = true } = {}) {
+    const numericIds = Array.from(
+      new Set(ids.map(Number).filter(id => id > 0 && !readSet.has(id)))
+    );
+    if (numericIds.length === 0) return;
+
+    numericIds.forEach(numId => {
+      if (typeof recordReadArticle === 'function') {
+        recordReadArticle(numId);
+      }
+      readSet.add(numId);
+    });
+    if (typeof invalidateFilterCache === 'function') {
+      invalidateFilterCache();
+    }
+    if (syncDom) {
+      syncDomReadStates();
+      const searchInput = document.getElementById('search-input');
+      const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+      if (!isSearchActive && searchQuery && typeof filterArticlesClientSide === 'function') {
+        filterArticlesClientSide(searchQuery);
+      }
+    }
+
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains(STORE_NAME)) return;
+        const now = Date.now();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        numericIds.forEach(numId => store.put({ id: numId, read_at: now }));
+      })
+      .catch(() => {});
+  }
+
+  function cancelPendingGuestMarkRead() {
+    if (!pendingGuestMarkRead) return false;
+    const abortedXhr = pendingGuestMarkRead.xhr;
+    pendingGuestMarkRead.cancelled = true;
+    pendingGuestMarkRead = null;
+    if (abortedXhr && activeEntriesRequestXhr === abortedXhr) {
+      activeEntriesRequestXhr = null;
+    }
+    return true;
+  }
+
+  document.addEventListener('htmx:beforeRequest', (evt) => {
+    const trigger = evt.detail && evt.detail.elt;
+    if (!evt.defaultPrevented && trigger && trigger.id === 'mark-page-read-btn' && pendingGuestMarkRead && !pendingGuestMarkRead.xhr) {
+      pendingGuestMarkRead.xhr = evt.detail.xhr;
+    }
+  });
+
+  document.addEventListener('htmx:beforeSwap', (evt) => {
+    if (!pendingGuestMarkRead || pendingGuestMarkRead.cancelled || !evt.detail) return;
+    const target = evt.detail.target;
+    const triggerElt = evt.detail.requestConfig && evt.detail.requestConfig.elt;
+    const matchesXhr = !pendingGuestMarkRead.xhr || pendingGuestMarkRead.xhr === evt.detail.xhr;
+    if (
+      target &&
+      target.id === 'entries-list' &&
+      triggerElt &&
+      triggerElt.id === 'mark-page-read-btn' &&
+      evt.detail.shouldSwap !== false &&
+      !evt.detail.isError &&
+      matchesXhr
+    ) {
+      const token = pendingGuestMarkRead;
+      token.committed = true;
+      pendingGuestMarkRead = null;
+      persistLocallyReadIds(token.ids, { syncDom: false });
+    }
+  });
+
+  document.addEventListener('htmx:afterRequest', (evt) => {
+    if (pendingGuestMarkRead && evt.detail && evt.detail.xhr === pendingGuestMarkRead.xhr) {
+      pendingGuestMarkRead = null;
+    }
+  });
 
   function markLocallyRead(id) {
     const numId = Number(id);
     if (!numId) return;
-    if (typeof recordReadArticle === 'function') {
-      recordReadArticle(numId);
-    }
-    readSet.add(numId);
-    syncDomReadStates();
-    if (typeof invalidateFilterCache === 'function') {
-      invalidateFilterCache();
-    }
-    openGuestDb()
-      .then((db) => {
-        if (!db.objectStoreNames.contains(STORE_NAME)) return;
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put({ id: numId, read_at: Date.now() });
-      })
-      .catch(() => {});
+    persistLocallyReadIds([numId], { syncDom: true });
   }
 
   function unmarkLocallyRead(id) {
@@ -1695,18 +1879,41 @@
     if (typeof closeDetailPanel === 'function') {
       closeDetailPanel();
     }
-    const ids = (typeof getVisibleEntryIds === 'function') ? getVisibleEntryIds() : [];
-    if (Array.isArray(ids) && ids.length > 0) {
-      ids.forEach(id => markLocallyRead(id));
-    } else {
-      document.querySelectorAll('.annuaire-row').forEach(row => {
-        const id = row.getAttribute('data-entry-id');
-        if (id) markLocallyRead(id);
+    if (pendingGuestMarkRead) return;
+
+    const ids = parseVisibleEntryIds();
+    if (ids.length === 0) return;
+
+    const nextBtn = document.getElementById('pagination-next-btn');
+    const nextUrl = nextBtn ? nextBtn.getAttribute('hx-get') : null;
+    const markBtn = document.getElementById('mark-page-read-btn');
+
+    if (nextUrl && window.htmx && markBtn) {
+      const token = { ids, committed: false, cancelled: false, xhr: null };
+      pendingGuestMarkRead = token;
+      htmx.ajax('GET', nextUrl, {
+        target: '#entries-list',
+        swap: 'innerHTML',
+        source: markBtn
+      }).then(() => {
+        if (pendingGuestMarkRead === token) {
+          pendingGuestMarkRead = null;
+        }
+        if (token.committed && !token.cancelled) {
+          showToast('Page marked as read.');
+        }
+      }).catch(() => {
+        if (pendingGuestMarkRead === token) {
+          pendingGuestMarkRead = null;
+          if (token.xhr || !activeEntriesRequestXhr) {
+            clearCurrentEntriesLoadingState(token.xhr);
+          }
+        }
       });
+      return;
     }
-    if (typeof invalidateFilterCache === 'function') {
-      invalidateFilterCache();
-    }
+
+    persistLocallyReadIds(ids, { syncDom: true });
     showToast('Page marked as read.');
   }
 

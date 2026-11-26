@@ -159,6 +159,8 @@ struct GuestEntryPayload<'a> {
     published_at: &'a str,
     formatted_date: String,
     url: &'a str,
+    summary: &'a str,
+    image_url: Option<&'a str>,
     sanitized_content: &'a str,
 }
 
@@ -185,6 +187,8 @@ impl EntryListTemplate {
                     published_at: &e.published_at,
                     formatted_date: format_published_date_ddmmyyyy(&e.published_at),
                     url: &e.url,
+                    summary: &e.summary,
+                    image_url: e.image_url.as_deref(),
                     sanitized_content,
                 })
             })
@@ -3489,7 +3493,7 @@ mod tests {
             reading_time: 5,
             summary: "Summary".to_string(),
             sanitized_content: Some("<p>Body &amp; </script> text</p>".to_string()),
-            image_url: None,
+            image_url: Some("https://example.com/hero.jpg".to_string()),
             url: "https://example.com/401".to_string(),
             author: Some("Alice Author".to_string()),
             is_read: false,
@@ -3548,6 +3552,8 @@ mod tests {
         assert_eq!(item["feed_title"], "Feed & Co");
         assert_eq!(item["published_at"], "2026-11-23T12:00:00Z");
         assert_eq!(item["formatted_date"], "23/11/2026");
+        assert_eq!(item["summary"], "Summary");
+        assert_eq!(item["image_url"], "https://example.com/hero.jpg");
         assert_eq!(item["url"], "https://example.com/401");
         assert_eq!(
             item["sanitized_content"],
@@ -3632,7 +3638,7 @@ mod tests {
             "openEntryDetail must short-circuit to openGuestEntryDetail before cache/HTMX"
         );
 
-        // renderGuestEntryDetail must omit author, readingTime, and /analysis, and render sanitized_content
+        // renderGuestEntryDetail must omit author, readingTime, and /rewrite, while rendering photo, rewrite/summary, and #ai-analysis-box
         let render_pos = html
             .find("function renderGuestEntryDetail(entry)")
             .expect("renderGuestEntryDetail");
@@ -3644,10 +3650,14 @@ mod tests {
         assert!(render_fn.contains("id=\"guest-detail-content\""));
         assert!(render_fn.contains("data-date-format=\"dd/mm/yyyy\""));
         assert!(render_fn.contains("safeHref("));
+        assert!(render_fn.contains("entry.image_url"));
+        assert!(render_fn.contains("entry.summary"));
+        assert!(render_fn.contains("id=\"ai-analysis-box\""));
+        assert!(render_fn.contains("/analysis"));
+        assert!(render_fn.contains("htmx.process(panel)"));
         assert!(!render_fn.contains("author"));
         assert!(!render_fn.contains("readingTime"));
         assert!(!render_fn.contains("reading_time"));
-        assert!(!render_fn.contains("/analysis"));
         assert!(!render_fn.contains("/rewrite"));
 
         // Cold deep-link miss fallback
@@ -4551,6 +4561,72 @@ mod tests {
             base_oob_swap.contains("textContent")
                 && base_oob_swap.contains("existing.remove()"),
             "base.html htmx:oobAfterSwap must deduplicate matching toasts in #toast-container"
+        );
+    }
+
+    #[test]
+    fn test_index_template_data_view_mode_css_and_before_swap_sync() {
+        let html = IndexTemplate {
+            unread_count: 2,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("render IndexTemplate");
+
+        assert!(
+            html.contains(r#"#entries-list[data-view-mode="ai"] #entries-list-view { display: none; }"#)
+                && html.contains(r#"#entries-list[data-view-mode="ai"] #entries-magazine-view { display: block; }"#)
+                && html.contains(r#"#entries-list[data-view-mode="list"] #entries-list-view { display: block; }"#)
+                && html.contains(r#"#entries-list[data-view-mode="list"] #entries-magazine-view { display: none; }"#),
+            "index.html must define CSS data-view-mode rules for #entries-list"
+        );
+
+        let apply_pos = html.find("function applyAiViewMode(").expect("applyAiViewMode");
+        let apply_end = html[apply_pos..].find("function recordSourceClick(").expect("recordSourceClick") + apply_pos;
+        let apply_fn = &html[apply_pos..apply_end];
+        assert!(
+            apply_fn.contains("setAttribute('data-view-mode', effectiveMode)"),
+            "applyAiViewMode must sync data-view-mode on #entries-list"
+        );
+
+        assert!(
+            html.contains("htmx:beforeSwap") && html.contains("setAttribute('data-view-mode'"),
+            "index.html must sync data-view-mode in htmx:beforeSwap before #entries-list paints"
+        );
+    }
+
+    #[test]
+    fn test_index_template_auth_skeleton_extracts_mag_entry_brief_and_hero_image() {
+        let html = IndexTemplate {
+            unread_count: 2,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("render IndexTemplate");
+
+        let open_pos = html.find("async function openEntryDetail(id)").expect("openEntryDetail");
+        let skel_pos = html.find("function openDetailWithSkeleton(").expect("openDetailWithSkeleton");
+        let open_fn = &html[open_pos..skel_pos];
+        assert!(
+            open_fn.contains("mag-entry-")
+                && open_fn.contains(".magazine-brief")
+                && open_fn.contains("openDetailWithSkeleton(title, brief, imageUrl)"),
+            "openEntryDetail must extract brief and imageUrl from #mag-entry-{{id}} and pass them to openDetailWithSkeleton"
+        );
+
+        let skel_end = html[skel_pos..].find("function alignDetailPanelWidth(").expect("alignDetailPanelWidth") + skel_pos;
+        let skel_fn = &html[skel_pos..skel_end];
+        assert!(
+            skel_fn.contains("function openDetailWithSkeleton(title, brief, imageUrl)")
+                && skel_fn.contains("safeHref(")
+                && skel_fn.contains("<img src="),
+            "openDetailWithSkeleton must render hero image when imageUrl is present"
         );
     }
 }

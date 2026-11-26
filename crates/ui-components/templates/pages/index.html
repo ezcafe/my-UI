@@ -3,6 +3,12 @@
 {% block title %}Directory | My News{% endblock %}
 
 {% block content %}
+<style>
+  #entries-list[data-view-mode="ai"] #entries-list-view { display: none; }
+  #entries-list[data-view-mode="ai"] #entries-magazine-view { display: block; }
+  #entries-list[data-view-mode="list"] #entries-list-view { display: block; }
+  #entries-list[data-view-mode="list"] #entries-magazine-view { display: none; }
+</style>
 <div class="spatial-shell">
   <main class="spatial-window flex flex-col bg-card border border-border">
     <!-- Header -->
@@ -273,7 +279,7 @@
           <div class="min-h-[48px] px-4 py-2.5 rounded-lg flex items-center justify-between gap-3"><div class="flex items-center gap-1.5 flex-1 min-w-0"><div class="w-[3px] h-5 rounded-full bg-muted shrink-0"></div><div class="w-2 h-2 rounded-full bg-muted shrink-0"></div><div class="h-3.5 bg-muted rounded w-2/3"></div></div><div class="w-6 h-6 rounded-full bg-muted shrink-0"></div></div>
         </div>
       </div>
-      <div id="entries-list" class="entries-pane flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card min-w-0">
+      <div id="entries-list" data-view-mode="ai" class="entries-pane flex-1 overflow-y-auto p-4 flex flex-col gap-1.5 bg-card min-w-0">
         {{ entries_list_html|safe }}
       </div>
 
@@ -311,6 +317,19 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  function safeHref(rawUrl) {
+    if (!rawUrl) return '#';
+    const trimmed = String(rawUrl).trim();
+    if (
+      trimmed.startsWith('http://') ||
+      trimmed.startsWith('https://') ||
+      (trimmed.startsWith('/') && !trimmed.startsWith('//'))
+    ) {
+      return trimmed;
+    }
+    return '#';
   }
 
   function shouldHideAiToggle(status, searchActive) {
@@ -358,6 +377,10 @@
     const iconList = document.getElementById('view-icon-list');
     const listView = document.getElementById('entries-list-view');
     const magView = document.getElementById('entries-magazine-view');
+    const entriesList = document.getElementById('entries-list');
+    if (entriesList) {
+      entriesList.setAttribute('data-view-mode', effectiveMode);
+    }
 
     if (btn) {
       btn.className = 'p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors cursor-pointer select-none';
@@ -974,21 +997,32 @@
         magTitle.classList.add('text-muted-foreground');
       }
     } else {
-      // Extract entry title and brief from DOM to render instantly
+      // Extract entry title, brief, and hero image from DOM to render instantly
       const titleEl = document.getElementById('entry-title-' + numId) || document.getElementById('mag-title-' + numId);
       const title = titleEl ? titleEl.textContent.trim() : '';
 
       let brief = '';
+      let imageUrl = '';
+      const magEl = document.getElementById('mag-entry-' + numId);
       const rowEl = document.getElementById('entry-' + numId);
-      if (rowEl) {
-        const briefEl = rowEl.querySelector('.magazine-brief');
-        if (briefEl) {
-          brief = briefEl.textContent.trim();
+      const magBriefEl = magEl ? magEl.querySelector('.magazine-brief') : null;
+      const rowBriefEl = rowEl ? rowEl.querySelector('.magazine-brief') : null;
+      if (magBriefEl && magBriefEl.textContent.trim()) {
+        brief = magBriefEl.textContent.trim();
+      } else if (rowBriefEl && rowBriefEl.textContent.trim()) {
+        brief = rowBriefEl.textContent.trim();
+      } else if (magEl && magEl.getAttribute('title')) {
+        brief = magEl.getAttribute('title').trim();
+      }
+      if (magEl) {
+        const imgEl = magEl.querySelector('img');
+        if (imgEl && imgEl.getAttribute('src')) {
+          imageUrl = imgEl.getAttribute('src').trim();
         }
       }
 
       // Cache miss or expired: show skeleton and fetch via HTMX
-      openDetailWithSkeleton(title, brief);
+      openDetailWithSkeleton(title, brief, imageUrl);
       htmx.ajax('GET', '/hx/entries/' + encodeURIComponent(numId), {
         target: '#detail-panel',
         swap: 'innerHTML'
@@ -996,21 +1030,34 @@
     }
   }
 
-  function openDetailWithSkeleton(title, brief) {
+  function openDetailWithSkeleton(title, brief, imageUrl) {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
     
     const safeTitle = title ? escapeHtml(title) : '';
     const safeBrief = brief ? escapeHtml(brief) : '';
+    const rawImg = imageUrl ? String(imageUrl).trim() : '';
+    const safeImg = rawImg ? safeHref(rawImg) : '';
+    const hasHeroImg = Boolean(safeImg && safeImg !== '#');
 
-    const titleBlock = safeTitle
-      ? `<h1 class="text-2xl font-bold font-sans text-foreground mb-6 leading-snug">${safeTitle}</h1>`
-      : `
-        <div class="space-y-2 mb-6">
-          <div class="h-6 bg-muted rounded w-4/5"></div>
-          <div class="h-6 bg-muted rounded w-2/3"></div>
+    const titleBlock = hasHeroImg
+      ? `
+        <div class="relative w-full rounded-xl overflow-hidden mb-6 bg-muted min-h-[220px] md:min-h-[280px] flex items-end">
+          <img src="${escapeHtml(safeImg)}" alt="${safeTitle}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="absolute inset-0 w-full h-full object-cover">
+          <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent"></div>
+          <div class="relative z-10 p-5 md:p-6 w-full">
+            ${safeTitle ? `<h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">${safeTitle}</h1>` : ''}
+          </div>
         </div>
-      `;
+      `
+      : (safeTitle
+        ? `<h1 class="text-2xl font-bold font-sans text-foreground mb-6 leading-snug">${safeTitle}</h1>`
+        : `
+          <div class="space-y-2 mb-6">
+            <div class="h-6 bg-muted rounded w-4/5"></div>
+            <div class="h-6 bg-muted rounded w-2/3"></div>
+          </div>
+        `);
 
     const briefBlock = safeBrief
       ? `
@@ -1191,6 +1238,41 @@
         evt.detail.parameters['request_brief'] = 'false';
       }
     }
+  });
+
+  document.addEventListener('htmx:beforeSwap', (evt) => {
+    if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'entries-list') return;
+    const triggerElt = evt.detail.requestConfig && evt.detail.requestConfig.elt;
+    const isFilterTabSwap = Boolean(
+      triggerElt && triggerElt.classList && triggerElt.classList.contains('filter-pill')
+    );
+    const isSearchSwap = Boolean(
+      triggerElt &&
+      (triggerElt.id === 'search-form' ||
+        (typeof triggerElt.closest === 'function' && triggerElt.closest('#search-form')))
+    );
+    let status = null;
+    if (triggerElt && typeof triggerElt.getAttribute === 'function') {
+      status = triggerElt.getAttribute('data-status');
+    }
+    if (!status && evt.detail.elt && typeof evt.detail.elt.getAttribute === 'function') {
+      status = evt.detail.elt.getAttribute('data-status');
+    }
+    if (!status) {
+      const activeStatusInput = document.getElementById('active-status');
+      status = activeStatusInput ? activeStatusInput.value : 'unread';
+    }
+    const searchInput = document.getElementById('search-input');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+    let nextMode;
+    if (isSearchSwap) {
+      nextMode = getDefaultViewForState(status, Boolean(searchQuery));
+    } else if (isFilterTabSwap) {
+      nextMode = getDefaultViewForState(status, false);
+    } else {
+      nextMode = shouldHideAiToggle(status, isSearchActive) ? 'list' : currentViewMode;
+    }
+    evt.detail.target.setAttribute('data-view-mode', nextMode);
   });
 
   document.addEventListener('htmx:afterSwap', (evt) => {
@@ -1407,19 +1489,6 @@
   const STORE_NAME = 'read_entries';
   let readSet = new Set();
 
-  function safeHref(rawUrl) {
-    if (!rawUrl) return '#';
-    const trimmed = String(rawUrl).trim();
-    if (
-      trimmed.startsWith('http://') ||
-      trimmed.startsWith('https://') ||
-      (trimmed.startsWith('/') && !trimmed.startsWith('//'))
-    ) {
-      return trimmed;
-    }
-    return '#';
-  }
-
   function openGuestDb() {
     return new Promise((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, 2);
@@ -1492,12 +1561,48 @@
     const rawDate = (entry.published_at || '').trim();
     const formattedDate = entry.formatted_date || rawDate;
     const href = safeHref(entry.url);
+    const rawImg = entry.image_url ? String(entry.image_url).trim() : '';
+    const safeImg = rawImg ? safeHref(rawImg) : '';
+    const hasHeroImg = Boolean(safeImg && safeImg !== '#');
+    const summaryText = entry.summary ? String(entry.summary).trim() : '';
     const bodyHtml = entry.sanitized_content && String(entry.sanitized_content).trim()
       ? entry.sanitized_content
       : '<p class="text-muted-foreground">No content available.</p>';
     const dateHtml = rawDate
       ? `<span>•</span><time datetime="${escapeHtml(rawDate)}" data-date-format="dd/mm/yyyy">${escapeHtml(formattedDate)}</time>`
       : (formattedDate ? `<span>•</span><span>${escapeHtml(formattedDate)}</span>` : '');
+
+    const headerHtml = hasHeroImg
+      ? `
+        <div class="relative w-full rounded-xl overflow-hidden mb-6 bg-muted min-h-[220px] md:min-h-[280px] flex items-end">
+          <img src="${escapeHtml(safeImg)}" alt="${escapeHtml(titleText)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="absolute inset-0 w-full h-full object-cover">
+          <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent"></div>
+          <div class="relative z-10 p-5 md:p-6 w-full">
+            <div class="flex items-center gap-2 text-xs text-white/80 mb-2 font-sans tabular drop-shadow-sm">
+              <span class="font-medium text-white">${escapeHtml(feedTitle)}</span>
+              ${dateHtml}
+            </div>
+            <h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">${escapeHtml(titleText)}</h1>
+          </div>
+        </div>
+      `
+      : `
+        <div class="mb-6">
+          <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
+            <span class="font-medium text-foreground">${escapeHtml(feedTitle)}</span>
+            ${dateHtml}
+          </div>
+          <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">${escapeHtml(titleText)}</h1>
+        </div>
+      `;
+
+    const rewriteHtml = summaryText
+      ? `
+        <div id="ai-rewrite-box" class="space-y-6 mb-6">
+          <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(summaryText)}</div>
+        </div>
+      `
+      : '';
 
     panel.innerHTML = `
       <div class="flex flex-col h-full w-full" data-entry-id="${numId}">
@@ -1541,15 +1646,19 @@
         </div>
 
         <div class="detail-scrollbar detail-body flex-1 overflow-y-auto pr-2 w-full max-w-[44rem] mx-auto">
-          <div class="mb-6">
-            <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
-              <span class="font-medium text-foreground">${escapeHtml(feedTitle)}</span>
-              ${dateHtml}
-            </div>
-            <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">${escapeHtml(titleText)}</h1>
-          </div>
-
+          ${headerHtml}
+          ${rewriteHtml}
           <div id="guest-detail-content" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans">${bodyHtml}</div>
+          <div id="ai-analysis-box" class="animate-pulse space-y-4 my-4" hx-get="/hx/entries/${numId}/analysis" hx-trigger="load" hx-swap="outerHTML">
+            <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
+              <div class="h-4 bg-muted rounded w-1/4"></div>
+              <div class="h-3 bg-muted rounded w-3/4"></div>
+            </div>
+            <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
+              <div class="h-4 bg-muted rounded w-1/3"></div>
+              <div class="h-3 bg-muted rounded w-5/6"></div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -1562,6 +1671,9 @@
 
     if (window.lucide && typeof lucide.createIcons === 'function') {
       lucide.createIcons({ root: panel });
+    }
+    if (window.htmx && typeof htmx.process === 'function') {
+      htmx.process(panel);
     }
     markLocallyRead(numId);
     syncDomReadStates();
@@ -1638,6 +1750,9 @@
         const numId = Number(id);
         if (!numId) return;
         const guest = guestById.get(numId);
+        const magEl = document.getElementById('mag-entry-' + numId);
+        const magBrief = magEl ? magEl.querySelector('.magazine-brief') : null;
+        const magImg = magEl ? magEl.querySelector('img') : null;
         const titleEl = row.querySelector('.article-title');
         const linkEl = row.querySelector('a[title="Open in browser"]');
         const title = (guest && guest.title) || (titleEl ? titleEl.textContent.trim() : '');
@@ -1649,6 +1764,8 @@
           feed_title: (guest && guest.feed_title) || '',
           published_at: (guest && guest.published_at) || '',
           formatted_date: (guest && guest.formatted_date) || '',
+          summary: (guest && guest.summary) || (magBrief ? magBrief.textContent.trim() : '') || (magEl && magEl.getAttribute('title') ? magEl.getAttribute('title').trim() : ''),
+          image_url: (guest && guest.image_url) || (magImg ? magImg.getAttribute('src') : null) || null,
           sanitized_content: (guest && guest.sanitized_content) || '',
           saved_at: Date.now()
         });
@@ -1664,6 +1781,8 @@
           feed_title: guest.feed_title || '',
           published_at: guest.published_at || '',
           formatted_date: guest.formatted_date || '',
+          summary: guest.summary || '',
+          image_url: guest.image_url || null,
           sanitized_content: guest.sanitized_content || '',
           saved_at: Date.now()
         });

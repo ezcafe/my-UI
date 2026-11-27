@@ -2187,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mobile_searchbox_compact_and_expand_container_query() {
+    fn test_mobile_search_toggle_markup_and_container_css() {
         let template = IndexTemplate {
             unread_count: 0,
             today_count: 0,
@@ -2197,27 +2197,46 @@ mod tests {
         };
         let html = template.render().expect("Failed to render IndexTemplate");
 
-        // Verify mobile searchbox CSS inside container query
+        // Verify mobile search toggle button and JS helper
+        assert!(
+            html.contains("id=\"mobile-search-toggle-btn\"")
+                && html.contains("onclick=\"toggleMobileSearch()\""),
+            "IndexTemplate must render #mobile-search-toggle-btn calling toggleMobileSearch()"
+        );
+        assert!(
+            html.contains("function toggleMobileSearch()"),
+            "IndexTemplate must define toggleMobileSearch()"
+        );
+
+        // Verify mobile search toggle CSS inside container query
         let cq_index = html
             .find("@container (max-width: 768px)")
             .expect("Missing mobile container query");
         let cq_slice = &html[cq_index..];
 
         assert!(
-            cq_slice.contains("#search-input"),
-            "Must define mobile styling for #search-input inside container query"
+            cq_slice.contains("#filter-search-bar") && cq_slice.contains("flex-wrap: wrap"),
+            "Mobile container query must wrap #filter-search-bar"
         );
         assert!(
-            cq_slice.contains("width: 5.5rem;") || cq_slice.contains("width: 5rem;"),
-            "Mobile #search-input must have compact resting width"
+            cq_slice.contains("#mobile-search-toggle-btn") && cq_slice.contains("display: inline-flex"),
+            "Mobile container query must display #mobile-search-toggle-btn"
         );
         assert!(
-            cq_slice.contains("#search-input:focus"),
-            "Must define #search-input:focus expansion"
+            cq_slice.contains("#search-form")
+                && cq_slice.contains("display: none")
+                && cq_slice.contains("order: -1")
+                && cq_slice.contains("flex-basis: 100%"),
+            "Mobile container query must hide #search-form by default and place it above filter pills"
         );
         assert!(
-            cq_slice.contains("width: 11rem;") || cq_slice.contains("width: 10rem;"),
-            "Mobile #search-input:focus must expand on focus"
+            cq_slice.contains("#filter-search-bar[data-mobile-search-open=\"true\"] #search-form")
+                && cq_slice.contains("display: flex"),
+            "Mobile container query must show #search-form when data-mobile-search-open=\"true\""
+        );
+        assert!(
+            cq_slice.contains("#search-input") && cq_slice.contains("width: 100%"),
+            "Mobile #search-input must span 100% width when open"
         );
 
         // Verify HTML filter bar layout prevents cut off
@@ -4949,6 +4968,158 @@ mod tests {
                 && skel_fn.contains("safeHref(")
                 && skel_fn.contains("<img src="),
             "openDetailWithSkeleton must render hero image when imageUrl is present"
+        );
+    }
+
+    #[test]
+    fn test_empty_entry_list_hides_pagination_and_renders_refresh_button() {
+        let template = EntryListTemplate {
+            entries: vec![],
+            top_executive_brief: None,
+            unread_count: Some(0),
+            current_page: 1,
+            total_pages: 3,
+            has_prev: false,
+            has_next: true,
+            prev_offset: 0,
+            next_offset: 50,
+            status: "unread".to_string(),
+            search: "".to_string(),
+            limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+            auth_enabled: true,
+        };
+        let html = template
+            .render()
+            .expect("Failed to render empty EntryListTemplate");
+
+        assert!(
+            !html.contains(r#"aria-label="Pagination""#),
+            "Empty EntryListTemplate must not render pagination nav"
+        );
+        assert!(
+            html.contains(r#"id="empty-refresh-btn""#)
+                && html.contains(r#"onclick="refreshCurrentEntriesList()""#),
+            "Empty EntryListTemplate must render #empty-refresh-btn calling refreshCurrentEntriesList()"
+        );
+    }
+
+    #[test]
+    fn test_set_active_filter_manages_hover_bg_border() {
+        let html = IndexTemplate {
+            unread_count: 1,
+            today_count: 0,
+            entries_list_html: String::new(),
+            ai_enabled: false,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render IndexTemplate");
+
+        let fn_start = html
+            .find("function setActiveFilter(btn)")
+            .expect("setActiveFilter");
+        let fn_end = html[fn_start..]
+            .find("function isCurrentEntriesRequest(")
+            .expect("isCurrentEntriesRequest")
+            + fn_start;
+        let fn_body = &html[fn_start..fn_end];
+
+        assert!(
+            fn_body.contains("el.classList.add('bg-muted', 'text-muted-foreground', 'border-border', 'hover:bg-border', 'font-medium')"),
+            "setActiveFilter must add hover:bg-border to inactive .filter-pill buttons"
+        );
+        assert!(
+            fn_body.contains("btn.classList.remove('bg-muted', 'text-muted-foreground', 'border-border', 'hover:bg-border', 'font-medium')"),
+            "setActiveFilter must remove hover:bg-border from the active .filter-pill button"
+        );
+    }
+
+    #[test]
+    fn test_sync_dom_read_states_hides_pagination_and_renders_refresh_button() {
+        let html = IndexTemplate {
+            unread_count: 1,
+            today_count: 0,
+            entries_list_html: String::new(),
+            ai_enabled: false,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render IndexTemplate");
+
+        assert!(
+            html.contains("function refreshCurrentEntriesList()"),
+            "IndexTemplate must define refreshCurrentEntriesList()"
+        );
+        let render_local_pos = html
+            .find("function renderLocalAllArticles()")
+            .expect("renderLocalAllArticles");
+        let refresh_pos = html
+            .find("function refreshCurrentEntriesList()")
+            .expect("refreshCurrentEntriesList");
+        assert!(
+            refresh_pos < render_local_pos,
+            "refreshCurrentEntriesList() must be placed before renderLocalAllArticles()"
+        );
+
+        let sync_start = html
+            .find("function syncDomReadStates()")
+            .expect("syncDomReadStates");
+        let sync_end = html[sync_start..]
+            .find("let pendingGuestMarkRead = null;")
+            .expect("pendingGuestMarkRead")
+            + sync_start;
+        let sync_fn = &html[sync_start..sync_end];
+
+        assert!(
+            sync_fn.contains(r##"#entries-list nav[aria-label="Pagination"]"##)
+                && sync_fn.contains("paginationNav.style.display = 'none'")
+                && sync_fn.contains("paginationNav.style.display = ''"),
+            "syncDomReadStates must hide pagination when #client-empty-state is shown and restore otherwise"
+        );
+        assert!(
+            sync_fn.contains(r#"id="empty-refresh-btn""#)
+                && sync_fn.contains(r#"onclick="refreshCurrentEntriesList()""#),
+            "syncDomReadStates #client-empty-state must include #empty-refresh-btn"
+        );
+    }
+
+    #[test]
+    fn test_pagination_hides_previous_brief_and_aborts_stale_brief_xhr() {
+        let html = IndexTemplate {
+            unread_count: 1,
+            today_count: 0,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("Failed to render IndexTemplate");
+
+        let before_start = html
+            .find("document.addEventListener('htmx:beforeRequest'")
+            .expect("htmx:beforeRequest");
+        let before_end = html[before_start..]
+            .find("function setActiveFilter(")
+            .expect("setActiveFilter")
+            + before_start;
+        let before_fn = &html[before_start..before_end];
+
+        assert!(
+            before_fn.contains("target && target.id === 'page-executive-brief'")
+                && before_fn.contains("activeBriefXhr = evt.detail.xhr || null"),
+            "htmx:beforeRequest must track activeBriefXhr for #page-executive-brief"
+        );
+        assert!(
+            before_fn.contains("pagination-prev-btn")
+                && before_fn.contains("pagination-next-btn")
+                && before_fn.contains("activeBriefXhr.abort()")
+                && before_fn.contains("list-executive-brief")
+                && before_fn.contains("page-executive-brief"),
+            "Pagination in htmx:beforeRequest must abort activeBriefXhr and hide previous briefs"
         );
     }
 }

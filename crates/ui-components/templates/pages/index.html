@@ -81,9 +81,9 @@
     </header>
 
     <!-- Filter Bar & Search -->
-    <div class="px-6 py-3 border-b border-border flex items-center justify-between gap-4 bg-muted/40">
+    <div id="filter-search-bar" class="px-6 py-3 border-b border-border flex items-center justify-between gap-4 bg-muted/40">
       <input type="hidden" id="active-status" name="status" value="unread">
-      <div class="flex items-center gap-2 overflow-x-auto min-w-0 shrink no-scrollbar py-0.5">
+      <div class="filter-pills-row flex items-center gap-2 overflow-x-auto min-w-0 flex-1 shrink no-scrollbar py-0.5">
         <button 
           id="filter-unread"
           data-status="unread"
@@ -141,6 +141,17 @@
           All
         </button>
       </div>
+
+      <button
+        id="mobile-search-toggle-btn"
+        type="button"
+        onclick="toggleMobileSearch()"
+        aria-expanded="false"
+        aria-controls="search-form"
+        title="Search articles"
+        class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 cursor-pointer">
+        <i data-lucide="search" class="w-4 h-4"></i>
+      </button>
 
       <!-- Annuaire Recipe 6.3: Search Form with .field and .field-button-hit-area -->
       <form 
@@ -634,10 +645,15 @@
     if (loadingBar && !activeEntriesRequestXhr) loadingBar.classList.remove('htmx-request');
   }
 
+  let activeBriefXhr = null;
+
   // HTMX request interceptor: Cancel server request if valid client cache exists
   document.addEventListener('htmx:beforeRequest', (evt) => {
     const trigger = evt.detail && evt.detail.elt;
     const target = evt.detail && evt.detail.target;
+    if (target && target.id === 'page-executive-brief') {
+      activeBriefXhr = evt.detail.xhr || null;
+    }
     if (trigger && trigger.classList && trigger.classList.contains('filter-pill')) {
       const status = trigger.getAttribute('data-status') || 'unread';
       isSearchActive = false;
@@ -696,6 +712,14 @@
       cancelPendingMarkPageRead();
     }
     if (!evt.defaultPrevented && trigger && (trigger.id === 'pagination-prev-btn' || trigger.id === 'pagination-next-btn')) {
+      if (activeBriefXhr && typeof activeBriefXhr.abort === 'function') {
+        activeBriefXhr.abort();
+        activeBriefXhr = null;
+      }
+      const listBrief = document.getElementById('list-executive-brief');
+      if (listBrief) listBrief.classList.add('hidden');
+      const pageBrief = document.getElementById('page-executive-brief');
+      if (pageBrief) pageBrief.classList.add('hidden');
       if (typeof closeDetailPanel === 'function') {
         closeDetailPanel();
       }
@@ -703,15 +727,31 @@
     }
   });
 
+  function toggleMobileSearch() {
+    const bar = document.getElementById('filter-search-bar');
+    const toggleBtn = document.getElementById('mobile-search-toggle-btn');
+    const searchInput = document.getElementById('search-input');
+    if (!bar) return;
+    const isOpen = bar.getAttribute('data-mobile-search-open') === 'true';
+    if (isOpen) {
+      bar.removeAttribute('data-mobile-search-open');
+      if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+    } else {
+      bar.setAttribute('data-mobile-search-open', 'true');
+      if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
+      if (searchInput) searchInput.focus();
+    }
+  }
+
   function setActiveFilter(btn) {
     if (typeof closeDetailPanel === 'function') {
       closeDetailPanel();
     }
     document.querySelectorAll('.filter-pill').forEach(el => {
       el.classList.remove('bg-primary', 'text-primary-foreground', 'font-bold', 'border-primary');
-      el.classList.add('bg-muted', 'text-muted-foreground', 'border-border', 'font-medium');
+      el.classList.add('bg-muted', 'text-muted-foreground', 'border-border', 'hover:bg-border', 'font-medium');
     });
-    btn.classList.remove('bg-muted', 'text-muted-foreground', 'border-border', 'font-medium');
+    btn.classList.remove('bg-muted', 'text-muted-foreground', 'border-border', 'hover:bg-border', 'font-medium');
     btn.classList.add('bg-primary', 'text-primary-foreground', 'font-bold', 'border-primary');
     const status = btn.getAttribute('data-status');
     const statusInput = document.getElementById('active-status');
@@ -1538,6 +1578,11 @@
   });
 
   document.addEventListener('htmx:afterRequest', (evt) => {
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'page-executive-brief') {
+      if (!activeBriefXhr || evt.detail.xhr === activeBriefXhr) {
+        activeBriefXhr = null;
+      }
+    }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
       const xhr = evt.detail.xhr;
       const triggerElt = (evt.detail.requestConfig && evt.detail.requestConfig.elt) || evt.detail.elt;
@@ -2099,6 +2144,24 @@
       .catch((e) => console.warn('Could not save guest articles:', e));
   }
 
+  function refreshCurrentEntriesList() {
+    const statusInput = document.getElementById('active-status');
+    const status = (statusInput && statusInput.value) ? statusInput.value : 'unread';
+    const searchInput = document.getElementById('search-input');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+    if (typeof filterCache !== 'undefined' && filterCache && typeof filterCache.delete === 'function') {
+      filterCache.delete(status);
+    }
+    if (typeof showEntriesLoadingState === 'function') {
+      showEntriesLoadingState();
+    }
+    const url = '/hx/entries?status=' + encodeURIComponent(status)
+      + (searchQuery ? '&search=' + encodeURIComponent(searchQuery) : '');
+    if (window.htmx && typeof htmx.ajax === 'function') {
+      htmx.ajax('GET', url, { target: '#entries-list', swap: 'innerHTML' });
+    }
+  }
+
   function renderLocalAllArticles() {
     openGuestDb()
       .then((db) => {
@@ -2257,10 +2320,14 @@
     }
 
     const magView = document.getElementById('entries-magazine-view');
+    const paginationNav = document.querySelector('#entries-list nav[aria-label="Pagination"]');
     let emptyEl = document.getElementById('client-empty-state');
     if (isUnreadFilter && visibleUnreadRowCount === 0 && rows.length > 0) {
       if (magView) {
         magView.style.display = 'none';
+      }
+      if (paginationNav) {
+        paginationNav.style.display = 'none';
       }
       if (!emptyEl) {
         emptyEl = document.createElement('div');
@@ -2270,6 +2337,14 @@
           <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
           <p class="text-sm font-medium font-sans">All caught up!</p>
           <p class="text-xs text-muted-foreground mt-1 font-sans">No articles match your current filter.</p>
+          <button
+            id="empty-refresh-btn"
+            type="button"
+            onclick="refreshCurrentEntriesList()"
+            class="mt-4 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-border bg-card hover:bg-muted text-foreground text-xs font-bold font-sans transition-colors cursor-pointer">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Refresh</span>
+          </button>
         `;
         const list = document.getElementById('entries-list');
         if (list) list.appendChild(emptyEl);
@@ -2280,6 +2355,9 @@
     } else {
       if (magView) {
         magView.style.display = '';
+      }
+      if (paginationNav) {
+        paginationNav.style.display = '';
       }
       if (emptyEl) {
         emptyEl.remove();

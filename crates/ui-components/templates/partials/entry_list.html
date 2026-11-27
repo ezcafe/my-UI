@@ -4,6 +4,14 @@
   <i data-lucide="inbox" class="w-12 h-12 mb-3 stroke-1 text-muted-foreground/60"></i>
   <p class="text-sm font-medium font-sans">All caught up!</p>
   <p class="text-xs text-muted-foreground mt-1 font-sans">No articles match your current filter.</p>
+  <button
+    id="empty-refresh-btn"
+    type="button"
+    onclick="refreshCurrentEntriesList()"
+    class="mt-4 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-border bg-card hover:bg-muted text-foreground text-xs font-bold font-sans transition-colors cursor-pointer">
+    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+    <span>Refresh</span>
+  </button>
 </div>
 {% else %}
 <div id="entries-list-view" class="space-y-1.5">

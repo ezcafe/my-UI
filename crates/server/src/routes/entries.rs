@@ -2003,7 +2003,7 @@ pub async fn get_entry_detail_htmx(
 
 fn render_rewrite_box_html(id: i64, rewrite: &str, impact: &str, fallacies: &str) -> String {
     let mut html = format!(
-        r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">{}</div></div>"#,
+        r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div></div>"#,
         escape_html(rewrite)
     );
     let imp = impact.trim();
@@ -2234,7 +2234,7 @@ pub async fn get_entry_rewrite_htmx(
             plain
         };
         let html = format!(
-            r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-4"><p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">{}</div></div>"#,
+            r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-4"><p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div></div>"#,
             escape_html(&fallback_text)
         );
         return rewrite_response_with_trigger(id, html);
@@ -2274,7 +2274,7 @@ pub async fn get_entry_rewrite_htmx(
             .unwrap_or_default();
 
             let fallback_html = format!(
-                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">{}</div>"#,
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
                 escape_html(&fallback_text)
             );
 
@@ -5703,8 +5703,8 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
     }
 
     #[tokio::test]
-    async fn test_entry_rewrite_endpoints_use_text_base_and_bionic_marker() {
-        // 1. Direct render_rewrite_box_html emits text-base + bionic-text with plain escaped text intact
+    async fn test_entry_rewrite_endpoints_use_text_base_without_bionic() {
+        // 1. Direct render_rewrite_box_html emits text-base with plain escaped text intact and no bionic-text
         let rendered_box = render_rewrite_box_html(
             777,
             "Plain & <escaped> rewrite content.",
@@ -5713,9 +5713,9 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
         );
         assert!(
             rendered_box.contains(
-                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">Plain &amp; &lt;escaped&gt; rewrite content.</div>"#
-            ),
-            "render_rewrite_box_html must emit text-base and bionic-text with plain escaped text intact: {rendered_box}"
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line">Plain &amp; &lt;escaped&gt; rewrite content.</div>"#
+            ) && !rendered_box.contains("bionic-text"),
+            "render_rewrite_box_html must emit text-base without bionic-text: {rendered_box}"
         );
 
         let mock_server = MockServer::start().await;
@@ -5792,10 +5792,11 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
         .unwrap();
         assert!(
             html_no_ai.contains(
-                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">"#
-            ) && (html_no_ai.contains("Plain &amp; summary 778.")
-                || html_no_ai.contains("Plain &amp; &lt;safe&gt; summary 778.")),
-            "!ai_enabled fallback must use text-base + bionic-text and keep plain text intact: {html_no_ai}"
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line">"#
+            ) && !html_no_ai.contains("bionic-text")
+                && (html_no_ai.contains("Plain &amp; summary 778.")
+                    || html_no_ai.contains("Plain &amp; &lt;safe&gt; summary 778.")),
+            "!ai_enabled fallback must use text-base without bionic-text and keep plain text intact: {html_no_ai}"
         );
 
         // 3. LLM error fallback in get_entry_rewrite_htmx
@@ -5829,10 +5830,11 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
         assert!(
             html_err.contains("is-error")
                 && html_err.contains("text-xs text-muted-foreground")
+                && !html_err.contains("bionic-text")
                 && html_err.contains(
-                    r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">Seeded brief 778.</div>"#
+                    r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line">Seeded brief 778.</div>"#
                 ),
-            "LLM error fallback must keep error card is-error + text-xs while fallback .prose carries text-base + bionic-text: {html_err}"
+            "LLM error fallback must keep error card is-error + text-xs while fallback .prose carries text-base without bionic-text: {html_err}"
         );
     }
 }

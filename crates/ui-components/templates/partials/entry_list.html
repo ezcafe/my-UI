@@ -35,7 +35,7 @@
       </div>
       <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Executive Brief</span>
     </div>
-    <p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">
+    <p class="text-base text-foreground/90 leading-relaxed font-sans">
       {{ brief }}
     </p>
   </div>
@@ -107,7 +107,7 @@
           </div>
           <span class="text-xs font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
         </div>
-        <p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">
+        <p class="text-base text-foreground/90 leading-relaxed font-sans">
           {{ brief }}
         </p>
       </div>
@@ -141,7 +141,7 @@
                onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
           </h3>
 
-          <p class="magazine-brief text-base text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6 bionic-text">
+          <p class="magazine-brief text-base text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6">
             {{ entry.summary }}
           </p>
         </div>
@@ -173,7 +173,7 @@
                  onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
             </h4>
 
-            <p class="magazine-brief text-base text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1 bionic-text">
+            <p class="magazine-brief text-base text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1">
               {{ entry.summary }}
             </p>
           </div>

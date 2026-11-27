@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -45,3 +45,5 @@
 - **22:45** · test-lite · success · 06-test-report.md (success; 286 tests pass, clippy clean); Next gate-c
 - **05:51** · gate-c · approved · commit, push (subset — PR/merge not approved)
 - **05:51** · clarity-check · clarity-check ok — merge
+- **05:52** · merge · success (subset) · committed `feat(reading): implement bionic reading and content font size controls` and pushed to `origin main`; Status paused (PR/merge not approved)
+- **06:24** · refactor · remove bionic reading · 286 tests pass, clippy clean; commit & push

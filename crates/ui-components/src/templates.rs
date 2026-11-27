@@ -5711,9 +5711,9 @@ mod tests {
         // Executive brief in list + magazine page + Magazine center column + P1/P2 hierarchy
         assert!(
             entry_list_html.contains(
-                r#"<p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">"#
+                r#"<p class="text-base text-foreground/90 leading-relaxed font-sans">"#
             ),
-            "entry_list.html executive brief paragraphs must use text-base and bionic-text"
+            "entry_list.html executive brief paragraphs must use text-base"
         );
         assert!(
             entry_list_html.contains(r#"id="mag-col-center" class="magazine-center-col"#),
@@ -5725,9 +5725,9 @@ mod tests {
         );
         assert!(
             entry_list_html.contains(
-                r#"class="magazine-brief text-base text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6 bionic-text""#
+                r#"class="magazine-brief text-base text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6""#
             ),
-            "Priority 1 .magazine-brief must use text-base and bionic-text"
+            "Priority 1 .magazine-brief must use text-base"
         );
         assert!(
             entry_list_html.contains(r#"<h4 class="magazine-title text-lg font-bold font-sans leading-snug line-clamp-3"#),
@@ -5735,9 +5735,9 @@ mod tests {
         );
         assert!(
             entry_list_html.contains(
-                r#"class="magazine-brief text-base text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1 bionic-text""#
+                r#"class="magazine-brief text-base text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1""#
             ),
-            "Priority 2 .magazine-brief must use text-base, contiguous line-clamp-4 classes, and bionic-text"
+            "Priority 2 .magazine-brief must use text-base and contiguous line-clamp-4 classes"
         );
 
         let raw_entry_list = include_str!("../templates/partials/entry_list.html");
@@ -5754,9 +5754,9 @@ mod tests {
         .expect("render ExecutiveBriefCardTemplate");
         assert!(
             exec_brief_card.contains(
-                r#"<p class="text-base leading-relaxed text-foreground/90 font-sans bionic-text">"#
+                r#"<p class="text-base leading-relaxed text-foreground/90 font-sans">"#
             ),
-            "executive_brief_card.html must use text-base and bionic-text"
+            "executive_brief_card.html must use text-base"
         );
 
         let brief_card = BriefCardTemplate {
@@ -5766,9 +5766,9 @@ mod tests {
         .expect("render BriefCardTemplate");
         assert!(
             brief_card.contains(
-                r#"<p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">"#
+                r#"<p class="text-base text-foreground/90 leading-relaxed font-sans">"#
             ),
-            "brief_card.html must use text-base and bionic-text"
+            "brief_card.html must use text-base"
         );
 
         // AI Grouped list & summary card
@@ -5797,8 +5797,8 @@ mod tests {
         assert!(
             summary_card.contains(r#"class="text-base leading-relaxed text-foreground/90 flex items-start gap-2 font-sans""#)
                 && summary_card.contains(r#"class="w-4 h-4 text-foreground shrink-0 mt-1""#)
-                && summary_card.contains(r#"<p class="font-normal bionic-text">"#),
-            "ai_summary_card.html must use text-base, w-4 h-4 mt-1 icon, and bionic-text"
+                && summary_card.contains(r#"<p class="font-normal">"#),
+            "ai_summary_card.html must use text-base and w-4 h-4 mt-1 icon"
         );
 
         // Entry detail ready rewrite + !ai_enabled fallback
@@ -5820,9 +5820,9 @@ mod tests {
         .expect("render ready EntryDetailTemplate");
         assert!(
             detail_ready.contains(
-                r#"prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text"#
+                r#"prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line"#
             ),
-            "entry_detail.html ready rewrite .prose must use text-base and bionic-text"
+            "entry_detail.html ready rewrite .prose must use text-base"
         );
 
         let detail_no_ai = EntryDetailTemplate {
@@ -5843,9 +5843,9 @@ mod tests {
         .expect("render fallback EntryDetailTemplate");
         assert!(
             detail_no_ai.contains(
-                r#"prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text"#
+                r#"prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line"#
             ),
-            "entry_detail.html fallback .prose must use text-base and bionic-text"
+            "entry_detail.html fallback .prose must use text-base"
         );
 
         // Analysis cards: text-base WITHOUT bionic-text
@@ -5909,7 +5909,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bionic_reading_engine_and_hooks_in_base_and_index() {
+    fn test_no_bionic_reading_and_text_base_hooks_in_base_and_index() {
         let index_auth = IndexTemplate {
             unread_count: 2,
             today_count: 1,
@@ -5920,95 +5920,20 @@ mod tests {
         .render()
         .expect("render auth IndexTemplate");
 
-        // 1. CSS & pure-DOM Bionic engine in base.html
+        // 1. Bionic Reading CSS/JS/classes are completely removed
         assert!(
-            index_auth.contains("b.bionic-fixation")
-                && index_auth.contains("font-weight: 700;")
-                && index_auth.contains("display: inline;"),
-            "base.html must style b.bionic-fixation with font-weight: 700 and display: inline"
-        );
-        assert!(
-            index_auth.contains("new Intl.Segmenter('vi', { granularity: 'word' })")
-                && index_auth.contains("new Intl.Segmenter('vi', { granularity: 'grapheme' })")
-                && index_auth.contains(".normalize('NFC')")
-                && index_auth.contains("document.createTreeWalker(el, NodeFilter.SHOW_TEXT")
-                && index_auth.contains(r"/^\p{L}/u.test(seg.segment)")
-                && index_auth.contains(r"!/\p{L}/u.test(node.nodeValue)")
-                && index_auth.contains("function computeBionicFixationLength(")
-                && index_auth.contains("function createBionicFragment(")
-                && index_auth.contains("function applyBionicToElement(el, force = false)")
-                && index_auth.contains("function applyBionicReading(root)"),
-            "base.html must implement Intl.Segmenter + TreeWalker Bionic engine with Unicode guards"
-        );
-        // Deterministic force unwrap, fallback without Intl.Segmenter, .is-error & interactive tag exclusion
-        assert!(
-            index_auth.contains("b.replaceWith(document.createTextNode(b.textContent || ''))")
-                && index_auth.contains("el.normalize()")
-                && index_auth.contains("el.closest('.is-error')")
-                && index_auth.contains("b.bionic-fixation, script, style, code, pre, button, a")
-                && index_auth.contains("Array.from(")
-                && index_auth.contains(r"[\p{L}\p{N}_]+"),
-            "base.html must include deterministic force unwrap, non-Intl.Segmenter fallback, and tag/error exclusions"
+            !index_auth.contains("bionic-fixation")
+                && !index_auth.contains("bionic-text")
+                && !index_auth.contains("applyBionicReading")
+                && !index_auth.contains("applyBionicToElement"),
+            "base.html and index.html must not contain Bionic Reading CSS, classes, or JS hooks"
         );
 
-        // base.html DOMContentLoaded and unconditional liveRoot htmx:afterSwap hook
-        let dom_ready_pos = index_auth
-            .find(r#"document.addEventListener("DOMContentLoaded""#)
-            .unwrap();
-        let base_after_swap_pos = index_auth
-            .find(r#"document.body.addEventListener("htmx:afterSwap""#)
-            .unwrap();
-        let base_oob_pos = index_auth
-            .find(r#"document.body.addEventListener("htmx:oobAfterSwap""#)
-            .unwrap();
-        let dom_ready_slice = &index_auth[dom_ready_pos..base_after_swap_pos];
-        let base_after_swap_slice = &index_auth[base_after_swap_pos..base_oob_pos];
-        assert!(
-            dom_ready_slice.contains("applyBionicReading(document);"),
-            "base.html DOMContentLoaded must run applyBionicReading(document)"
-        );
-        let lucide_if_pos = base_after_swap_slice
-            .find("if (window.lucide && typeof lucide.createIcons === 'function')")
-            .unwrap();
-        let live_root_pos = base_after_swap_slice.find("const liveRoot =").unwrap();
-        let bionic_call_pos = base_after_swap_slice
-            .find("applyBionicReading(liveRoot);")
-            .unwrap();
-        assert!(
-            live_root_pos < lucide_if_pos && lucide_if_pos < bionic_call_pos,
-            "base.html htmx:afterSwap must compute liveRoot unconditionally before lucide check and call applyBionicReading(liveRoot) after"
-        );
-
-        // 2. index.html skeleton, hooks, text-base, and ARTICLE_DB_NAME v4
+        // 2. index.html skeleton, text-base, and ARTICLE_DB_NAME v4 remain intact
         assert!(
             index_auth.contains(r#"<div class="magazine-center-col w-full flex flex-col gap-6">"#),
             "index.html magazine loading skeleton must carry .magazine-center-col"
         );
-
-        // seedInitialFilterCache calls applyBionicReading before filterCache.set
-        let seed_pos = index_auth.find("function seedInitialFilterCache()").unwrap();
-        let apply_cached_pos = index_auth
-            .find("function applyCachedList(cachedHtml, statusOverride)")
-            .unwrap();
-        let seed_slice = &index_auth[seed_pos..apply_cached_pos];
-        assert!(
-            seed_slice.contains("applyBionicReading(entriesList)")
-                && seed_slice.find("applyBionicReading(entriesList)").unwrap()
-                    < seed_slice.find("filterCache.set(").unwrap(),
-            "seedInitialFilterCache must run applyBionicReading(entriesList) before filterCache.set"
-        );
-
-        // applyCachedList calls applyBionicReading
-        let handle_filter_pos = index_auth
-            .find("function handleFilterClick(btn, event)")
-            .unwrap();
-        let apply_cached_slice = &index_auth[apply_cached_pos..handle_filter_pos];
-        assert!(
-            apply_cached_slice.contains("applyBionicReading(entriesList)"),
-            "applyCachedList must run applyBionicReading(entriesList)"
-        );
-
-        // ARTICLE_DB_NAME v4 and isCacheValid text-sm invalidation
         assert!(
             index_auth.contains("indexedDB.open(ARTICLE_DB_NAME, 4)")
                 && index_auth.contains("e.oldVersion < 4")
@@ -6018,83 +5943,13 @@ mod tests {
                 && index_auth.contains(
                     "!cached.html.includes('text-sm text-foreground/90 leading-relaxed font-sans')"
                 ),
-            "index.html must bump ARTICLE_DB_NAME to v4 and reject cached legacy text-sm HTML"
+            "index.html must keep ARTICLE_DB_NAME v4 and reject cached legacy text-sm HTML"
         );
-
-        // openEntryDetail cache hit calls applyBionicReading(panel)
-        let open_detail_pos = index_auth
-            .find("async function openEntryDetail(id)")
-            .unwrap();
-        let open_detail_end = open_detail_pos + 3000;
-        let open_detail_slice = &index_auth[open_detail_pos..open_detail_end.min(index_auth.len())];
         assert!(
-            open_detail_slice.contains("applyBionicReading(panel)"),
-            "openEntryDetail cache hit must call applyBionicReading(panel)"
-        );
-
-        // syncExecutiveBriefUpdates calls applyBionicToElement(magBriefEl, true) and bionicizes updatedRewriteBox
-        let sync_pos = index_auth
-            .find("function syncExecutiveBriefUpdates(")
-            .unwrap();
-        let after_swap_pos = index_auth
-            .find("document.addEventListener('htmx:afterSwap'")
-            .unwrap();
-        let sync_slice = &index_auth[sync_pos..after_swap_pos];
-        assert!(
-            sync_slice.contains("applyBionicToElement(magBriefEl, true)")
-                && sync_slice.contains(
-                    "prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text"
-                )
-                && sync_slice.contains("applyBionicReading(updatedRewriteBox)"),
-            "syncExecutiveBriefUpdates must pass force=true for magBriefEl and bionicize updatedRewriteBox with text-base"
-        );
-
-        // htmx:afterSwap brief error/non-error guard, pre-filterCache applyBionicReading, and pre-saveCachedArticle applyBionicReading
-        let after_req_pos = index_auth
-            .find("document.addEventListener('htmx:afterRequest'")
-            .unwrap();
-        let after_swap_slice = &index_auth[after_swap_pos..after_req_pos];
-        assert!(
-            after_swap_slice.contains("listBrief.classList.add('is-error')")
-                && after_swap_slice.contains("listBrief.classList.remove('is-error')")
-                && after_swap_slice.contains(
-                    r#"<p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">"#
-                ),
-            "htmx:afterSwap must toggle .is-error on #list-executive-brief and use text-base bionic-text for non-error brief"
-        );
-        let brief_end_pos = after_swap_slice.find("syncExecutiveBriefUpdates();").unwrap();
-        let filter_set_pos = after_swap_slice.find("filterCache.set(status,").unwrap();
-        let pre_cache_bionic_pos = after_swap_slice
-            .find("applyBionicReading(entriesListEl || evt.detail.target)")
-            .unwrap();
-        assert!(
-            brief_end_pos < pre_cache_bionic_pos && pre_cache_bionic_pos < filter_set_pos,
-            "htmx:afterSwap must run applyBionicReading(entriesListEl || evt.detail.target) outside isBriefSwap right before filterCache.set"
-        );
-        let save_cached_pos = after_swap_slice
-            .find("saveCachedArticle(entryId, panel.innerHTML)")
-            .unwrap();
-        let panel_bionic_pos = after_swap_slice[..save_cached_pos]
-            .rfind("applyBionicReading(panel)")
-            .expect("applyBionicReading(panel) must precede saveCachedArticle");
-        assert!(
-            panel_bionic_pos < save_cached_pos,
-            "htmx:afterSwap detail branch must call applyBionicReading(panel) before saveCachedArticle"
-        );
-
-        // handleRewriteError
-        let err_fn_pos = index_auth
-            .find("function handleRewriteError(evt, msg)")
-            .unwrap();
-        let resp_err_pos = index_auth
-            .find("document.addEventListener('htmx:responseError'")
-            .unwrap();
-        let err_fn_slice = &index_auth[err_fn_pos..resp_err_pos];
-        assert!(
-            err_fn_slice.contains(
-                "prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text"
-            ) && err_fn_slice.contains("applyBionicReading(newBox)"),
-            "handleRewriteError must use text-base bionic-text on fallback .prose and call applyBionicReading(newBox)"
+            index_auth.contains(
+                "prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line"
+            ),
+            "index.html dynamic rewrite containers must keep text-base"
         );
 
         // renderGuestEntryDetail (rendered when auth_enabled == false)
@@ -6116,14 +5971,14 @@ mod tests {
         let guest_detail_slice = &index_guest[guest_detail_pos..open_guest_pos];
         assert_eq!(
             guest_detail_slice
-                .matches("prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text")
+                .matches("prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line")
                 .count(),
             2,
-            "renderGuestEntryDetail must use text-base bionic-text on both .prose blocks"
+            "renderGuestEntryDetail must use text-base on both .prose blocks without bionic-text"
         );
         assert!(
-            guest_detail_slice.contains("applyBionicReading(panel)"),
-            "renderGuestEntryDetail must call applyBionicReading(panel)"
+            !guest_detail_slice.contains("bionic"),
+            "renderGuestEntryDetail must not contain bionic references"
         );
     }
 }

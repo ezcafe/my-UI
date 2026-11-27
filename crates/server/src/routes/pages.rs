@@ -151,14 +151,17 @@ pub async fn index_page(
         })
         .unwrap_or_default();
 
-    let (ai_summaries, _top_executive_brief) = if config.ai_enabled {
-        let ids: Vec<i64> = view_models.iter().map(|e| e.id).collect();
-        let map = ai_service.db.get_batch_summaries(&ids).await;
-        let brief = ai_service.db.get_latest_page_brief().await;
-        (map, brief)
-    } else {
-        (std::collections::HashMap::new(), None)
-    };
+    let (ai_summaries, top_executive_brief, is_brief_eligible) =
+        if config.ai_enabled && !view_models.is_empty() {
+            let ids: Vec<i64> = view_models.iter().map(|e| e.id).collect();
+            let map = ai_service.db.get_batch_summaries(&ids).await;
+            let page_key = crate::ai::compute_page_key("unread", &ids);
+            let brief = ai_service.db.get_page_brief_by_key(&page_key).await;
+            let eligible = brief.is_none();
+            (map, brief, eligible)
+        } else {
+            (std::collections::HashMap::new(), None, false)
+        };
 
     crate::routes::entries::apply_ai_summaries_to_entries(&mut view_models, &ai_summaries);
 
@@ -185,7 +188,7 @@ pub async fn index_page(
 
     let list_template = ui_components::templates::EntryListTemplate {
         entries: view_models,
-        top_executive_brief: None,
+        top_executive_brief,
         unread_count: None,
         current_page,
         total_pages,
@@ -196,7 +199,7 @@ pub async fn index_page(
         status: "unread".to_string(),
         search: "".to_string(),
         limit,
-        is_brief_eligible: config.ai_enabled,
+        is_brief_eligible,
         offset: 0,
         feed_id: None,
         category_id: None,

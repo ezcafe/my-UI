@@ -432,13 +432,22 @@ pub async fn render_entries_list_html(
     let filter_eligible =
         is_brief_eligible_filter(query.status.as_deref(), query.search.as_deref());
     let request_brief = query.request_brief.unwrap_or(true);
-    let is_eligible = filter_eligible && request_brief;
+    let mut is_eligible = filter_eligible && request_brief && !entries.is_empty();
 
     let (ai_summaries, top_executive_brief) = if let Some(ai) = ai_service {
         let entry_ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
         let summaries = ai.db.get_batch_summaries(&entry_ids).await;
-        let page_brief = if filter_eligible && !is_eligible {
-            ai.db.get_latest_page_brief().await
+        let status_str = query.status.as_deref().unwrap_or("unread");
+        let page_brief = if filter_eligible && !entries.is_empty() {
+            let page_key = compute_page_key(status_str, &entry_ids);
+            if let Some(cached_brief) = ai.db.get_page_brief_by_key(&page_key).await {
+                is_eligible = false;
+                Some(cached_brief)
+            } else if !is_eligible {
+                ai.db.get_latest_page_brief().await
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -735,9 +744,11 @@ fn append_brief_oob_updates(full_html: &mut String, sync_entries: &[BriefSyncEnt
 }
 
 pub async fn executive_brief_htmx(
+    _user: AuthenticatedUser,
     Query(query): Query<EntriesFilterQuery>,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     State(ai_service): State<Arc<AiService>>,
 ) -> Response {
     let headers = [
@@ -795,33 +806,82 @@ pub async fn executive_brief_htmx(
         )
     };
 
-    let gql = format!(
-        "query {{
-            entriesResult(filter: {{ {} }}) {{
-                entries {{
-                    id
-                    title
-                    summary
-                    url
-                    publishedAt
-                    feed {{
+    let entries_cache_key = format!("entries:{}:auth:{}", filter, config.auth_enabled);
+    let data = if let Some(cached) = cache.get(&entries_cache_key).await {
+        cached
+    } else if offset_val == 0
+        && limit_val == 50
+        && status_str == "unread"
+        && query.feed_id.is_none()
+        && query.category_id.is_none()
+    {
+        let index_cache_key = if config.auth_enabled {
+            "index_page_entries_auth"
+        } else {
+            "index_page_entries_guest"
+        };
+        if let Some(cached) = cache.get(index_cache_key).await {
+            cached
+        } else {
+            let gql = format!(
+                "query {{
+                    entriesResult(filter: {{ {} }}) {{
+                        entries {{
+                            id
+                            title
+                            summary
+                            url
+                            publishedAt
+                            feed {{
+                                title
+                            }}
+                        }}
+                    }}
+                }}",
+                filter
+            );
+            let res = schema.execute(&gql).await;
+            match res.data.into_json() {
+                Ok(d) => d,
+                Err(_) => {
+                    return (
+                        StatusCode::OK,
+                        headers,
+                        Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+                    )
+                        .into_response()
+                }
+            }
+        }
+    } else {
+        let gql = format!(
+            "query {{
+                entriesResult(filter: {{ {} }}) {{
+                    entries {{
+                        id
                         title
+                        summary
+                        url
+                        publishedAt
+                        feed {{
+                            title
+                        }}
                     }}
                 }}
-            }}
-        }}",
-        filter
-    );
-    let res = schema.execute(&gql).await;
-    let data = match res.data.into_json() {
-        Ok(d) => d,
-        Err(_) => {
-            return (
-                StatusCode::OK,
-                headers,
-                Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
-            )
-                .into_response()
+            }}",
+            filter
+        );
+        let res = schema.execute(&gql).await;
+        match res.data.into_json() {
+            Ok(d) => d,
+            Err(_) => {
+                return (
+                    StatusCode::OK,
+                    headers,
+                    Html(r#"<div id="page-executive-brief" class="hidden"></div>"#),
+                )
+                    .into_response()
+            }
         }
     };
 
@@ -1188,10 +1248,58 @@ pub async fn executive_brief_htmx(
     (StatusCode::OK, headers, Html(full_html)).into_response()
 }
 
+async fn fetch_entry_json_cached(
+    schema: &AppSchema,
+    cache: &MinifluxCache,
+    id: i64,
+) -> Option<serde_json::Value> {
+    let cache_key = format!("entry:{}", id);
+    if let Some(cached) = cache.get(&cache_key).await {
+        return cached.get("entry").cloned();
+    }
+    let gql = format!(
+        r#"query {{
+            entry(id: "{id}") {{
+                id
+                title
+                summary
+                content
+                publishedAt
+                readingTime
+                status
+                isBookmarked
+                url
+                author
+                feed {{
+                    title
+                }}
+            }}
+        }}"#
+    );
+    let res = schema.execute(&gql).await;
+    if !res.errors.is_empty() {
+        return None;
+    }
+    let data = res.data.into_json().ok()?;
+    cache
+        .insert_with_ttl(cache_key, data.clone(), Duration::from_secs(300))
+        .await;
+    data.get("entry").cloned()
+}
+
+async fn invalidate_entry_caches(cache: &MinifluxCache, entry_id: Option<i64>) {
+    if let Some(id) = entry_id {
+        cache.invalidate(&format!("entry:{}", id)).await;
+    }
+    cache.invalidate("entries:").await;
+    cache.invalidate("index_page_entries").await;
+}
+
 pub async fn get_entry_ai_summary_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     State(ai_service): State<Arc<AiService>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
@@ -1203,25 +1311,7 @@ pub async fn get_entry_ai_summary_htmx(
         );
     }
 
-    let gql = format!(
-        r#"query {{
-            entry(id: "{}") {{
-                id
-                title
-                url
-                summary
-                content
-            }}
-        }}"#,
-        id
-    );
-
-    let res = schema.execute(&gql).await;
-    let entry_data = res
-        .data
-        .into_json()
-        .ok()
-        .and_then(|d| d.get("entry").cloned());
+    let entry_data = fetch_entry_json_cached(&schema, &cache, id).await;
 
     let (title, url, teaser) = match entry_data {
         Some(item) if !item.is_null() => {
@@ -1520,6 +1610,7 @@ pub async fn get_entry_detail_htmx(
             }}"#
         );
         let _ = schema.execute(&mutation).await;
+        invalidate_entry_caches(&cache, Some(id)).await;
         // Fetch updated unread counter
         let counter_res = schema.execute("{ unreadCounter }").await;
         if let Some(c) = counter_res
@@ -1793,8 +1884,10 @@ fn rewrite_response_with_trigger(id: i64, html: String) -> Response {
 }
 
 pub async fn get_entry_analysis_htmx(
+    _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     State(ai_service): State<Arc<AiService>>,
     _headers: HeaderMap,
     Path(id): Path<i64>,
@@ -1828,25 +1921,9 @@ pub async fn get_entry_analysis_htmx(
         }
     }
 
-    // 2. Query Miniflux via GraphQL to get entry details
-    let gql = format!(
-        r#"query {{
-            entry(id: "{id}") {{
-                id
-                title
-                summary
-                content
-                url
-            }}
-        }}"#
-    );
-
-    let res = schema.execute(&gql).await;
-    let data = res.data.into_json().ok();
-    let entry_data = data
-        .as_ref()
-        .and_then(|d| d.get("entry"))
-        .filter(|v| !v.is_null());
+    // 2. Query Miniflux via GraphQL (with MinifluxCache) to get entry details
+    let entry_val = fetch_entry_json_cached(&schema, &cache, id).await;
+    let entry_data = entry_val.as_ref().filter(|v| !v.is_null());
 
     let (title, url, teaser) = if let Some(item) = entry_data {
         let t = item
@@ -1910,8 +1987,10 @@ pub async fn get_entry_analysis_htmx(
 }
 
 pub async fn get_entry_rewrite_htmx(
+    _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     State(ai_service): State<Arc<AiService>>,
     _headers: HeaderMap,
     Path(id): Path<i64>,
@@ -1935,25 +2014,9 @@ pub async fn get_entry_rewrite_htmx(
         }
     }
 
-    // 2. Query Miniflux via GraphQL to get entry details (used for both !ai_enabled fallback and LLM generation)
-    let gql = format!(
-        r#"query {{
-            entry(id: "{id}") {{
-                id
-                title
-                summary
-                content
-                url
-            }}
-        }}"#
-    );
-
-    let res = schema.execute(&gql).await;
-    let data = res.data.into_json().ok();
-    let entry_data = data
-        .as_ref()
-        .and_then(|d| d.get("entry"))
-        .filter(|v| !v.is_null());
+    // 2. Query Miniflux via GraphQL (with MinifluxCache) to get entry details (used for both !ai_enabled fallback and LLM generation)
+    let entry_val = fetch_entry_json_cached(&schema, &cache, id).await;
+    let entry_data = entry_val.as_ref().filter(|v| !v.is_null());
 
     let (title, url, raw_summary, raw_content, teaser) = if let Some(item) = entry_data {
         let t = item
@@ -2054,6 +2117,7 @@ pub async fn toggle_bookmark_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
@@ -2066,6 +2130,7 @@ pub async fn toggle_bookmark_htmx(
     if !res.errors.is_empty() {
         return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
     }
+    invalidate_entry_caches(&cache, Some(id)).await;
 
     // Retrieve updated bookmark state from entry
     let query_gql = format!(r#"query {{ entry(id: "{id}") {{ isBookmarked }} }}"#);
@@ -2102,6 +2167,7 @@ pub async fn mark_entry_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
     Query(query): Query<ReadStatusQuery>,
@@ -2125,6 +2191,7 @@ pub async fn mark_entry_read_htmx(
         if !res.errors.is_empty() {
             return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
         }
+        invalidate_entry_caches(&cache, Some(id)).await;
     }
 
     // Retrieve updated entry details and unread counter
@@ -2242,6 +2309,7 @@ pub async fn mark_feed_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
@@ -2254,6 +2322,7 @@ pub async fn mark_feed_read_htmx(
     if !res.errors.is_empty() {
         return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
     }
+    invalidate_entry_caches(&cache, None).await;
 
     // Retrieve updated unread counter
     let counter_res = schema.execute("{ unreadCounter }").await;
@@ -2294,6 +2363,7 @@ pub async fn mark_all_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
     headers: HeaderMap,
 ) -> Response {
     if !config.auth_enabled {
@@ -2305,6 +2375,7 @@ pub async fn mark_all_read_htmx(
     if !res.errors.is_empty() {
         return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
     }
+    invalidate_entry_caches(&cache, None).await;
 
     let template = EntryListTemplate {
         entries: Vec::new(),
@@ -2669,9 +2740,15 @@ mod tests {
         };
 
         let response = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(query),
             State(schema),
             State(config),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_service.clone()),
         )
         .await;
@@ -2837,9 +2914,15 @@ mod tests {
         };
 
         let response = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(query),
             State(schema),
             State(config),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_service.clone()),
         )
         .await;
@@ -3140,6 +3223,107 @@ mod tests {
         let form_empty_offset: MarkPageReadForm =
             serde_urlencoded::from_str("entry_ids=1,2&status=unread&offset=").unwrap_or_default();
         assert_eq!(form_empty_offset.offset, None);
+
+        let form_with_unread: MarkPageReadForm =
+            serde_urlencoded::from_str("entry_ids=1,2&unread_entry_ids=2&status=all&offset=0")
+                .unwrap();
+        assert_eq!(form_with_unread.unread_entry_ids.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn test_parse_validated_entry_ids_rejects_invalid_and_accepts_valid() {
+        assert_eq!(
+            parse_validated_entry_ids(Some("101, 102"), false).unwrap(),
+            vec![101, 102]
+        );
+        assert_eq!(parse_validated_entry_ids(Some(""), false).unwrap(), vec![]);
+        assert!(parse_validated_entry_ids(Some("101,abc"), false).is_err());
+        assert!(parse_validated_entry_ids(Some("0,101"), false).is_err());
+        assert!(parse_validated_entry_ids(Some("-5"), false).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mark_entry_read_absent_published_at_omits_time_element() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use http_body_util::BodyExt;
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use tower::ServiceExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/501"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "reads": {},
+                "unreads": { "1": 1 }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: false,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            database_url: ":memory:".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+        let client = MinifluxClient::new(mock_server.uri(), "api-key".to_string());
+        let app = crate::app::build_app(config, build_schema(client)).await;
+        let session = crate::auth::session::SessionData {
+            user_id: "u_1".to_string(),
+            username: "tester".to_string(),
+            access_token: "tok_123".to_string(),
+            refresh_token: None,
+            expires_at: 1800000000,
+        };
+        let cookie = format!(
+            "__session={}",
+            crate::auth::session::create_session_cookie_value(&session, secret).unwrap()
+        );
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/hx/entries/501/read?status=read")
+                    .header("HX-Request", "true")
+                    .header("Cookie", cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = String::from_utf8(resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+        assert!(!html.contains("<time"), "Absent publishedAt must omit <time>: {html}");
+        assert!(!html.contains("Just now"), "Fallback must be empty instead of Just now: {html}");
     }
 
     #[tokio::test]
@@ -4241,9 +4425,15 @@ mod tests {
         };
 
         let response = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(query),
             State(schema),
             State(config),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_service),
         )
         .await;
@@ -4349,9 +4539,15 @@ mod tests {
         };
 
         let response = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(query),
             State(schema),
             State(config),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_service),
         )
         .await;
@@ -4757,9 +4953,15 @@ mod tests {
             "api-key".to_string(),
         ));
         let resp_a = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(make_query()),
             State(schema_a),
             State(make_config()),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_a),
         )
         .await;
@@ -4808,9 +5010,15 @@ mod tests {
             "api-key".to_string(),
         ));
         let resp_b = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(make_query()),
             State(schema_b),
             State(make_config()),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_b),
         )
         .await;
@@ -4866,9 +5074,15 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             "api-key".to_string(),
         ));
         let resp_c = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(make_query()),
             State(schema_c),
             State(make_config()),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_c),
         )
         .await;
@@ -5016,12 +5230,18 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             request_brief: None,
         };
         let resp = executive_brief_htmx(
+            AuthenticatedUser {
+                user_id: "guest".to_string(),
+                username: "Guest".to_string(),
+                access_token: String::new(),
+            },
             Query(query),
             State(build_schema(MinifluxClient::new(
                 mock_server.uri(),
                 "api-key".to_string(),
             ))),
             State(config),
+            State(Arc::new(MinifluxCache::default())),
             State(ai_service),
         )
         .await;

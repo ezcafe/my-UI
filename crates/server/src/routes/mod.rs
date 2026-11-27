@@ -161,6 +161,178 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_index_and_entries_inline_cached_page_brief_without_extra_request() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 1 }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 1,
+                "entries": [{
+                    "id": 556,
+                    "feed_id": 1,
+                    "title": "Cached Brief Story",
+                    "status": "unread",
+                    "url": "https://example.com/556",
+                    "content": "Content of 556",
+                    "published_at": "2026-11-22T10:00:00Z",
+                    "reading_time": 2,
+                    "starred": false
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let db_path = "mock:inline_cached_brief_556";
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            database_url: db_path.to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let db = crate::ai::AiDb::new(db_path).await.unwrap();
+        let page_key = crate::ai::compute_page_key("unread", &[556]);
+        db.save_page_brief_by_key(&page_key, "Inline Cached Executive Brief")
+            .await
+            .unwrap();
+
+        let client = MinifluxClient::new(server.uri(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = build_app(config, schema).await;
+
+        let session = SessionData {
+            user_id: "u_1".to_string(),
+            username: "tester".to_string(),
+            access_token: "tok_123".to_string(),
+            refresh_token: None,
+            expires_at: 1800000000,
+        };
+        let enc = create_session_cookie_value(&session, secret).unwrap();
+
+        for uri in ["/", "/hx/entries?status=unread"] {
+            let req = Request::builder()
+                .uri(uri)
+                .header(header::COOKIE, format!("__session={}", enc))
+                .body(Body::empty())
+                .unwrap();
+
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let html = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+            assert!(
+                html.contains("Inline Cached Executive Brief"),
+                "{} must render cached brief inline",
+                uri
+            );
+            assert!(
+                !html.contains(r#"hx-get="/hx/executive-brief"#),
+                "{} must not emit hx-get=/hx/executive-brief when brief is cached",
+                uri
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ai_routes_require_auth_when_enabled_and_graphql_disabled_by_default() {
+        let secret = "super-secret-key-that-is-at-least-32-bytes-long!";
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: true,
+            session_secret: secret.to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: "http://127.0.0.1:8080".to_string(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "llm".to_string(),
+            llm_model: "gpt-4o-mini".to_string(),
+            llm_extra_args: vec![],
+            database_url: "mock:auth_ai_routes".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let client = MinifluxClient::new(config.miniflux_base_url.clone(), "api-key".to_string());
+        let schema = build_schema(client);
+        let app = build_app(config, schema).await;
+
+        for uri in [
+            "/hx/executive-brief?status=unread",
+            "/hx/entries/1/analysis",
+            "/hx/entries/1/rewrite",
+        ] {
+            let req = Request::builder()
+                .uri(uri)
+                .header("HX-Request", "true")
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "HTMX redirect for {}", uri);
+            assert_eq!(
+                resp.headers().get("HX-Redirect").and_then(|v| v.to_str().ok()),
+                Some("/login"),
+                "{} must redirect unauthenticated callers when auth_enabled=true",
+                uri
+            );
+        }
+
+        let session = SessionData {
+            user_id: "u_1".to_string(),
+            username: "tester".to_string(),
+            access_token: "tok_123".to_string(),
+            refresh_token: None,
+            expires_at: 1800000000,
+        };
+        let enc = create_session_cookie_value(&session, secret).unwrap();
+        let gql_req = Request::builder()
+            .method("POST")
+            .uri("/graphql")
+            .header(header::COOKIE, format!("__session={}", enc))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"query":"{ unreadCounter }"}"#))
+            .unwrap();
+        let gql_resp = app.oneshot(gql_req).await.unwrap();
+        assert_eq!(
+            gql_resp.status(),
+            StatusCode::NOT_FOUND,
+            "/graphql must be disabled by default when GRAPHQL_ENABLED is unset"
+        );
+    }
+
+    #[tokio::test]
     async fn test_filter_specific_brief_route_integration() {
         let server = MockServer::start().await;
 
@@ -1491,5 +1663,125 @@ mod tests {
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let body = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert!(body.contains("AI digest is disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_hx_mark_page_read_includes_undo_toast_and_mark_page_unread_restores_page() {
+        let server = MockServer::start().await;
+
+        // 1. mark-page-read with mixed visible ids (101 already read, 102 unread) must mutate ONLY 102
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::body_json(json!({
+                "entry_ids": [102],
+                "status": "read"
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total": 60,
+                "entries": [{
+                    "id": 201,
+                    "feed_id": 1,
+                    "title": "Restored Article 201",
+                    "url": "https://example.com/201",
+                    "published_at": "2026-11-27T08:00:00Z",
+                    "status": "unread",
+                    "reading_time": 2,
+                    "feed": { "id": 1, "title": "Tech Blog" }
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/feeds/counters"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "reads": {},
+                "unreads": { "1": 60 }
+            })))
+            .mount(&server)
+            .await;
+
+        let (app, cookie) = setup_test_app(&server.uri()).await;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-read")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from(
+                "entry_ids=101,102&unread_entry_ids=102&status=all&offset=0&search=quote%22test",
+            ))
+            .unwrap();
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = String::from_utf8(resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+        assert!(html.contains(r#"role="status""#));
+        assert!(html.contains(r#"hx-post="/hx/mark-page-unread""#));
+        assert!(html.contains("toast-undo-btn"));
+        assert!(!html.contains("101,102"));
+
+        // 2. Empty unread_entry_ids skips PUT /v1/entries and omits Undo button
+        let empty_unread_req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-read")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from("entry_ids=101,102&unread_entry_ids=&status=all&offset=0"))
+            .unwrap();
+        let empty_resp = app.clone().oneshot(empty_unread_req).await.unwrap();
+        assert_eq!(empty_resp.status(), StatusCode::OK);
+        let empty_html = String::from_utf8(empty_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+        assert!(!empty_html.contains("toast-undo-btn"));
+        assert!(!empty_html.contains("/hx/mark-page-unread"));
+
+        // 3. POST /hx/mark-page-unread rejects malformed entry_ids with 400 Bad Request
+        let bad_req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-unread")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from("entry_ids=102,abc&status=all&offset=0"))
+            .unwrap();
+        let bad_resp = app.clone().oneshot(bad_req).await.unwrap();
+        assert_eq!(bad_resp.status(), StatusCode::BAD_REQUEST);
+
+        // 4. POST /hx/mark-page-unread restores entries as UNREAD, clamps out-of-range offset, and omits Undo
+        Mock::given(method("PUT"))
+            .and(path("/v1/entries"))
+            .and(wiremock::matchers::body_json(json!({
+                "entry_ids": [102],
+                "status": "unread"
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let undo_req = Request::builder()
+            .method("POST")
+            .uri("/hx/mark-page-unread")
+            .header("HX-Request", "true")
+            .header(header::COOKIE, &cookie)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from("entry_ids=102&status=all&offset=100"))
+            .unwrap();
+        let undo_resp = app.oneshot(undo_req).await.unwrap();
+        assert_eq!(undo_resp.status(), StatusCode::OK);
+        let undo_html = String::from_utf8(undo_resp.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+        assert!(undo_html.contains("Restored Article 201"));
+        assert!(undo_html.contains("Mark as read undone."));
+        assert!(undo_html.contains(r#"<input type="hidden" id="active-offset" name="offset" value="50">"#));
+        assert!(!undo_html.contains("toast-undo-btn"));
     }
 }

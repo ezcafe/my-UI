@@ -4,7 +4,15 @@ use openidconnect::{
     AuthUrl, ClientId, ClientSecret, CsrfToken, IssuerUrl, JsonWebKeySet, Nonce, PkceCodeChallenge,
     RedirectUrl, Scope, TokenUrl,
 };
+use std::sync::LazyLock;
 use thiserror::Error;
+
+static OIDC_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 #[derive(Debug, Error)]
 pub enum OidcError {
@@ -34,13 +42,10 @@ pub async fn discover_endpoints(issuer_url: &str) -> Option<DiscoveryDocument> {
         "{}/.well-known/openid-configuration",
         issuer_url.trim_end_matches('/')
     );
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .ok()?;
-    let resp = client
+    let resp = OIDC_HTTP_CLIENT
         .get(&discovery_url)
         .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(5))
         .send()
         .await
         .ok()?;
@@ -200,11 +205,6 @@ pub async fn exchange_token(
     code: &str,
     pkce_verifier: &str,
 ) -> Result<super::session::SessionData, OidcError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
     // Resolve token URL: first query discovery, fallback to /api/oidc/token (Pocket-ID), then /token
     let token_url = if let Some(doc) = discover_endpoints(&config.oidc_issuer_url).await {
         doc.token_endpoint.unwrap_or_else(|| {
@@ -229,7 +229,7 @@ pub async fn exchange_token(
         ("code_verifier", pkce_verifier),
     ];
 
-    let req = client
+    let req = OIDC_HTTP_CLIENT
         .post(&token_url)
         .header("Accept", "application/json")
         .form(&params)

@@ -417,6 +417,17 @@ async fn test_mutation_endpoints_reject_with_403_when_auth_disabled() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // 6. Mark page unread returns 403
+    let req = Request::builder()
+        .method("POST")
+        .uri("/hx/mark-page-unread")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("HX-Request", "true")
+        .body(Body::from("entry_ids=123,124"))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

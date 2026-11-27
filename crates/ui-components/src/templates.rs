@@ -5133,4 +5133,426 @@ mod tests {
             "Pagination in htmx:beforeRequest must abort activeBriefXhr and hide previous briefs"
         );
     }
+
+    #[test]
+    fn test_first_load_dedup_and_guest_brief_gating() {
+        let html = IndexTemplate {
+            unread_count: 50,
+            today_count: 50,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("Failed to render IndexTemplate");
+
+        assert!(
+            html.contains("let guestDbReady = AUTH_ENABLED;"),
+            "Must initialize guestDbReady from AUTH_ENABLED"
+        );
+        assert!(
+            html.contains("if (!AUTH_ENABLED && !guestDbReady)")
+                && html.contains("pendingGuestBriefEl = trigger || target;")
+                && html.contains("flushPendingGuestBrief()"),
+            "Must defer #page-executive-brief request in guest mode until IndexedDB readSet loads"
+        );
+        assert!(
+            html.contains("activeBriefXhr && activeBriefUrl && requestPath && requestPath === activeBriefUrl"),
+            "Must deduplicate concurrent #page-executive-brief requests for the same URL"
+        );
+        assert!(
+            html.contains("activeEntriesRequestXhr && activeEntriesRequestUrl && requestPath && requestPath === activeEntriesRequestUrl"),
+            "Must deduplicate concurrent #entries-list requests for the same URL"
+        );
+        assert!(
+            html.contains("abortActiveBriefRequest();"),
+            "Must abort stale brief request when auto-advancing or swapping #entries-list"
+        );
+        assert!(
+            html.contains("hasPendingBrief = Boolean(entriesList && entriesList.querySelector('#page-executive-brief[hx-get]'))"),
+            "seedInitialFilterCache must not cache unresolved #page-executive-brief skeleton"
+        );
+    }
+
+    #[test]
+    fn test_magazine_cards_use_full_card_stretched_link_click() {
+        let make_entry = |id: i64, feed: &str, is_read: bool| EntryViewModel {
+            id,
+            title: format!("Article {id}"),
+            suggested_title: None,
+            feed_title: feed.to_string(),
+            category_title: Some("Tech".to_string()),
+            published_at: "2026-11-27T09:00:00Z".to_string(),
+            reading_time: 2,
+            summary: format!("Summary {id}"),
+            sanitized_content: None,
+            image_url: if id <= 2 {
+                Some(format!("https://example.com/{id}.jpg"))
+            } else {
+                None
+            },
+            rewrite: None,
+            body_images: vec![],
+            url: format!("https://example.com/{id}"),
+            author: None,
+            is_read,
+            is_bookmarked: false,
+        };
+
+        let entries: Vec<EntryViewModel> = (1..=9)
+            .map(|i| make_entry(i, "O'Reilly", i == 2))
+            .collect();
+        let list_html = EntryListTemplate {
+            entries,
+            top_executive_brief: None,
+            unread_count: Some(8),
+            current_page: 1,
+            total_pages: 1,
+            has_prev: false,
+            has_next: false,
+            prev_offset: 0,
+            next_offset: 50,
+            status: "unread".to_string(),
+            search: String::new(),
+            limit: 50,
+            is_brief_eligible: false,
+            offset: 0,
+            feed_id: None,
+            category_id: None,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("render EntryListTemplate");
+
+        let mag_start = list_html.find(r#"id="entries-magazine-view""#).unwrap();
+        let mag_html = &list_html[mag_start..];
+
+        // P1 (id=1), P2 (id=2), P3 (id=8) all use <a id="mag-title-..." class="magazine-card-link">
+        for id in [1, 2, 8] {
+            assert!(
+                mag_html.contains(&format!(
+                    r#"<a id="mag-title-{id}" href="/entries/{id}" class="magazine-card-link""#
+                )),
+                "Magazine card {id} must use <a id=\"mag-title-{id}\" class=\"magazine-card-link\">: {mag_html}"
+            );
+            assert!(
+                !mag_html.contains(&format!("openEntryFromMagazine({id}, 'O'Reilly')")),
+                "Must never interpolate feed_title directly into onclick JS string"
+            );
+        }
+        assert!(
+            mag_html.contains("if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey)")
+                && mag_html.contains("this.closest('.magazine-card')?.dataset.feedTitle || ''"),
+            "Magazine stretched link must guard modifier keys and read dataset.feedTitle"
+        );
+        assert!(
+            !mag_html.contains(r#"class="hero-content-box p-5 flex flex-col justify-center flex-1 w-full relative"#),
+            "hero-content-box must remain position: static (no relative class)"
+        );
+        assert!(
+            mag_html.contains(r#"<a id="mag-title-8" href="/entries/8" class="magazine-card-link" title="Summary 8""#),
+            "P3 anchor must carry title tooltip"
+        );
+
+        let index_html = IndexTemplate {
+            unread_count: 8,
+            today_count: 8,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("render IndexTemplate");
+
+        assert!(
+            index_html.contains(".magazine-card { position: relative; cursor: pointer; }")
+                && index_html.contains(".magazine-card-link { color: inherit; text-decoration: none; }")
+                && index_html.contains(".magazine-card-link::after { content: \"\"; position: absolute; inset: 0; z-index: 1; }")
+                && index_html.contains(".magazine-card:has(.magazine-card-link:focus-visible)")
+                && index_html.contains(".magazine-card.read .magazine-card-link"),
+            "base.html must define stretched-link, focus-visible ring, and read link CSS"
+        );
+        assert!(
+            index_html.contains("(magTitleEl.querySelector('.magazine-card-link') || magTitleEl).textContent = suggestedTitle"),
+            "syncExecutiveBriefUpdates must preserve .magazine-card-link"
+        );
+    }
+
+    #[test]
+    fn test_detail_prev_next_buttons_and_navigation_helpers() {
+        let entry = EntryViewModel {
+            id: 42,
+            title: "Navigable Article".to_string(),
+            suggested_title: None,
+            feed_title: "Tech Feed".to_string(),
+            category_title: None,
+            published_at: "2026-11-27T09:00:00Z".to_string(),
+            reading_time: 2,
+            summary: "Summary".to_string(),
+            sanitized_content: None,
+            image_url: None,
+            rewrite: Some("Rewrite body.".to_string()),
+            body_images: vec![],
+            url: "https://example.com/42".to_string(),
+            author: None,
+            is_read: false,
+            is_bookmarked: false,
+        };
+        let detail_html = EntryDetailTemplate {
+            entry,
+            summary: String::new(),
+            auth_enabled: true,
+            rewrite: "Rewrite body.".to_string(),
+            needs_rewrite: false,
+            ai_enabled: true,
+            fallback_summary: String::new(),
+            impact: String::new(),
+            fallacies: String::new(),
+            has_analysis: false,
+            hero_image: None,
+            body_images: vec![],
+        }
+        .render()
+        .expect("render EntryDetailTemplate");
+
+        assert!(
+            detail_html.contains(r#"id="detail-prev-btn""#)
+                && detail_html.contains(r#"id="detail-next-btn""#)
+                && detail_html.contains(r#"onclick="navigateDetailArticle(-1)""#)
+                && detail_html.contains(r#"onclick="navigateDetailArticle(1)""#)
+                && detail_html.contains(r#"type="button""#)
+                && detail_html.contains("flex items-center gap-1.5"),
+            "entry_detail.html must render type=button Prev/Next buttons with gap-1.5"
+        );
+
+        let index_guest = IndexTemplate {
+            unread_count: 2,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("render guest IndexTemplate");
+
+        assert!(
+            index_guest.contains("indexedDB.open(ARTICLE_DB_NAME, 3)")
+                && index_guest.contains("e.oldVersion < 3")
+                && index_guest.contains(r#"cached.html.includes('id="detail-prev-btn"')"#),
+            "Auth detail IndexedDB cache must bump to v3 and check id=\"detail-prev-btn\""
+        );
+        assert!(
+            index_guest.contains("let detailNavIds = [];")
+                && index_guest.contains("function syncDetailNavigationIds()")
+                && index_guest.contains("function updateDetailNavButtons(entryId)")
+                && index_guest.contains("function navigateDetailArticle(delta)")
+                && index_guest.contains("detailNavIds.indexOf(Number(entryId))"),
+            "index.html must define detailNavIds and navigation helpers"
+        );
+
+        // openDetailWithSkeleton must preserve 3-arg signature and include Prev/Next buttons
+        let skel_pos = index_guest.find("function openDetailWithSkeleton(title, brief, imageUrl)").unwrap();
+        let align_pos = index_guest[skel_pos..].find("function alignDetailPanelWidth(").unwrap() + skel_pos;
+        let skel_fn = &index_guest[skel_pos..align_pos];
+        assert!(
+            skel_fn.contains(r#"id="detail-prev-btn""#)
+                && skel_fn.contains(r#"id="detail-next-btn""#)
+                && skel_fn.contains("gap-1.5"),
+            "openDetailWithSkeleton must render Prev/Next controls with gap-1.5"
+        );
+
+        // renderGuestEntryDetail must include Prev/Next controls and call updateDetailNavButtons
+        let render_pos = index_guest.find("function renderGuestEntryDetail(entry)").unwrap();
+        let open_guest_pos = index_guest[render_pos..].find("async function openGuestEntryDetail(numId)").unwrap() + render_pos;
+        let render_fn = &index_guest[render_pos..open_guest_pos];
+        assert!(
+            render_fn.contains(r#"id="detail-prev-btn""#)
+                && render_fn.contains(r#"id="detail-next-btn""#)
+                && render_fn.contains("updateDetailNavButtons(numId)"),
+            "renderGuestEntryDetail must render Prev/Next controls and call updateDetailNavButtons(numId)"
+        );
+
+        // markLocallyRead / unmarkLocallyRead / toggleLocalReadStatus must NOT rebuild detailNavIds
+        let mark_local_pos = index_guest.find("function markLocallyRead(").unwrap();
+        let mark_vis_pos = index_guest[mark_local_pos..].find("function markVisiblePageLocallyRead()").unwrap() + mark_local_pos;
+        let session_read_slice = &index_guest[mark_local_pos..mark_vis_pos];
+        assert!(
+            !session_read_slice.contains("syncDetailNavigationIds"),
+            "Session read toggles must not rebuild detailNavIds"
+        );
+    }
+
+    #[test]
+    fn test_feed_and_relative_time_metadata_in_list_detail_and_guest() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-27T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(format_relative_time_at("", now), "");
+        assert_eq!(format_relative_time_at("   ", now), "");
+        assert_eq!(format_relative_time_at("2026-07-04", now), "04/07/2026");
+        assert_eq!(format_relative_time_at("2026-11-27T11:59:30Z", now), "Just now");
+        assert_eq!(format_relative_time_at("2026-11-27T11:45:00Z", now), "15m ago");
+        assert_eq!(format_relative_time_at("2026-11-27T09:00:00Z", now), "3h ago");
+        assert_eq!(format_relative_time_at("2026-11-25T12:00:00Z", now), "2d ago");
+        assert_eq!(format_relative_time_at("2026-11-19T12:00:00Z", now), "19/11/2026");
+        assert_eq!(format_relative_time_at("2 hours ago", now), "2 hours ago");
+
+        let make_entry = |id: i64, feed: &str, published_at: &str| EntryViewModel {
+            id,
+            title: format!("Title {id}"),
+            suggested_title: None,
+            feed_title: feed.to_string(),
+            category_title: None,
+            published_at: published_at.to_string(),
+            reading_time: 5,
+            summary: "Summary".to_string(),
+            sanitized_content: None,
+            image_url: None,
+            rewrite: Some("Rewrite".to_string()),
+            body_images: vec![],
+            url: format!("https://example.com/{id}"),
+            author: Some("Hidden Author".to_string()),
+            is_read: false,
+            is_bookmarked: false,
+        };
+
+        // Guarded separator in EntryItemTemplate
+        let item_only_feed = EntryItemTemplate {
+            entry: make_entry(1, "Feed Only", ""),
+            unread_count: None,
+        }
+        .render()
+        .unwrap();
+        assert!(item_only_feed.contains("Feed Only") && !item_only_feed.contains(" · ") && !item_only_feed.contains("<time"));
+
+        let item_empty_both = EntryItemTemplate {
+            entry: make_entry(2, "", ""),
+            unread_count: None,
+        }
+        .render()
+        .unwrap();
+        assert!(!item_empty_both.contains("entry-meta"));
+
+        let item_both = EntryItemTemplate {
+            entry: make_entry(3, "Tech Feed", "2026-11-20T12:00:00Z"),
+            unread_count: None,
+        }
+        .render()
+        .unwrap();
+        assert!(
+            item_both.contains("Tech Feed")
+                && item_both.contains(" · ")
+                && item_both.contains(r#"data-relative-time="true""#)
+                && item_both.contains(r#"data-feed-title="Tech Feed""#)
+                && item_both.contains(r#"data-published-at="2026-11-20T12:00:00Z""#),
+            "Entry item must render Feed · <time> and data attributes: {item_both}"
+        );
+        // Dot remains outside .flex-col title+meta wrapper
+        let dot_pos = item_both.find(r#"id="entry-3-dot""#).unwrap();
+        let col_pos = item_both.find("flex flex-col min-w-0 flex-1 gap-0.5").unwrap();
+        assert!(dot_pos < col_pos, "Unread dot must precede vertical flex-col wrapper");
+
+        // Auth IndexTemplate must include shared formatRelativeTimeLabel & refreshRelativeTimes
+        let index_auth = IndexTemplate {
+            unread_count: 1,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: false,
+            auth_enabled: true,
+        }
+        .render()
+        .unwrap();
+        assert!(
+            index_auth.contains("function formatRelativeTimeLabel(raw)")
+                && index_auth.contains("function refreshRelativeTimes(root)"),
+            "Auth mode must include shared relative time helpers above guest block"
+        );
+    }
+
+    #[test]
+    fn test_toast_role_status_hover_focus_pause_and_guest_undo() {
+        let payload = ToastUndoPayload {
+            entry_ids: "10,11".to_string(),
+            status: Some("unread".to_string()),
+            search: Some("rust \"async\"".to_string()),
+            feed_id: None,
+            category_id: None,
+            offset: 0,
+        };
+        let undo = ToastUndoAction::from_payload("/hx/mark-page-unread", "Undo", &payload);
+        let toast_html = ToastTemplate {
+            message: "Page marked as read.".to_string(),
+            is_error: false,
+            undo: Some(undo),
+        }
+        .render()
+        .expect("render ToastTemplate with undo");
+
+        assert!(
+            toast_html.contains(r#"role="status""#)
+                && toast_html.contains(r#"aria-atomic="true""#)
+                && toast_html.contains(r#"class="toast-undo-btn"#)
+                && toast_html.contains(r#"hx-post="/hx/mark-page-unread""#)
+                && toast_html.contains(r#"hx-target="#entries-list""#)
+                && toast_html.contains(r#"hx-indicator="#entries-loading-bar""#)
+                && toast_html.contains(r#"hx-disabled-elt="this""#)
+                && !toast_html.contains(r#"id="toast-undo-btn""#),
+            "ToastTemplate with undo must render accessible role=status and .toast-undo-btn: {toast_html}"
+        );
+
+        let index_guest = IndexTemplate {
+            unread_count: 3,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: false,
+        }
+        .render()
+        .expect("render guest IndexTemplate");
+
+        // Auth #mark-page-read-btn passes unread_entry_ids
+        let index_auth = IndexTemplate {
+            unread_count: 3,
+            today_count: 1,
+            entries_list_html: String::new(),
+            ai_enabled: true,
+            auth_enabled: true,
+        }
+        .render()
+        .expect("render auth IndexTemplate");
+        assert!(
+            index_auth.contains("unread_entry_ids: getVisibleUnreadEntryIds()"),
+            "Auth #mark-page-read-btn must pass unread_entry_ids"
+        );
+
+        // base.html toast helpers, HX-Reswap !== 'none' guard, hover/focus pause
+        assert!(
+            index_guest.contains("function escapeToastHtml(str)")
+                && index_guest.contains("function attachToastAutoDismiss(toast, durationMs)")
+                && index_guest.contains("function showClientToast(message, isError = false)")
+                && index_guest.contains("reswap.toLowerCase() !== 'none'")
+                && index_guest.contains("toast.dataset.undoInFlight = 'true'")
+                && index_guest.contains("attachToastAutoDismiss(toast, hasUndo ? 8000 : 5000)"),
+            "base.html must implement shared showClientToast, hover/focus/in-flight pause, and HX-Reswap check"
+        );
+
+        // htmx:responseError / htmx:sendError route .toast-undo-btn first
+        let resp_err_pos = index_guest.find("document.addEventListener('htmx:responseError'").unwrap();
+        let send_err_pos = index_guest.find("document.addEventListener('htmx:sendError'").unwrap();
+        let resp_err_slice = &index_guest[resp_err_pos..send_err_pos];
+        assert!(
+            resp_err_slice.find(".toast-undo-btn").unwrap()
+                < resp_err_slice.find("evt.detail.target.id === 'entries-list'").unwrap(),
+            "htmx:responseError must check .toast-undo-btn before #entries-list"
+        );
+
+        // Guest Undo wiring
+        assert!(
+            index_guest.contains("function showUndoToast(message, onUndo)")
+                && index_guest.contains("function undoGuestMarkPageRead(snapshot)")
+                && index_guest.contains("newlyReadIds")
+                && index_guest.contains("snapshot.ids.forEach(id => readSet.delete(Number(id)))"),
+            "Guest mode must wire showUndoToast and undoGuestMarkPageRead synchronously deleting readSet"
+        );
+    }
 }

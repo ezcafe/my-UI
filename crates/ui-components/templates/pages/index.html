@@ -319,8 +319,11 @@
   let currentViewMode = 'ai';
   let isSearchActive = false;
   let activeEntriesRequestXhr = null;
+  let activeEntriesRequestUrl = null;
   let pendingAuthMarkReadXhr = null;
   let autoAdvancingUnreadUrl = null;
+  let guestDbReady = AUTH_ENABLED;
+  let pendingGuestBriefEl = null;
 
   function escapeHtml(str) {
     if (!str) return '';
@@ -535,7 +538,8 @@
     const activeStatus = document.getElementById('active-status');
     const searchInput = document.getElementById('search-input');
     const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
-    if (entriesList && activeStatus && activeStatus.value && !searchQuery) {
+    const hasPendingBrief = Boolean(entriesList && entriesList.querySelector('#page-executive-brief[hx-get]'));
+    if (entriesList && activeStatus && activeStatus.value && !searchQuery && !hasPendingBrief) {
       filterCache.set(activeStatus.value, {
         timestamp: Date.now(),
         html: entriesList.innerHTML,
@@ -648,13 +652,40 @@
   }
 
   let activeBriefXhr = null;
+  let activeBriefUrl = null;
+
+  function abortActiveBriefRequest() {
+    if (activeBriefXhr && typeof activeBriefXhr.abort === 'function') {
+      activeBriefXhr.abort();
+    }
+    activeBriefXhr = null;
+    activeBriefUrl = null;
+    pendingGuestBriefEl = null;
+  }
 
   // HTMX request interceptor: Cancel server request if valid client cache exists
   document.addEventListener('htmx:beforeRequest', (evt) => {
     const trigger = evt.detail && evt.detail.elt;
     const target = evt.detail && evt.detail.target;
+    const requestPath = (evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.path)
+      || (trigger && trigger.getAttribute && trigger.getAttribute('hx-get'))
+      || (target && target.getAttribute && target.getAttribute('hx-get'))
+      || '';
     if (target && target.id === 'page-executive-brief') {
+      if (!AUTH_ENABLED && !guestDbReady) {
+        evt.preventDefault();
+        pendingGuestBriefEl = trigger || target;
+        return;
+      }
+      if (activeBriefXhr && activeBriefUrl && requestPath && requestPath === activeBriefUrl) {
+        evt.preventDefault();
+        return;
+      }
+      if (activeBriefXhr && typeof activeBriefXhr.abort === 'function') {
+        activeBriefXhr.abort();
+      }
       activeBriefXhr = evt.detail.xhr || null;
+      activeBriefUrl = requestPath || null;
     }
     if (trigger && trigger.classList && trigger.classList.contains('filter-pill')) {
       const status = trigger.getAttribute('data-status') || 'unread';
@@ -710,7 +741,12 @@
       return;
     }
     if (!evt.defaultPrevented && trigger && trigger.id !== 'mark-page-read-btn' && target && target.id === 'entries-list') {
+      if (activeEntriesRequestXhr && activeEntriesRequestUrl && requestPath && requestPath === activeEntriesRequestUrl) {
+        evt.preventDefault();
+        return;
+      }
       activeEntriesRequestXhr = evt.detail.xhr || null;
+      activeEntriesRequestUrl = requestPath || null;
       cancelPendingMarkPageRead();
     }
     if (!evt.defaultPrevented && trigger && (trigger.id === 'pagination-prev-btn' || trigger.id === 'pagination-next-btn')) {
@@ -769,6 +805,7 @@
   function clearCurrentEntriesLoadingState(xhr) {
     if (!isCurrentEntriesRequest(xhr)) return false;
     activeEntriesRequestXhr = null;
+    activeEntriesRequestUrl = null;
     hideEntriesLoadingState();
     return true;
   }
@@ -1406,6 +1443,7 @@
       if (isEntriesSwap) {
         evt.detail.target.scrollTop = 0;
         clearCurrentEntriesLoadingState(evt.detail.xhr);
+        abortActiveBriefRequest();
       }
       const isBriefSwap = targetId === 'page-executive-brief' || (evt.detail.target && evt.detail.target.closest('#entries-list') && evt.detail.target.id !== 'detail-panel');
 
@@ -1583,6 +1621,7 @@
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'page-executive-brief') {
       if (!activeBriefXhr || evt.detail.xhr === activeBriefXhr) {
         activeBriefXhr = null;
+        activeBriefUrl = null;
       }
     }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
@@ -2076,12 +2115,26 @@
     }
   }
 
+  function flushPendingGuestBrief() {
+    if (autoAdvancingUnreadUrl || !pendingGuestBriefEl) return;
+    const el = pendingGuestBriefEl;
+    pendingGuestBriefEl = null;
+    if (!el.isConnected) return;
+    const url = el.getAttribute('hx-get');
+    if (url && window.htmx && typeof htmx.ajax === 'function') {
+      htmx.ajax('GET', url, { target: '#page-executive-brief', swap: 'outerHTML', source: el });
+    }
+  }
+
   function initGuestDb() {
     hydrateGuestEntriesFromDom();
     openGuestDb()
       .then((db) => {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
+          guestDbReady = true;
+          syncDomReadStates();
           cacheLoadedArticlesFromDom();
+          flushPendingGuestBrief();
           return;
         }
         const tx = db.transaction(STORE_NAME, 'readonly');
@@ -2089,11 +2142,21 @@
         const getAllReq = store.getAllKeys();
         getAllReq.onsuccess = (ev) => {
           (ev.target.result || []).forEach(id => readSet.add(id));
+          guestDbReady = true;
           syncDomReadStates();
           cacheLoadedArticlesFromDom();
+          flushPendingGuestBrief();
+        };
+        getAllReq.onerror = () => {
+          guestDbReady = true;
+          flushPendingGuestBrief();
         };
       })
-      .catch((e) => console.warn('Could not open guest IndexedDB:', e));
+      .catch((e) => {
+        console.warn('Could not open guest IndexedDB:', e);
+        guestDbReady = true;
+        flushPendingGuestBrief();
+      });
   }
 
   function cacheLoadedArticlesFromDom() {
@@ -2330,8 +2393,9 @@
     let emptyEl = document.getElementById('client-empty-state');
     if (isUnreadFilter && visibleUnreadRowCount === 0 && rows.length > 0) {
       if (nextUrl && !pendingGuestMarkRead) {
-        if (autoAdvancingUnreadUrl !== nextUrl && window.htmx && typeof htmx.ajax === 'function') {
+        if (autoAdvancingUnreadUrl !== nextUrl && activeEntriesRequestUrl !== nextUrl && window.htmx && typeof htmx.ajax === 'function') {
           autoAdvancingUnreadUrl = nextUrl;
+          abortActiveBriefRequest();
           if (typeof showEntriesLoadingState === 'function') {
             showEntriesLoadingState();
           }
@@ -2597,11 +2661,15 @@
   });
 
   document.addEventListener('htmx:afterSwap', (evt) => {
-    if (evt.detail && evt.detail.target) {
-      if (evt.detail.target.id === 'entries-list') {
+    const target = evt.detail && evt.detail.target;
+    if (target) {
+      if (target.id === 'entries-list') {
         cacheLoadedArticlesFromDom();
-      } else if (evt.detail.target.id === 'detail-panel') {
-        const detail = evt.detail.target.querySelector('[data-entry-id]');
+        return;
+      } else if (target.id === 'page-executive-brief') {
+        return;
+      } else if (target.id === 'detail-panel') {
+        const detail = target.querySelector('[data-entry-id]');
         if (detail) {
           const id = detail.getAttribute('data-entry-id');
           if (id) markLocallyRead(id);

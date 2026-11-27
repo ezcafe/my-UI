@@ -9,3 +9,5 @@
 - **20261122-ai-auth-gate-docker-fix**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (smooth TDD cycle covering config matrix and route guards).
 - **20261122-ai-source-grouping-3-sentence-brief**: Mode OK (full) · Profile OK (full) · Biggest friction: none (single-pass hybrid prompt with existing brief reuse cleanly solved whole-page synthesis without duplicate LLM calls).
 - **20261123-ai-view-3-column-editorial-layout**: Mode OK (simple) · Profile OK (lite) · Biggest friction: none (iterative editorial design refinements aligned with screenshot reference and robust container queries).
+
+- `20261125-detail-date-format-and-rewrite-length`: Mode `simple` OK · Profile `lite` OK (caught 3 real bugs in code-review-phase) · Friction: mid-run design-backloop handled cleanly via Q5–Q7 grill round.

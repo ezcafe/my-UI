@@ -300,6 +300,7 @@
 
 <script>
   const AUTH_ENABLED = {{ auth_enabled }};
+  const AI_ENABLED = {{ ai_enabled }};
   const FILTER_CACHE_TTL_MS = 60000;
   const filterCache = new Map();
   const readSinceLastBriefSet = new Set();
@@ -322,9 +323,10 @@
   function safeHref(rawUrl) {
     if (!rawUrl) return '#';
     const trimmed = String(rawUrl).trim();
+    const lower = trimmed.toLowerCase();
     if (
-      trimmed.startsWith('http://') ||
-      trimmed.startsWith('https://') ||
+      lower.startsWith('http://') ||
+      lower.startsWith('https://') ||
       (trimmed.startsWith('/') && !trimmed.startsWith('//'))
     ) {
       return trimmed;
@@ -811,11 +813,13 @@
 
   function openArticleCacheDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(ARTICLE_DB_NAME, 1);
+      const req = indexedDB.open(ARTICLE_DB_NAME, 2);
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(ARTICLE_STORE_NAME)) {
           db.createObjectStore(ARTICLE_STORE_NAME, { keyPath: 'id' });
+        } else if (e.oldVersion < 2 && e.target && e.target.transaction) {
+          e.target.transaction.objectStore(ARTICLE_STORE_NAME).clear();
         }
       };
       req.onsuccess = (e) => resolve(e.target.result);
@@ -909,22 +913,11 @@
     }
   }
 
-  function formatDetailDates(root) {
-    if (!root || typeof root.querySelectorAll !== 'function') return;
-    root.querySelectorAll('time[data-date-format="dd/mm/yyyy"][datetime]').forEach((el) => {
-      const raw = (el.getAttribute('datetime') || '').trim();
-      if (!raw) return;
-      const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-      if (dateOnly) {
-        el.textContent = `${dateOnly[3]}/${dateOnly[2]}/${dateOnly[1]}`;
-        return;
-      }
-      if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return;
-      const d = new Date(raw);
-      if (Number.isNaN(d.getTime())) return;
-      const dd = String(d.getDate()).padStart(2, '0');
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      el.textContent = `${dd}/${mm}/${d.getFullYear()}`;
+  function abortActiveDetailRequests() {
+    const panel = document.getElementById('detail-panel');
+    if (!panel || !window.htmx || typeof htmx.trigger !== 'function') return;
+    panel.querySelectorAll('#ai-rewrite-box, #ai-analysis-box, button[hx-get]').forEach((el) => {
+      htmx.trigger(el, 'htmx:abort');
     });
   }
 
@@ -960,9 +953,9 @@
     const isCacheValid = Boolean(cached && cached.html);
 
     if (isCacheValid) {
+      abortActiveDetailRequests();
       // Instant render from cache - zero network request, zero skeleton flicker
       panel.innerHTML = cached.html;
-      formatDetailDates(panel);
       panel.classList.add('has-content');
       alignDetailPanelWidth();
       panel.classList.add('animate-slide-in-right');
@@ -1033,9 +1026,9 @@
   function openDetailWithSkeleton(title, brief, imageUrl) {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
+    abortActiveDetailRequests();
     
     const safeTitle = title ? escapeHtml(title) : '';
-    const safeBrief = brief ? escapeHtml(brief) : '';
     const rawImg = imageUrl ? String(imageUrl).trim() : '';
     const safeImg = rawImg ? safeHref(rawImg) : '';
     const hasHeroImg = Boolean(safeImg && safeImg !== '#');
@@ -1059,29 +1052,6 @@
           </div>
         `);
 
-    const briefBlock = safeBrief
-      ? `
-        <div class="rounded-lg border border-border bg-muted/40 p-4 space-y-2.5 mb-4">
-          <div class="flex items-center gap-2 mb-1.5">
-            <div class="p-1 rounded bg-brand/10 text-brand">
-              <i data-lucide="sparkles" class="w-4 h-4"></i>
-            </div>
-            <span class="text-xs font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
-          </div>
-          <p class="text-xs md:text-sm text-foreground/90 leading-relaxed font-sans">${safeBrief}</p>
-        </div>
-      `
-      : `
-        <div class="rounded-lg border border-border bg-muted/40 p-4 space-y-2.5">
-          <div class="flex items-center gap-2 mb-2">
-            <div class="w-4 h-4 rounded bg-primary/20"></div>
-            <div class="h-3.5 bg-muted rounded w-24"></div>
-          </div>
-          <div class="h-3 bg-muted rounded w-full"></div>
-          <div class="h-3 bg-muted rounded w-5/6"></div>
-        </div>
-      `;
-
     panel.innerHTML = `
       <div class="flex flex-col h-full animate-pulse select-none w-full">
         <!-- Skeleton Header: fixed h-8 matching real detail header, no vertical jump -->
@@ -1104,17 +1074,8 @@
 
         <!-- Skeleton Body: centered and capped at max-w-[44rem] -->
         <div class="detail-scrollbar detail-body flex-1 overflow-y-auto pr-2 space-y-4 w-full max-w-[44rem] mx-auto">
-          <!-- Feed info & date -->
-          <div class="flex items-center gap-2 mb-2">
-            <div class="h-3.5 bg-muted rounded w-28"></div>
-            <div class="h-3.5 bg-muted rounded w-16"></div>
-          </div>
-
           <!-- Title -->
           ${titleBlock}
-
-          <!-- AI Brief Card Skeleton -->
-          ${briefBlock}
 
           <!-- Prose Content Skeleton Lines -->
           <div class="space-y-3 pt-2">
@@ -1160,6 +1121,7 @@
   function closeDetailPanel() {
     const panel = document.getElementById('detail-panel');
     if (!panel) return;
+    abortActiveDetailRequests();
     panel.style.left = '';
     panel.style.right = '';
     panel.style.width = '';
@@ -1275,6 +1237,126 @@
     evt.detail.target.setAttribute('data-view-mode', nextMode);
   });
 
+  function escapeJsonForHtmlScript(json) {
+    return String(json)
+      .replace(/&/g, '\\u0026')
+      .replace(/</g, '\\u003c')
+      .replace(/>/g, '\\u003e')
+      .replace(/\u2028/g, '\\u2028')
+      .replace(/\u2029/g, '\\u2029');
+  }
+
+  function syncExecutiveBriefUpdates() {
+    const syncEl = document.getElementById('executive-brief-sync-data');
+    if (!syncEl) return;
+    const raw = syncEl.getAttribute('data-entries');
+    if (!raw) return;
+    let items;
+    try {
+      items = JSON.parse(raw);
+    } catch (e) {
+      return;
+    }
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const syncedById = new Map();
+    items.forEach(item => {
+      const numId = Number(item && item.id);
+      if (!numId) return;
+      const suggestedTitle = item.suggested_title ? String(item.suggested_title).trim() : '';
+      const originalTitle = item.original_title ? String(item.original_title).trim() : '';
+      const summaryText = item.summary ? String(item.summary).trim() : '';
+      const rewriteText = item.rewrite ? String(item.rewrite).trim() : '';
+
+      const rowTitleEl = document.getElementById('entry-title-' + numId);
+      if (rowTitleEl && suggestedTitle) {
+        rowTitleEl.textContent = suggestedTitle;
+        if (originalTitle) {
+          rowTitleEl.setAttribute('title', originalTitle);
+        }
+      }
+
+      const magTitleEl = document.getElementById('mag-title-' + numId);
+      if (magTitleEl && suggestedTitle) {
+        magTitleEl.textContent = suggestedTitle;
+      }
+
+      const magCardEl = document.getElementById('mag-entry-' + numId);
+      if (magCardEl && summaryText) {
+        const magBriefEl = magCardEl.querySelector('.magazine-brief');
+        if (magBriefEl) {
+          magBriefEl.textContent = summaryText;
+        }
+        if (magCardEl.classList.contains('priority-3')) {
+          magCardEl.setAttribute('title', summaryText);
+          if (magTitleEl) {
+            magTitleEl.setAttribute('title', summaryText);
+          }
+        }
+      }
+
+      const existing = guestEntriesMap.get(numId) || { id: numId };
+      const merged = {
+        ...existing,
+        id: numId,
+        title: suggestedTitle || existing.title || originalTitle || '',
+        summary: summaryText || existing.summary || '',
+        rewrite: rewriteText || existing.rewrite || null,
+      };
+      guestEntriesMap.set(numId, merged);
+      syncedById.set(numId, merged);
+
+      if (AUTH_ENABLED) {
+        deleteCachedArticle(numId);
+      } else if (typeof upsertGuestArticleInDb === 'function') {
+        upsertGuestArticleInDb(numId, (prev) => ({
+          ...prev,
+          id: numId,
+          title: merged.title || prev.title || '',
+          summary: merged.summary || prev.summary || '',
+          rewrite: merged.rewrite || prev.rewrite || null,
+          url: prev.url || merged.url || '',
+          image_url: prev.image_url !== undefined ? prev.image_url : (merged.image_url || null),
+          body_images: Array.isArray(prev.body_images) ? prev.body_images : (Array.isArray(merged.body_images) ? merged.body_images : []),
+          schema_version: 2,
+          saved_at: Date.now(),
+        }));
+      }
+
+      const openDetail = document.querySelector('#detail-panel [data-entry-id="' + numId + '"]');
+      if (openDetail) {
+        const heading = openDetail.querySelector('h1');
+        if (heading && suggestedTitle) {
+          heading.textContent = suggestedTitle;
+        }
+        if (rewriteText) {
+          const rewriteBox = openDetail.querySelector('#ai-rewrite-box');
+          const isWaitingOrFallback = Boolean(
+            rewriteBox && (
+              rewriteBox.matches('[hx-get][hx-trigger]') ||
+              rewriteBox.querySelector('.animate-pulse') ||
+              rewriteBox.classList.contains('is-error') ||
+              rewriteBox.querySelector('.is-error, .stroke-destructive') ||
+              rewriteBox.hasAttribute('data-fallback-summary') ||
+              !rewriteBox.querySelector('.prose')
+            )
+          );
+          if (rewriteBox && isWaitingOrFallback) {
+            rewriteBox.outerHTML = '<div id="ai-rewrite-box" data-target-entry-id="' + numId + '" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">' + escapeHtml(rewriteText) + '</div></div>';
+            const analysisBox = openDetail.querySelector('#ai-analysis-box[hx-trigger]');
+            if (analysisBox) {
+              document.body.dispatchEvent(new CustomEvent('ai-rewrite-done-' + numId));
+            }
+          }
+        }
+      }
+    });
+
+    if (!AUTH_ENABLED && typeof syncGuestEntriesScript === 'function') {
+      syncGuestEntriesScript(syncedById);
+    }
+  }
+
   document.addEventListener('htmx:afterSwap', (evt) => {
     if (evt.detail && evt.detail.target) {
       const targetId = evt.detail.target.id || '';
@@ -1334,6 +1416,7 @@
               lucide.createIcons({ root: listBrief });
             }
           }
+          syncExecutiveBriefUpdates();
         }
 
         const triggerElt = evt.detail.requestConfig && evt.detail.requestConfig.elt;
@@ -1369,7 +1452,7 @@
             html: entriesListEl.innerHTML,
           });
         }
-        if (!AUTH_ENABLED && typeof hydrateGuestEntriesFromDom === 'function') {
+        if (isEntriesSwap && !AUTH_ENABLED && typeof hydrateGuestEntriesFromDom === 'function') {
           hydrateGuestEntriesFromDom();
         }
         if (typeof syncDomReadStates === 'function') {
@@ -1406,13 +1489,44 @@
         invalidateFilterCache();
         const panel = document.getElementById('detail-panel');
         if (panel) {
-          formatDetailDates(panel);
           const detail = panel.querySelector('[data-entry-id]');
           if (detail) {
             const entryId = detail.getAttribute('data-entry-id');
+            const reqPath = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+            const reqMatch = reqPath.match(/\/hx\/entries\/(\d+)(?:\/|$)/);
+            const isMatchingEntryRequest = !reqMatch || String(reqMatch[1]) === String(entryId);
+            if (!isMatchingEntryRequest) return;
             recordReadArticle(entryId);
-            // Do not cache error cards
-            if (entryId && !panel.querySelector('.stroke-destructive, .is-error')) {
+            if (!AUTH_ENABLED && (targetId === 'ai-rewrite-box' || (evt.target && evt.target.id === 'ai-rewrite-box'))) {
+              const rewriteBox = document.getElementById('ai-rewrite-box');
+              if (
+                rewriteBox &&
+                !rewriteBox.classList.contains('is-error') &&
+                !rewriteBox.querySelector('.is-error, .stroke-destructive')
+              ) {
+                const proseEl = rewriteBox.querySelector('.prose');
+                const rewriteText = proseEl ? proseEl.textContent.trim() : '';
+                if (rewriteText) {
+                  const numId = Number(entryId);
+                  if (numId) {
+                    const existing = guestEntriesMap.get(numId) || { id: numId };
+                    const updated = { ...existing, rewrite: rewriteText, schema_version: 2, saved_at: Date.now() };
+                    guestEntriesMap.set(numId, updated);
+                    if (typeof upsertGuestArticleInDb === 'function') {
+                      upsertGuestArticleInDb(numId, (prev) => ({
+                        ...(Object.keys(prev).length > 0 ? prev : existing),
+                        id: numId,
+                        rewrite: rewriteText,
+                        schema_version: 2,
+                        saved_at: Date.now(),
+                      }));
+                    }
+                  }
+                }
+              }
+            }
+            // Do not cache error cards or incomplete Option C skeletons
+            if (AUTH_ENABLED && entryId && !panel.querySelector('[hx-get][hx-trigger], .stroke-destructive, .is-error')) {
               saveCachedArticle(entryId, panel.innerHTML);
             }
           }
@@ -1438,11 +1552,76 @@
     }
   });
 
+  function handleRewriteError(evt, msg) {
+    const target = evt.detail && evt.detail.target;
+    if (!target || target.id !== 'ai-rewrite-box' || !target.isConnected) return false;
+    const retryUrl = target.getAttribute('hx-get') || evt.detail.elt?.getAttribute('hx-get') || evt.detail.requestConfig?.path || '';
+    const detailEl = target.closest('[data-entry-id]');
+    const urlMatch = retryUrl ? retryUrl.match(/\/hx\/entries\/(\d+)\/rewrite/) : null;
+    const numId = Number(detailEl ? detailEl.getAttribute('data-entry-id') : (urlMatch ? urlMatch[1] : 0));
+    const activeDetail = document.querySelector('#detail-panel [data-entry-id]');
+    const activeId = activeDetail ? activeDetail.getAttribute('data-entry-id') : null;
+    if (!activeId || (numId && String(numId) !== String(activeId))) return false;
+    const fallbackAttr = target.getAttribute('data-fallback-summary');
+    const guestEntry = numId ? guestEntriesMap.get(numId) : null;
+    const guestSummary = guestEntry && guestEntry.summary ? String(guestEntry.summary) : '';
+    const fallbackText = (fallbackAttr && fallbackAttr.trim())
+      ? fallbackAttr.trim()
+      : ((guestSummary && guestSummary.trim()) ? guestSummary.trim() : 'No summary available.');
+    const safeRetryUrl = escapeHtml(retryUrl || (numId ? '/hx/entries/' + numId + '/rewrite' : ''));
+
+    target.outerHTML = `
+      <div id="ai-rewrite-box" data-target-entry-id="${numId}" class="space-y-6" data-fallback-summary="${escapeHtml(fallbackText)}">
+        <div class="is-error rounded-lg p-4 bg-muted/40 border border-border">
+          <div class="flex items-center gap-2 mb-1.5">
+            <div class="p-1 rounded bg-destructive/10 text-destructive">
+              <i data-lucide="alert-circle" class="w-4 h-4"></i>
+            </div>
+            <span class="text-xs font-bold uppercase tracking-wider text-foreground font-sans">AI Rewrite Unavailable</span>
+          </div>
+          <p class="text-xs text-muted-foreground leading-relaxed font-sans mb-2">${escapeHtml(msg)}</p>
+          <button
+            hx-get="${safeRetryUrl}"
+            hx-target="#ai-rewrite-box"
+            hx-swap="outerHTML"
+            hx-disabled-elt="this"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-secondary text-secondary-foreground text-xs font-medium font-sans hover:bg-secondary/80 transition-colors cursor-pointer">
+            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+            <span>Retry</span>
+          </button>
+        </div>
+        <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(fallbackText)}</div>
+      </div>
+    `;
+
+    const newBox = document.getElementById('ai-rewrite-box');
+    if (newBox) {
+      if (window.htmx && typeof htmx.process === 'function') {
+        htmx.process(newBox);
+      }
+      if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons({ root: newBox });
+      }
+    }
+    if (numId) {
+      document.body.dispatchEvent(new CustomEvent('ai-rewrite-done-' + numId));
+    }
+    return true;
+  }
+
   document.addEventListener('htmx:responseError', (evt) => {
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
       if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showToast === 'function') {
         showToast('Failed to load articles. Please try again.');
       }
+    }
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'ai-rewrite-box') {
+      const status = evt.detail.xhr ? evt.detail.xhr.status : 500;
+      const msg = status === 429
+        ? 'Too many requests. Please wait a moment and try again.'
+        : 'Unable to generate AI rewrite right now.';
+      handleRewriteError(evt, msg);
+      return;
     }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'detail-panel') {
       const status = evt.detail.xhr ? evt.detail.xhr.status : 500;
@@ -1468,6 +1647,10 @@
         showToast('Network error while loading articles.');
       }
     }
+    if (evt.detail && evt.detail.target && evt.detail.target.id === 'ai-rewrite-box') {
+      handleRewriteError(evt, 'Network error while generating AI rewrite.');
+      return;
+    }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'detail-panel') {
       evt.detail.target.innerHTML = `
         <div class="rounded-lg p-6 bg-card border border-border text-center flex flex-col items-center justify-center m-4">
@@ -1481,6 +1664,46 @@
       `;
     }
   });
+
+  function getActiveDetailEntryId() {
+    const activeDetail = document.querySelector('#detail-panel [data-entry-id]');
+    return activeDetail ? activeDetail.getAttribute('data-entry-id') : null;
+  }
+
+  document.addEventListener('htmx:beforeSwap', (evt) => {
+    const detail = evt.detail;
+    if (!detail || !detail.target) return;
+    const tid = detail.target.id;
+    if (tid === 'ai-rewrite-box' || tid === 'ai-analysis-box') {
+      const activeId = getActiveDetailEntryId();
+      const reqPath = (detail.requestConfig && detail.requestConfig.path) || (detail.xhr && detail.xhr.responseURL) || '';
+      const m = reqPath.match(/\/hx\/entries\/(\d+)\/(?:rewrite|analysis)/);
+      if (!detail.target.isConnected || !activeId || (m && String(m[1]) !== String(activeId))) {
+        detail.shouldSwap = false;
+      }
+    }
+  });
+
+  document.addEventListener('htmx:oobBeforeSwap', (evt) => {
+    const detail = evt.detail;
+    if (!detail || !detail.target) return;
+    if (detail.target.id === 'ai-analysis-box' || detail.target.id === 'ai-rewrite-box') {
+      const activeId = getActiveDetailEntryId();
+      const frag = detail.fragment;
+      let oobEntryId = null;
+      if (frag) {
+        if (typeof frag.getAttribute === 'function' && frag.getAttribute('data-target-entry-id')) {
+          oobEntryId = frag.getAttribute('data-target-entry-id');
+        } else if (typeof frag.querySelector === 'function') {
+          const el = frag.querySelector('[data-target-entry-id]');
+          if (el) oobEntryId = el.getAttribute('data-target-entry-id');
+        }
+      }
+      if (!activeId || (oobEntryId && String(oobEntryId) !== String(activeId))) {
+        detail.shouldSwap = false;
+      }
+    }
+  });
 </script>
 
 {% if !auth_enabled %}
@@ -1491,7 +1714,7 @@
 
   function openGuestDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 2);
+      const req = indexedDB.open(DB_NAME, 3);
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -1499,11 +1722,49 @@
         }
         if (!db.objectStoreNames.contains('all_articles')) {
           db.createObjectStore('all_articles', { keyPath: 'id' });
+        } else if (e.oldVersion < 3 && e.target && e.target.transaction) {
+          e.target.transaction.objectStore('all_articles').clear();
         }
       };
       req.onsuccess = (e) => resolve(e.target.result);
       req.onerror = (e) => reject(e);
     });
+  }
+
+  function upsertGuestArticleInDb(numId, buildRecord) {
+    if (!numId || typeof openGuestDb !== 'function') return;
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains('all_articles')) return;
+        const tx = db.transaction('all_articles', 'readwrite');
+        const store = tx.objectStore('all_articles');
+        const getReq = store.get(numId);
+        getReq.onsuccess = (ev) => {
+          const prev = ev.target.result || {};
+          store.put(buildRecord(prev));
+        };
+      })
+      .catch(() => {});
+  }
+
+  function buildGuestArticleRecord(numId, guest, existing, fallback) {
+    const rewrite = (guest && guest.rewrite && String(guest.rewrite).trim())
+      || (existing && existing.rewrite && String(existing.rewrite).trim())
+      || null;
+    const bodyImages = (guest && Array.isArray(guest.body_images))
+      ? guest.body_images
+      : ((existing && Array.isArray(existing.body_images)) ? existing.body_images : []);
+    return {
+      id: numId,
+      title: (guest && guest.title) || (fallback && fallback.title) || '',
+      url: (guest && guest.url) || (fallback && fallback.url) || '',
+      summary: (guest && guest.summary) || (fallback && fallback.summary) || '',
+      rewrite,
+      image_url: (guest && guest.image_url) || (fallback && fallback.image_url) || null,
+      body_images: bodyImages,
+      schema_version: 2,
+      saved_at: Date.now(),
+    };
   }
 
   function readGuestEntriesJson() {
@@ -1518,12 +1779,41 @@
     }
   }
 
+  function syncGuestEntriesScript(syncedById) {
+    const guestScript = document.querySelector('#entries-list #entries-guest-data');
+    if (!guestScript || !guestScript.textContent || !syncedById) return;
+    try {
+      const parsed = JSON.parse(guestScript.textContent);
+      if (Array.isArray(parsed)) {
+        const updated = parsed.map(entry => {
+          const numId = Number(entry && entry.id);
+          const synced = numId ? syncedById.get(numId) : null;
+          if (!synced) return entry;
+          return {
+            ...entry,
+            title: synced.title || entry.title,
+            summary: synced.summary || entry.summary,
+            rewrite: synced.rewrite || entry.rewrite || null,
+          };
+        });
+        guestScript.textContent = escapeJsonForHtmlScript(JSON.stringify(updated));
+      }
+    } catch (e) {}
+  }
+
   function hydrateGuestEntriesFromDom() {
     const items = readGuestEntriesJson();
     items.forEach(item => {
       const numId = Number(item && item.id);
       if (numId) {
-        guestEntriesMap.set(numId, item);
+        const prev = guestEntriesMap.get(numId);
+        const itemRewrite = item.rewrite && String(item.rewrite).trim() ? String(item.rewrite).trim() : null;
+        const prevRewrite = prev && prev.rewrite && String(prev.rewrite).trim() ? String(prev.rewrite).trim() : null;
+        guestEntriesMap.set(numId, {
+          ...item,
+          rewrite: itemRewrite || prevRewrite || null,
+          body_images: Array.isArray(item.body_images) ? item.body_images : (prev && Array.isArray(prev.body_images) ? prev.body_images : []),
+        });
       }
     });
     return items;
@@ -1555,22 +1845,16 @@
   function renderGuestEntryDetail(entry) {
     const panel = document.getElementById('detail-panel');
     if (!panel || !entry) return;
+    abortActiveDetailRequests();
     const numId = Number(entry.id);
     const titleText = entry.title || '';
-    const feedTitle = entry.feed_title || 'Feed';
-    const rawDate = (entry.published_at || '').trim();
-    const formattedDate = entry.formatted_date || rawDate;
     const href = safeHref(entry.url);
     const rawImg = entry.image_url ? String(entry.image_url).trim() : '';
     const safeImg = rawImg ? safeHref(rawImg) : '';
     const hasHeroImg = Boolean(safeImg && safeImg !== '#');
     const summaryText = entry.summary ? String(entry.summary).trim() : '';
-    const bodyHtml = entry.sanitized_content && String(entry.sanitized_content).trim()
-      ? entry.sanitized_content
-      : '<p class="text-muted-foreground">No content available.</p>';
-    const dateHtml = rawDate
-      ? `<span>•</span><time datetime="${escapeHtml(rawDate)}" data-date-format="dd/mm/yyyy">${escapeHtml(formattedDate)}</time>`
-      : (formattedDate ? `<span>•</span><span>${escapeHtml(formattedDate)}</span>` : '');
+    const rewriteText = entry.rewrite ? String(entry.rewrite).trim() : '';
+    const awaitingRewrite = !rewriteText && AI_ENABLED;
 
     const headerHtml = hasHeroImg
       ? `
@@ -1578,28 +1862,69 @@
           <img src="${escapeHtml(safeImg)}" alt="${escapeHtml(titleText)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="absolute inset-0 w-full h-full object-cover">
           <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent"></div>
           <div class="relative z-10 p-5 md:p-6 w-full">
-            <div class="flex items-center gap-2 text-xs text-white/80 mb-2 font-sans tabular drop-shadow-sm">
-              <span class="font-medium text-white">${escapeHtml(feedTitle)}</span>
-              ${dateHtml}
-            </div>
             <h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">${escapeHtml(titleText)}</h1>
           </div>
         </div>
       `
       : `
         <div class="mb-6">
-          <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
-            <span class="font-medium text-foreground">${escapeHtml(feedTitle)}</span>
-            ${dateHtml}
-          </div>
           <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">${escapeHtml(titleText)}</h1>
         </div>
       `;
 
-    const rewriteHtml = summaryText
+    const rewriteHtml = rewriteText
       ? `
-        <div id="ai-rewrite-box" class="space-y-6 mb-6">
-          <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(summaryText)}</div>
+        <div id="ai-rewrite-box" data-target-entry-id="${numId}" class="space-y-6">
+          <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(rewriteText)}</div>
+        </div>
+      `
+      : (AI_ENABLED
+        ? `
+          <div id="ai-rewrite-box" data-target-entry-id="${numId}" class="space-y-6" hx-get="/hx/entries/${numId}/rewrite" hx-trigger="load" hx-swap="outerHTML" data-fallback-summary="${escapeHtml(summaryText)}">
+            <p class="text-xs text-muted-foreground font-sans">AI rewrite is not ready yet — generating...</p>
+            <div class="animate-pulse space-y-2.5">
+              <div class="h-3.5 bg-muted rounded w-full"></div>
+              <div class="h-3.5 bg-muted rounded w-11/12"></div>
+              <div class="h-3.5 bg-muted rounded w-4/5"></div>
+            </div>
+          </div>
+        `
+        : `
+          <div id="ai-rewrite-box" data-target-entry-id="${numId}" class="space-y-4">
+            <p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p>
+            <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(summaryText || 'No summary available.')}</div>
+          </div>
+        `);
+
+    const bodyImages = Array.isArray(entry.body_images)
+      ? entry.body_images
+          .map(img => safeHref(String(img || '').trim()))
+          .filter(safeBodyImg => Boolean(safeBodyImg && safeBodyImg !== '#'))
+      : [];
+    const bodyImagesHtml = bodyImages.length > 0
+      ? `
+        <div class="my-6 space-y-4">
+          ${bodyImages.map(safeBodyImg => `
+            <figure class="rounded-xl overflow-hidden border border-border bg-muted/30">
+              <img src="${escapeHtml(safeBodyImg)}" alt="Article photo" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="w-full h-auto object-cover max-h-[480px]">
+            </figure>
+          `).join('')}
+        </div>
+      `
+      : '';
+
+    const analysisTrigger = awaitingRewrite ? `ai-rewrite-done-${numId} from:body` : 'load';
+    const analysisHtml = AI_ENABLED
+      ? `
+        <div id="ai-analysis-box" data-target-entry-id="${numId}" class="animate-pulse space-y-4 my-4" hx-get="/hx/entries/${numId}/analysis" hx-trigger="${analysisTrigger}" hx-swap="outerHTML">
+          <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
+            <div class="h-4 bg-muted rounded w-1/4"></div>
+            <div class="h-3 bg-muted rounded w-3/4"></div>
+          </div>
+          <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
+            <div class="h-4 bg-muted rounded w-1/3"></div>
+            <div class="h-3 bg-muted rounded w-5/6"></div>
+          </div>
         </div>
       `
       : '';
@@ -1648,22 +1973,12 @@
         <div class="detail-scrollbar detail-body flex-1 overflow-y-auto pr-2 w-full max-w-[44rem] mx-auto">
           ${headerHtml}
           ${rewriteHtml}
-          <div id="guest-detail-content" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans">${bodyHtml}</div>
-          <div id="ai-analysis-box" class="animate-pulse space-y-4 my-4" hx-get="/hx/entries/${numId}/analysis" hx-trigger="load" hx-swap="outerHTML">
-            <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
-              <div class="h-4 bg-muted rounded w-1/4"></div>
-              <div class="h-3 bg-muted rounded w-3/4"></div>
-            </div>
-            <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
-              <div class="h-4 bg-muted rounded w-1/3"></div>
-              <div class="h-3 bg-muted rounded w-5/6"></div>
-            </div>
-          </div>
+          ${bodyImagesHtml}
+          ${analysisHtml}
         </div>
       </div>
     `;
 
-    formatDetailDates(panel);
     panel.classList.add('has-content');
     alignDetailPanelWidth();
     panel.classList.add('animate-slide-in-right');
@@ -1750,42 +2065,24 @@
         const numId = Number(id);
         if (!numId) return;
         const guest = guestById.get(numId);
+        const existing = guestEntriesMap.get(numId);
         const magEl = document.getElementById('mag-entry-' + numId);
         const magBrief = magEl ? magEl.querySelector('.magazine-brief') : null;
         const magImg = magEl ? magEl.querySelector('img') : null;
         const titleEl = row.querySelector('.article-title');
         const linkEl = row.querySelector('a[title="Open in browser"]');
-        const title = (guest && guest.title) || (titleEl ? titleEl.textContent.trim() : '');
-        const url = (guest && guest.url) || (linkEl ? linkEl.getAttribute('href') : '') || '';
-        articlesToSave.push({
-          id: numId,
-          title,
-          url,
-          feed_title: (guest && guest.feed_title) || '',
-          published_at: (guest && guest.published_at) || '',
-          formatted_date: (guest && guest.formatted_date) || '',
-          summary: (guest && guest.summary) || (magBrief ? magBrief.textContent.trim() : '') || (magEl && magEl.getAttribute('title') ? magEl.getAttribute('title').trim() : ''),
-          image_url: (guest && guest.image_url) || (magImg ? magImg.getAttribute('src') : null) || null,
-          sanitized_content: (guest && guest.sanitized_content) || '',
-          saved_at: Date.now()
-        });
+        articlesToSave.push(buildGuestArticleRecord(numId, guest, existing, {
+          title: titleEl ? titleEl.textContent.trim() : '',
+          url: linkEl ? linkEl.getAttribute('href') : '',
+          summary: (magBrief ? magBrief.textContent.trim() : '') || (magEl && magEl.getAttribute('title') ? magEl.getAttribute('title').trim() : ''),
+          image_url: magImg ? magImg.getAttribute('src') : null,
+        }));
       });
     } else if (guestItems.length > 0) {
       guestItems.forEach(guest => {
         const numId = Number(guest && guest.id);
         if (!numId) return;
-        articlesToSave.push({
-          id: numId,
-          title: guest.title || '',
-          url: guest.url || '',
-          feed_title: guest.feed_title || '',
-          published_at: guest.published_at || '',
-          formatted_date: guest.formatted_date || '',
-          summary: guest.summary || '',
-          image_url: guest.image_url || null,
-          sanitized_content: guest.sanitized_content || '',
-          saved_at: Date.now()
-        });
+        articlesToSave.push(buildGuestArticleRecord(numId, guest, guestEntriesMap.get(numId), null));
       });
     }
 

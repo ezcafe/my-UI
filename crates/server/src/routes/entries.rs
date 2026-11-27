@@ -12,8 +12,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
 use ui_components::templates::{
-    AiErrorCardTemplate, AiGroupedListTemplate, AiSummaryCardTemplate, EntryDetailTemplate,
-    EntryItemTemplate, EntryListTemplate, EntryViewModel, ErrorCardTemplate,
+    AiErrorCardTemplate, AiGroupedListTemplate, AiSummaryCardTemplate, AnalysisCardsTemplate,
+    EntryDetailTemplate, EntryItemTemplate, EntryListTemplate, EntryViewModel, ErrorCardTemplate,
     ExecutiveBriefCardTemplate, FeedSummaryGroupViewModel, ToastTemplate,
 };
 
@@ -38,37 +38,32 @@ pub struct MarkPageReadForm {
     pub offset: Option<i64>,
 }
 
+static IMG_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::RegexBuilder::new(r#"<img[^>]+src=["']([^"']+)["']"#)
+        .case_insensitive(true)
+        .build()
+        .unwrap()
+});
+
+#[cfg(test)]
 pub fn extract_first_image_url(html: &str) -> Option<String> {
-    static IMG_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::RegexBuilder::new(r#"<img[^>]+src=["']([^"']+)["']"#)
-            .case_insensitive(true)
-            .build()
-            .unwrap()
-    });
     IMG_REGEX
         .captures(html)
         .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
 }
 
-/// Extracts all valid image URLs from HTML content, filtering out tracking pixels.
+/// Extracts all valid http/https image URLs from HTML content, filtering out tracking pixels.
 pub fn extract_article_images(html: &str) -> (Option<String>, Vec<String>) {
-    static IMG_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::RegexBuilder::new(r#"<img[^>]+src=["']([^"']+)["']"#)
-            .case_insensitive(true)
-            .build()
-            .unwrap()
-    });
-
     let mut images = Vec::new();
     for cap in IMG_REGEX.captures_iter(html) {
         if let Some(src) = cap.get(1).map(|m| m.as_str().trim().to_string()) {
             let lower = src.to_lowercase();
-            // Filter out common tracking pixels, 1x1 gifs, and empty src
+            // Restrict to http(s) URLs and filter out common tracking pixels / 1x1 gifs
             if !src.is_empty()
+                && (lower.starts_with("http://") || lower.starts_with("https://"))
                 && !lower.contains("1x1")
                 && !lower.contains("pixel")
                 && !lower.contains("feedburner.com/~r")
-                && !lower.starts_with("data:image/svg+xml")
                 && !images.contains(&src)
             {
                 images.push(src);
@@ -83,6 +78,41 @@ pub fn extract_article_images(html: &str) -> (Option<String>, Vec<String>) {
     };
 
     (hero_image, images)
+}
+
+/// Extracts hero and body images from article HTML content, falling back to `summary` when `content` yields no hero image.
+pub fn extract_images_with_summary_fallback(
+    content: &str,
+    summary: &str,
+) -> (Option<String>, Vec<String>) {
+    let (mut hero_image, mut body_images) = extract_article_images(content);
+    if hero_image.is_none() && !summary.trim().is_empty() {
+        let (s_hero, s_body) = extract_article_images(summary);
+        hero_image = s_hero;
+        body_images = s_body;
+    }
+    (hero_image, body_images)
+}
+
+/// Applies non-fallback AI titles, rewrites, and cleaned summaries onto entry view models.
+pub fn apply_ai_summaries_to_entries(
+    entries: &mut [EntryViewModel],
+    ai_summaries: &std::collections::HashMap<i64, crate::ai::db::AiSummaryRecord>,
+) {
+    for entry in entries {
+        if let Some(record) = ai_summaries
+            .get(&entry.id)
+            .filter(|r| r.model != "extractive-fallback")
+        {
+            entry.suggested_title = record.suggested_title.clone();
+            entry.rewrite = record.rewrite.clone().filter(|r| !r.trim().is_empty());
+            let clean_ai_summary =
+                ui_components::sanitizer::extract_plain_summary(&record.summary, "");
+            if !clean_ai_summary.is_empty() {
+                entry.summary = clean_ai_summary;
+            }
+        }
+    }
 }
 
 pub fn is_brief_eligible_filter(status: Option<&str>, search: Option<&str>) -> bool {
@@ -174,8 +204,8 @@ pub fn build_graphql_filter(
     filter_parts.join(", ")
 }
 
-/// Maps a GraphQL entry JSON object into an `EntryViewModel`, sanitizing
-/// guest detail HTML and suppressing auth-only fields when `auth_enabled` is false.
+/// Maps a GraphQL entry JSON object into an `EntryViewModel`, extracting safe
+/// plain-text summaries and article photos while suppressing auth-only fields when `auth_enabled` is false.
 pub fn entry_view_model_from_json(
     item: &serde_json::Value,
     auth_enabled: bool,
@@ -183,18 +213,8 @@ pub fn entry_view_model_from_json(
 ) -> Option<EntryViewModel> {
     let content_str = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let summary_str = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-    let image_url =
-        extract_first_image_url(content_str).or_else(|| extract_first_image_url(summary_str));
-    let sanitized_content = if !auth_enabled {
-        let raw_body = if !content_str.trim().is_empty() {
-            content_str
-        } else {
-            summary_str
-        };
-        Some(ui_components::sanitizer::sanitize_html(raw_body))
-    } else {
-        None
-    };
+    let (image_url, body_images) = extract_images_with_summary_fallback(content_str, summary_str);
+    let clean_summary = ui_components::sanitizer::extract_plain_summary(summary_str, content_str);
     let feed_obj = item.get("feed");
     let feed_title = feed_obj
         .and_then(|f| f.get("title"))
@@ -225,9 +245,11 @@ pub fn entry_view_model_from_json(
         } else {
             0
         },
-        summary: summary_str.to_string(),
-        sanitized_content,
+        summary: clean_summary,
+        sanitized_content: None,
         image_url,
+        rewrite: None,
+        body_images,
         url: item
             .get("url")
             .and_then(|v| v.as_str())
@@ -425,14 +447,7 @@ pub async fn render_entries_list_html(
         (std::collections::HashMap::new(), None)
     };
 
-    for entry in &mut entries {
-        if let Some(record) = ai_summaries.get(&entry.id) {
-            entry.suggested_title = record.suggested_title.clone();
-            if !record.summary.is_empty() {
-                entry.summary = record.summary.clone();
-            }
-        }
-    }
+    apply_ai_summaries_to_entries(&mut entries, &ai_summaries);
 
     if let Some(ai) = ai_service {
         if is_eligible {
@@ -472,6 +487,7 @@ pub async fn render_entries_list_html(
         offset,
         feed_id: query.feed_id,
         category_id: query.category_id,
+        auth_enabled,
     };
     template.render().map_err(|e| {
         Box::new(handle_htmx_error(
@@ -580,6 +596,8 @@ pub async fn render_ai_entries_list(
                             .to_string(),
                         sanitized_content: None,
                         image_url: None,
+                        rewrite: None,
+                        body_images: Vec::new(),
                         url: item
                             .get("url")
                             .and_then(|v| v.as_str())
@@ -672,6 +690,48 @@ pub fn render_title_oob_span(id: i64, original_title: &str, suggested_title: &st
         escape_html(original_title),
         escape_html(suggested_title)
     )
+}
+
+#[derive(serde::Serialize)]
+struct BriefSyncEntry<'a> {
+    id: i64,
+    original_title: &'a str,
+    suggested_title: Option<&'a str>,
+    rewrite: Option<&'a str>,
+    summary: Option<String>,
+}
+
+fn clean_opt_summary(raw: &str) -> Option<String> {
+    let cleaned = ui_components::sanitizer::extract_plain_summary(raw, "");
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn render_brief_sync_oob(sync_entries: &[BriefSyncEntry<'_>]) -> String {
+    if sync_entries.is_empty() {
+        return String::new();
+    }
+    let json = serde_json::to_string(sync_entries).unwrap_or_else(|_| "[]".to_string());
+    format!(
+        r#"<div id="executive-brief-sync-data" hidden hx-swap-oob="outerHTML" data-entries="{}"></div>"#,
+        escape_html(&json)
+    )
+}
+
+fn append_brief_oob_updates(full_html: &mut String, sync_entries: &[BriefSyncEntry<'_>]) {
+    for entry in sync_entries {
+        if let Some(suggested) = entry.suggested_title {
+            full_html.push_str(&render_title_oob_span(
+                entry.id,
+                entry.original_title,
+                suggested,
+            ));
+        }
+    }
+    full_html.push_str(&render_brief_sync_oob(sync_entries));
 }
 
 pub async fn executive_brief_htmx(
@@ -829,24 +889,53 @@ pub async fn executive_brief_htmx(
     let cached_map = ai_service.db.get_batch_summaries(&entry_ids).await;
 
     // 3. Fast-path: Check page brief cache
-    let render_cached_brief = |brief: &str,
-                               cached: &std::collections::HashMap<i64, crate::ai::db::AiSummaryRecord>|
-     -> String {
-        let mut full_html = ExecutiveBriefCardTemplate { brief }
-            .render()
-            .unwrap_or_default();
-        for entry in &entries {
-            if let Some(rec) = cached.get(&entry.id) {
-                if let Some(suggested) = &rec.suggested_title {
-                    full_html.push_str(&render_title_oob_span(entry.id, &entry.title, suggested));
-                }
-            }
-        }
-        full_html
-    };
+    let render_cached_brief =
+        |brief: &str,
+         cached: &std::collections::HashMap<i64, crate::ai::db::AiSummaryRecord>|
+         -> String {
+            let mut full_html = ExecutiveBriefCardTemplate { brief }
+                .render()
+                .unwrap_or_default();
+            let sync_entries: Vec<BriefSyncEntry<'_>> = entries
+                .iter()
+                .filter_map(|entry| {
+                    let rec = cached
+                        .get(&entry.id)
+                        .filter(|r| r.model != "extractive-fallback")?;
+                    let sug = rec
+                        .suggested_title
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    let rew = rec
+                        .rewrite
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    let sum = clean_opt_summary(&rec.summary);
+                    if sug.is_some() || rew.is_some() || sum.is_some() {
+                        Some(BriefSyncEntry {
+                            id: entry.id,
+                            original_title: &entry.title,
+                            suggested_title: sug,
+                            rewrite: rew,
+                            summary: sum,
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            append_brief_oob_updates(&mut full_html, &sync_entries);
+            full_html
+        };
 
     if let Some(brief) = ai_service.db.get_page_brief_by_key(&page_key).await {
-        return (StatusCode::OK, headers, Html(render_cached_brief(&brief, &cached_map)))
+        return (
+            StatusCode::OK,
+            headers,
+            Html(render_cached_brief(&brief, &cached_map)),
+        )
             .into_response();
     }
 
@@ -985,14 +1074,19 @@ pub async fn executive_brief_htmx(
             .get(&item.id)
             .is_some_and(|r| r.model != "extractive-fallback");
         if !is_already_cached {
-            let rewrite_val = if item.rewrite.is_empty() {
+            let rewrite_val = if item.rewrite.trim().is_empty() {
                 None
             } else {
                 Some(item.rewrite.clone())
             };
+            let summary_val = if !item.brief.trim().is_empty() {
+                item.brief.clone()
+            } else {
+                item.rewrite.clone()
+            };
             summary_inputs.push(crate::ai::db::ArticleSummaryInput {
                 entry_id: item.id,
-                summary: item.rewrite.clone(),
+                summary: summary_val,
                 suggested_title: if item.suggested_title.is_empty() {
                     None
                 } else {
@@ -1038,21 +1132,54 @@ pub async fn executive_brief_htmx(
         render_brief_error(&retry_url)
     };
 
-    for entry in &entries {
-        let suggested = batch_res
-            .items
-            .iter()
-            .find(|i| i.id == entry.id && !i.suggested_title.is_empty())
-            .map(|i| i.suggested_title.as_str())
-            .or_else(|| {
-                cached_map
-                    .get(&entry.id)
-                    .and_then(|r| r.suggested_title.as_deref())
-            });
-        if let Some(sug) = suggested {
-            full_html.push_str(&render_title_oob_span(entry.id, &entry.title, sug));
-        }
-    }
+    let sync_entries: Vec<BriefSyncEntry<'_>> = entries
+        .iter()
+        .filter_map(|entry| {
+            let fresh_item = batch_res.items.iter().find(|i| i.id == entry.id);
+            let cached_rec = cached_map
+                .get(&entry.id)
+                .filter(|r| r.model != "extractive-fallback");
+            let suggested = fresh_item
+                .map(|i| i.suggested_title.trim())
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    cached_rec
+                        .and_then(|r| r.suggested_title.as_deref())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                });
+            let rewrite = fresh_item
+                .map(|i| i.rewrite.trim())
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    cached_rec
+                        .and_then(|r| r.rewrite.as_deref())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                });
+            let summary = fresh_item
+                .and_then(|i| {
+                    if !i.brief.trim().is_empty() {
+                        clean_opt_summary(&i.brief)
+                    } else {
+                        clean_opt_summary(&i.rewrite)
+                    }
+                })
+                .or_else(|| cached_rec.and_then(|r| clean_opt_summary(&r.summary)));
+            if suggested.is_some() || rewrite.is_some() || summary.is_some() {
+                Some(BriefSyncEntry {
+                    id: entry.id,
+                    original_title: &entry.title,
+                    suggested_title: suggested,
+                    rewrite,
+                    summary,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    append_brief_oob_updates(&mut full_html, &sync_entries);
 
     if batch_res.top.is_empty() {
         full_html.push_str(&crate::error::render_llm_error_toast());
@@ -1406,11 +1533,7 @@ pub async fn get_entry_detail_htmx(
     }
 
     let content = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let summary = item
-        .get("summary")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let raw_summary = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
     let feed_title = item
         .get("feed")
         .and_then(|f| f.get("title"))
@@ -1418,65 +1541,93 @@ pub async fn get_entry_detail_htmx(
         .unwrap_or("Feed")
         .to_string();
 
-    let teaser_str = if !summary.is_empty() {
-        summary.as_str()
-    } else {
-        content
-    };
-
-    let (suggested_title, summary, rewrite, impact, fallacies, has_analysis) = if config.ai_enabled
-    {
+    let (
+        suggested_title,
+        summary,
+        rewrite,
+        needs_rewrite,
+        fallback_summary,
+        impact,
+        fallacies,
+        has_analysis,
+    ) = if config.ai_enabled {
         if let Some(record) = ai_service
             .db
             .get_summary_and_title(id)
             .await
             .filter(|r| r.model != "extractive-fallback")
         {
-            let rewrite = match record.rewrite {
-                Some(ref r) if !r.trim().is_empty() => r.clone(),
-                _ if !record.summary.trim().is_empty() => record.summary.clone(),
-                _ => teaser_str.to_string(),
+            let clean_ai_summary =
+                ui_components::sanitizer::extract_plain_summary(&record.summary, "");
+            let rewrite_opt = record.rewrite.clone().filter(|r| !r.trim().is_empty());
+            let (rewrite, needs_rewrite, fallback_summary) = match rewrite_opt {
+                Some(r) => (r, false, String::new()),
+                None => {
+                    let fb = if !clean_ai_summary.is_empty() {
+                        clean_ai_summary.clone()
+                    } else {
+                        let plain =
+                            ui_components::sanitizer::extract_plain_summary(raw_summary, content);
+                        if plain.is_empty() {
+                            "No summary available.".to_string()
+                        } else {
+                            plain
+                        }
+                    };
+                    (String::new(), true, fb)
+                }
             };
             let impact = record.impact.unwrap_or_default();
             let fallacies = record.fallacies.unwrap_or_default();
             let has_analysis = !impact.trim().is_empty() && !fallacies.trim().is_empty();
             (
                 record.suggested_title,
-                record.summary,
+                clean_ai_summary,
                 rewrite,
+                needs_rewrite,
+                fallback_summary,
                 impact,
                 fallacies,
                 has_analysis,
             )
         } else {
-            let fallback_teaser = if !teaser_str.is_empty() {
-                teaser_str.to_string()
+            let plain = ui_components::sanitizer::extract_plain_summary(raw_summary, content);
+            let fb = if plain.is_empty() {
+                "No summary available.".to_string()
             } else {
-                summary.clone()
+                plain
             };
             (
                 None,
-                fallback_teaser.clone(),
-                fallback_teaser,
+                String::new(),
+                String::new(),
+                true,
+                fb,
                 String::new(),
                 String::new(),
                 false,
             )
         }
     } else {
+        let plain = ui_components::sanitizer::extract_plain_summary(raw_summary, content);
+        let fb = if plain.is_empty() {
+            "No summary available.".to_string()
+        } else {
+            plain
+        };
         (
             None,
-            summary.clone(),
-            if !teaser_str.is_empty() {
-                teaser_str.to_string()
-            } else {
-                summary.clone()
-            },
+            String::new(),
+            String::new(),
+            false,
+            fb,
             String::new(),
             String::new(),
             false,
         )
     };
+
+    let (hero_image, body_images) = extract_images_with_summary_fallback(content, raw_summary);
 
     let entry = EntryViewModel {
         id,
@@ -1502,7 +1653,13 @@ pub async fn get_entry_detail_htmx(
         },
         summary: summary.clone(),
         sanitized_content: None,
-        image_url: None,
+        image_url: hero_image.clone(),
+        rewrite: if rewrite.is_empty() {
+            None
+        } else {
+            Some(rewrite.clone())
+        },
+        body_images: body_images.clone(),
         url: item
             .get("url")
             .and_then(|v| v.as_str())
@@ -1522,17 +1679,13 @@ pub async fn get_entry_detail_htmx(
             .unwrap_or(false),
     };
 
-    let (mut hero_image, mut body_images) = extract_article_images(content);
-    if hero_image.is_none() && !summary.is_empty() {
-        let (s_hero, s_body) = extract_article_images(&summary);
-        hero_image = s_hero;
-        body_images = s_body;
-    }
-
     let template = EntryDetailTemplate {
         entry,
         summary,
         rewrite,
+        needs_rewrite,
+        ai_enabled: config.ai_enabled,
+        fallback_summary,
         impact,
         fallacies,
         has_analysis,
@@ -1582,91 +1735,61 @@ pub async fn get_entry_detail_htmx(
     Html(html).into_response()
 }
 
-fn render_analysis_fragment(impact: &str, fallacies: &str, rewrite: &str) -> String {
-    let mut html = String::from(r#"<div id="ai-rewrite-box" class="space-y-6">"#);
-
-    html.push_str(&format!(
-        r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+fn render_rewrite_box_html(id: i64, rewrite: &str, impact: &str, fallacies: &str) -> String {
+    let mut html = format!(
+        r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div></div>"#,
         escape_html(rewrite)
-    ));
-
-    if !impact.is_empty() {
-        html.push_str(&format!(
-            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
-  <div class="flex items-center gap-2 mb-2">
-    <div class="p-1 rounded bg-muted text-foreground">
-      <i data-lucide="trending-up" class="w-4 h-4 text-brand"></i>
-    </div>
-    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Impact Analysis</span>
-  </div>
-  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
-    {}
-  </p>
-</div>"#,
-            escape_html(impact)
-        ));
+    );
+    let imp = impact.trim();
+    let fal = fallacies.trim();
+    if !imp.is_empty() || !fal.is_empty() {
+        if let Ok(oob_cards) = (AnalysisCardsTemplate {
+            impact: imp,
+            fallacies: fal,
+            oob: true,
+            entry_id: Some(id),
+        })
+        .render()
+        {
+            html.push_str(&oob_cards);
+        }
     }
-
-    if !fallacies.is_empty() {
-        html.push_str(&format!(
-            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
-  <div class="flex items-center gap-2 mb-2">
-    <div class="p-1 rounded bg-muted text-foreground">
-      <i data-lucide="shield-alert" class="w-4 h-4 text-brand"></i>
-    </div>
-    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Logical Fallacy & Objectivity Check</span>
-  </div>
-  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
-    {}
-  </p>
-</div>"#,
-            escape_html(fallacies)
-        ));
-    }
-
-    html.push_str("</div>");
     html
 }
 
-fn render_analysis_cards_fragment(impact: &str, fallacies: &str) -> String {
-    let mut html = String::from(r#"<div id="ai-analysis-box" class="space-y-6 mt-6">"#);
-
-    if !impact.is_empty() {
-        html.push_str(&format!(
-            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
-  <div class="flex items-center gap-2 mb-2">
-    <div class="p-1 rounded bg-muted text-foreground">
-      <i data-lucide="trending-up" class="w-4 h-4 text-brand"></i>
-    </div>
-    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Impact Analysis</span>
-  </div>
-  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
-    {}
-  </p>
-</div>"#,
-            escape_html(impact)
-        ));
+async fn resolve_plain_fallback_text(
+    ai_service: &AiService,
+    id: i64,
+    raw_summary: &str,
+    content: &str,
+) -> String {
+    if let Some(record) = ai_service
+        .db
+        .get_summary_and_title(id)
+        .await
+        .filter(|r| r.model != "extractive-fallback")
+    {
+        let clean_db = ui_components::sanitizer::extract_plain_summary(&record.summary, "");
+        if !clean_db.is_empty() {
+            return clean_db;
+        }
     }
-
-    if !fallacies.is_empty() {
-        html.push_str(&format!(
-            r#"<div class="rounded-lg p-4 bg-muted/40 border border-border">
-  <div class="flex items-center gap-2 mb-2">
-    <div class="p-1 rounded bg-muted text-foreground">
-      <i data-lucide="shield-alert" class="w-4 h-4 text-brand"></i>
-    </div>
-    <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Logical Fallacy & Objectivity Check</span>
-  </div>
-  <p class="text-sm text-foreground/90 leading-relaxed font-sans">
-    {}
-  </p>
-</div>"#,
-            escape_html(fallacies)
-        ));
+    let plain = ui_components::sanitizer::extract_plain_summary(raw_summary, content);
+    if plain.is_empty() {
+        "No summary available.".to_string()
+    } else {
+        plain
     }
+}
 
-    html.push_str("</div>");
-    html
+fn rewrite_response_with_trigger(id: i64, html: String) -> Response {
+    let trigger_val = format!("ai-rewrite-done-{id}");
+    (
+        StatusCode::OK,
+        [("HX-Trigger-After-Settle", trigger_val)],
+        Html(html),
+    )
+        .into_response()
 }
 
 pub async fn get_entry_analysis_htmx(
@@ -1677,7 +1800,9 @@ pub async fn get_entry_analysis_htmx(
     Path(id): Path<i64>,
 ) -> Response {
     if !config.ai_enabled {
-        let html = r#"<div id="ai-analysis-box" class="hidden"></div>"#.to_string();
+        let html = format!(
+            r#"<div id="ai-analysis-box" data-target-entry-id="{id}" class="hidden"></div>"#
+        );
         return Html(html).into_response();
     }
 
@@ -1691,7 +1816,14 @@ pub async fn get_entry_analysis_htmx(
         let imp = record.impact.as_deref().unwrap_or("").trim();
         let fal = record.fallacies.as_deref().unwrap_or("").trim();
         if !imp.is_empty() || !fal.is_empty() {
-            let html = render_analysis_cards_fragment(imp, fal);
+            let html = AnalysisCardsTemplate {
+                impact: imp,
+                fallacies: fal,
+                oob: false,
+                entry_id: Some(id),
+            }
+            .render()
+            .unwrap_or_default();
             return Html(html).into_response();
         }
     }
@@ -1745,7 +1877,14 @@ pub async fn get_entry_analysis_htmx(
         .await
     {
         Ok((impact, fallacies)) => {
-            let html = render_analysis_cards_fragment(&impact, &fallacies);
+            let html = AnalysisCardsTemplate {
+                impact: impact.trim(),
+                fallacies: fallacies.trim(),
+                oob: false,
+                entry_id: Some(id),
+            }
+            .render()
+            .unwrap_or_default();
             Html(html).into_response()
         }
         Err(_) => {
@@ -1777,29 +1916,26 @@ pub async fn get_entry_rewrite_htmx(
     _headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
-    if !config.ai_enabled {
-        let html = r#"<div id="ai-rewrite-box" class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line"></div>"#.to_string();
-        return Html(html).into_response();
-    }
-
-    // 1. Check AiDb cache
-    if let Some(record) = ai_service
-        .db
-        .get_summary_and_title(id)
-        .await
-        .filter(|r| r.model != "extractive-fallback")
-    {
-        if let Some(ref r) = record.rewrite {
-            if !r.trim().is_empty() {
-                let impact = record.impact.as_deref().unwrap_or("");
-                let fallacies = record.fallacies.as_deref().unwrap_or("");
-                let html = render_analysis_fragment(impact, fallacies, r);
-                return Html(html).into_response();
+    // 1. Check AiDb cache when AI is enabled
+    if config.ai_enabled {
+        if let Some(record) = ai_service
+            .db
+            .get_summary_and_title(id)
+            .await
+            .filter(|r| r.model != "extractive-fallback")
+        {
+            if let Some(ref r) = record.rewrite {
+                if !r.trim().is_empty() {
+                    let impact = record.impact.as_deref().unwrap_or("");
+                    let fallacies = record.fallacies.as_deref().unwrap_or("");
+                    let html = render_rewrite_box_html(id, r, impact, fallacies);
+                    return rewrite_response_with_trigger(id, html);
+                }
             }
         }
     }
 
-    // 2. Query Miniflux via GraphQL to get entry details
+    // 2. Query Miniflux via GraphQL to get entry details (used for both !ai_enabled fallback and LLM generation)
     let gql = format!(
         r#"query {{
             entry(id: "{id}") {{
@@ -1819,7 +1955,7 @@ pub async fn get_entry_rewrite_htmx(
         .and_then(|d| d.get("entry"))
         .filter(|v| !v.is_null());
 
-    let (title, url, teaser) = if let Some(item) = entry_data {
+    let (title, url, raw_summary, raw_content, teaser) = if let Some(item) = entry_data {
         let t = item
             .get("title")
             .and_then(|v| v.as_str())
@@ -1830,44 +1966,63 @@ pub async fn get_entry_rewrite_htmx(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let s = item.get("summary").and_then(|v| v.as_str()).unwrap_or("");
-        let c = item.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        let tz = if !s.is_empty() { s } else { c }.to_string();
-        (t, u, tz)
+        let s = item
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let c = item
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tz = if !s.is_empty() { s.clone() } else { c.clone() };
+        (t, u, s, c, tz)
     } else {
-        (String::new(), String::new(), String::new())
+        (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
     };
 
+    if !config.ai_enabled {
+        let plain = ui_components::sanitizer::extract_plain_summary(&raw_summary, &raw_content);
+        let fallback_text = if plain.is_empty() {
+            "No summary available.".to_string()
+        } else {
+            plain
+        };
+        let html = format!(
+            r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-4"><p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p><div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div></div>"#,
+            escape_html(&fallback_text)
+        );
+        return rewrite_response_with_trigger(id, html);
+    }
+
     // 3. Extract content and generate rewrite
-    let content = ai_service
+    let extracted_content = ai_service
         .extractor
         .extract_content(&url, &title, &teaser)
         .await;
     match ai_service
-        .generate_rewrite_and_analysis(id, &title, &content)
+        .generate_rewrite_and_analysis(id, &title, &extracted_content)
         .await
     {
         Ok(analysis) => {
-            let html =
-                render_analysis_fragment(&analysis.impact, &analysis.fallacies, &analysis.rewrite);
-            Html(html).into_response()
+            let html = render_rewrite_box_html(
+                id,
+                &analysis.rewrite,
+                &analysis.impact,
+                &analysis.fallacies,
+            );
+            rewrite_response_with_trigger(id, html)
         }
         Err(_) => {
-            // Graceful fallback: render existing executive brief (or teaser)
-            let fallback = if let Some(record) = ai_service
-                .db
-                .get_summary_and_title(id)
-                .await
-                .filter(|r| r.model != "extractive-fallback")
-            {
-                if !record.summary.is_empty() {
-                    record.summary
-                } else {
-                    teaser
-                }
-            } else {
-                teaser
-            };
+            let fallback_text =
+                resolve_plain_fallback_text(&ai_service, id, &raw_summary, &raw_content).await;
             let retry_url = format!("/hx/entries/{id}/rewrite");
             let error_card = AiErrorCardTemplate {
                 title: "AI Rewrite Unavailable",
@@ -1882,14 +2037,15 @@ pub async fn get_entry_rewrite_htmx(
 
             let fallback_html = format!(
                 r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
-                escape_html(&fallback)
+                escape_html(&fallback_text)
             );
 
             let full_html = format!(
-                r#"<div id="ai-rewrite-box" class="space-y-6">{error_card}{fallback_html}</div>{}"#,
+                r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-6" data-fallback-summary="{}">{error_card}{fallback_html}</div>{}"#,
+                escape_html(&fallback_text),
                 crate::error::render_llm_error_toast()
             );
-            Html(full_html).into_response()
+            rewrite_response_with_trigger(id, full_html)
         }
     }
 }
@@ -2033,6 +2189,8 @@ pub async fn mark_entry_read_htmx(
                 .to_string(),
             sanitized_content: None,
             image_url: None,
+            rewrite: None,
+            body_images: Vec::new(),
             url: e
                 .get("url")
                 .and_then(|v| v.as_str())
@@ -2060,6 +2218,8 @@ pub async fn mark_entry_read_htmx(
             summary: "Article marked status.".to_string(),
             sanitized_content: None,
             image_url: None,
+            rewrite: None,
+            body_images: Vec::new(),
             url: "#".to_string(),
             author: None,
             is_read,
@@ -2121,6 +2281,7 @@ pub async fn mark_feed_read_htmx(
         offset: 0,
         feed_id: None,
         category_id: None,
+        auth_enabled: config.auth_enabled,
     };
 
     match template.render() {
@@ -2162,6 +2323,7 @@ pub async fn mark_all_read_htmx(
         offset: 0,
         feed_id: None,
         category_id: None,
+        auth_enabled: config.auth_enabled,
     };
 
     match template.render() {
@@ -2928,20 +3090,24 @@ mod tests {
         let html = r#"
             <div>
                 <p>Intro text</p>
-                <img src="https://example.com/hero.jpg" alt="Hero photo">
+                <img src="javascript:alert(1)" alt="xss">
+                <img src="data:image/png;base64,AAAA" alt="data">
+                <img src="//evil.example.com/proto.jpg" alt="proto-rel">
+                <img src="/relative/path.jpg" alt="rel">
+                <img src="HTTPS://example.com/hero.jpg" alt="Hero photo">
                 <img src="https://tracker.example.com/1x1.gif">
                 <p>Middle text</p>
-                <img src="https://example.com/photo2.png" alt="Body photo 1">
+                <img src="http://example.com/photo2.png" alt="Body photo 1">
                 <img src="https://feedburner.com/~r/test/~4/abc" alt="pixel">
                 <img src="https://example.com/photo3.webp" alt="Body photo 2">
             </div>
         "#;
         let (hero, body) = extract_article_images(html);
-        assert_eq!(hero, Some("https://example.com/hero.jpg".to_string()));
+        assert_eq!(hero, Some("HTTPS://example.com/hero.jpg".to_string()));
         assert_eq!(
             body,
             vec![
-                "https://example.com/photo2.png".to_string(),
+                "http://example.com/photo2.png".to_string(),
                 "https://example.com/photo3.webp".to_string()
             ]
         );
@@ -3159,12 +3325,142 @@ mod tests {
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
         assert!(
-            html.contains(
-                r#"<time datetime="2026-11-23T12:00:00Z" data-date-format="dd/mm/yyyy">23/11/2026</time>"#
-            ),
-            "Detail route must render DD/MM/YYYY <time> element: {}",
+            !html.contains("<time")
+                && !html.contains("data-date-format")
+                && !html.contains("Tech Feed")
+                && !html.contains("23/11/2026"),
+            "Detail route must omit feed_title and <time> metadata: {}",
             html
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_detail_triggers_rewrite_when_missing_and_omits_metadata() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use http_body_util::BodyExt;
+        use miniflux_client::client::MinifluxClient;
+        use miniflux_client::schema::build_schema;
+        use tower::ServiceExt;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/779"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 779,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Article 779 Missing Rewrite",
+                "url": "https://example.com/779",
+                "content": "<p>Clean summary teaser.</p><p>Second opening sentence.</p><p>Third detail sentence.</p><p>Fourth sentence raw Miniflux body 779 must never appear.</p><img src=\"https://example.com/hero779.jpg\">",
+                "published_at": "2026-11-23T12:00:00Z",
+                "reading_time": 4,
+                "feed": {
+                    "id": 10,
+                    "user_id": 1,
+                    "title": "Hidden Wire 779",
+                    "checked_at": "2026-11-23T12:00:00Z",
+                    "category": { "id": 1, "user_id": 1, "title": "Tech" }
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db_path = "mock:entry_detail_779";
+        let db = Arc::new(crate::ai::AiDb::new(db_path).await.unwrap());
+        db.save_summary(779, "<p>AI brief 779.</p>", "test-model")
+            .await
+            .unwrap();
+
+        let make_app = |ai_enabled: bool| {
+            let uri = mock_server.uri();
+            let db_p = db_path.to_string();
+            async move {
+                let config = Arc::new(Config {
+                    host: "127.0.0.1".to_string(),
+                    port: 3000,
+                    app_base_url: "http://127.0.0.1:3000".to_string(),
+                    auth_enabled: false,
+                    session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+                    oidc_issuer_url: "https://id.example.com".to_string(),
+                    oidc_client_id: "test-client".to_string(),
+                    oidc_client_secret: "test-secret".to_string(),
+                    oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+                    miniflux_base_url: uri.clone(),
+                    miniflux_api_key: "api-key".to_string(),
+                    ai_enabled,
+                    llm_cli_cmd: "llm".to_string(),
+                    llm_model: "test-model".to_string(),
+                    llm_extra_args: vec![],
+                    database_url: db_p,
+                    llm_provider: "openai".to_string(),
+                    llm_api_key: None,
+                    llm_api_base_url: None,
+                });
+                let client = MinifluxClient::new(uri, "api-key".to_string());
+                crate::app::build_app(config, build_schema(client)).await
+            }
+        };
+
+        // 1. ai_enabled = true without rewrite -> Option C skeleton + scoped analysis trigger
+        let app_ai = make_app(true).await;
+        let resp = app_ai
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/779")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains(r#"hx-get="/hx/entries/779/rewrite""#));
+        assert!(html.contains(r#"data-fallback-summary="AI brief 779.""#));
+        assert!(html.contains(r#"hx-trigger="ai-rewrite-done-779 from:body""#));
+        assert!(!html.contains("Fourth sentence raw Miniflux body 779"));
+        assert!(!html.contains("Hidden Wire 779"));
+        assert!(!html.contains("<time"));
+
+        // 2. ai_enabled = false -> inline warning + plain-text fallback, no /rewrite trigger, no #ai-analysis-box
+        let app_no_ai = make_app(false).await;
+        let resp_off = app_no_ai
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/779")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_off.status(), StatusCode::OK);
+        let html_off = String::from_utf8(
+            resp_off
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html_off.contains("AI rewrite is unavailable."));
+        assert!(html_off.contains("Clean summary teaser."));
+        assert!(!html_off.contains("Fourth sentence raw Miniflux body 779"));
+        assert!(!html_off.contains("/hx/entries/779/rewrite"));
+        assert!(!html_off.contains("id=\"ai-analysis-box\""));
     }
 
     #[tokio::test]
@@ -3289,16 +3585,193 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("HX-Trigger-After-Settle")
+                .and_then(|v| v.to_str().ok()),
+            Some("ai-rewrite-done-505")
+        );
 
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
-        assert!(html.contains("id=\"ai-rewrite-box\""));
+        assert!(html.contains(r#"id="ai-rewrite-box" data-target-entry-id="505""#));
+        assert!(html.contains(
+            r#"id="ai-analysis-box" hx-swap-oob="outerHTML" data-target-entry-id="505""#
+        ));
         assert!(html.contains("Impact Analysis"));
         assert!(html.contains("Crucial impact on tech supply chains."));
         assert!(html.contains("Logical Fallacy & Objectivity Check"));
         assert!(html.contains("Không phát hiện lỗi ngụy biện"));
         assert!(html.contains("Cached rewrite lead sentence for 505."));
+
+        let pos_rewrite = html.find("id=\"ai-rewrite-box\"").unwrap();
+        let pos_oob = html
+            .find(r#"id="ai-analysis-box" hx-swap-oob="outerHTML""#)
+            .unwrap();
+        assert!(pos_rewrite < pos_oob);
+        let rewrite_section = &html[pos_rewrite..pos_oob];
+        assert!(
+            !rewrite_section.contains("Impact Analysis"),
+            "Analysis cards must be in OOB #ai-analysis-box, not inside #ai-rewrite-box"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_entry_rewrite_htmx_oob_analysis_and_plain_text_fallback() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/508"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 508,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Plain Fallback Story 508",
+                "url": "https://example.com/508",
+                "content": "<p>First line.</p><p>Second <b>bold</b> line.</p><p>Third detail.</p><p>Fourth sentence raw full body 508.</p><script>alert(1)</script>",
+                "published_at": "2026-11-24T00:00:00Z",
+                "feed": { "id": 10, "user_id": 1, "title": "Tech Source" }
+            })))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/509"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 509,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Empty Fallback Story 509",
+                "url": "https://example.com/509",
+                "summary": "",
+                "content": "",
+                "published_at": "2026-11-24T00:00:00Z",
+                "feed": { "id": 10, "user_id": 1, "title": "Tech Source" }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let make_app = |ai_enabled: bool| {
+            let uri = mock_server.uri();
+            async move {
+                let config = Arc::new(Config {
+                    host: "127.0.0.1".to_string(),
+                    port: 3000,
+                    app_base_url: "http://127.0.0.1:3000".to_string(),
+                    auth_enabled: false,
+                    session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+                    oidc_issuer_url: "https://id.example.com".to_string(),
+                    oidc_client_id: "test-client".to_string(),
+                    oidc_client_secret: "test-secret".to_string(),
+                    oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+                    miniflux_base_url: uri.clone(),
+                    miniflux_api_key: "api-key".to_string(),
+                    ai_enabled,
+                    llm_cli_cmd: "/nonexistent/binary".to_string(),
+                    llm_model: "test-model".to_string(),
+                    llm_extra_args: vec![],
+                    database_url: ":memory:".to_string(),
+                    llm_provider: "openai".to_string(),
+                    llm_api_key: None,
+                    llm_api_base_url: None,
+                });
+                crate::app::build_app(
+                    config,
+                    build_schema(MinifluxClient::new(uri, "api-key".to_string())),
+                )
+                .await
+            }
+        };
+
+        // 1. !ai_enabled returns warning + plain-text fallback + HX-Trigger-After-Settle
+        let app_off = make_app(false).await;
+        let resp_508 = app_off
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/508/rewrite")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp_508
+                .headers()
+                .get("HX-Trigger-After-Settle")
+                .and_then(|v| v.to_str().ok()),
+            Some("ai-rewrite-done-508")
+        );
+        let html_508 = String::from_utf8(
+            resp_508
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html_508.contains("AI rewrite is unavailable."));
+        assert!(html_508.contains("First line. Second bold line."));
+        assert!(!html_508.contains("<script>"));
+        assert!(!html_508.contains("Fourth sentence raw full body 508"));
+
+        // 2. Empty summary & content returns "No summary available."
+        let resp_509 = app_off
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/509/rewrite")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let html_509 = String::from_utf8(
+            resp_509
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html_509.contains("No summary available."));
+
+        // 3. ai_enabled = true LLM failure returns error card + stripped plain fallback + HX-Trigger-After-Settle
+        let app_fail = make_app(true).await;
+        let resp_fail = app_fail
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/508/rewrite")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp_fail
+                .headers()
+                .get("HX-Trigger-After-Settle")
+                .and_then(|v| v.to_str().ok()),
+            Some("ai-rewrite-done-508")
+        );
+        let html_fail = String::from_utf8(
+            resp_fail
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html_fail.contains("is-error"));
+        assert!(html_fail.contains("First line. Second bold line."));
+        assert!(!html_fail.contains("<script>"));
     }
 
     #[tokio::test]
@@ -3925,7 +4398,7 @@ mod tests {
                     "url": "https://example.com/880",
                     "comments_url": "",
                     "author": "Hidden Guest Author",
-                    "content": "<p>Original Miniflux Body</p><script>alert(1)</script><img src=\"https://example.com/p.jpg\" onerror=\"alert(2)\">",
+                    "content": "<p>Original Miniflux Body</p><script>alert(1)</script><img src=\"https://example.com/p.jpg\" onerror=\"alert(2)\"><img src=\"https://example.com/p2.jpg\"><img src=\"javascript:alert(3)\">",
                     "status": "unread",
                     "starred": false,
                     "reading_time": 7,
@@ -4008,15 +4481,22 @@ mod tests {
 
             assert_eq!(item["id"], 880);
             assert_eq!(item["title"], "AI Suggested Title 880");
-            assert_eq!(item["formatted_date"], "23/11/2026");
-            let sanitized = item["sanitized_content"].as_str().unwrap();
-            assert!(
-                sanitized.contains("<p>Original Miniflux Body</p>"),
-                "Guest detail payload must preserve sanitized Miniflux content: {sanitized}"
+            assert_eq!(
+                item["summary"],
+                "AI list summary that must not replace Miniflux content in guest details"
             );
-            assert!(!sanitized.contains("<script>"));
-            assert!(!sanitized.contains("onerror"));
-            assert!(!sanitized.contains("AI list summary"));
+            assert_eq!(item["rewrite"], "AI rewrite");
+            assert_eq!(item["image_url"], "https://example.com/p.jpg");
+            assert_eq!(
+                item["body_images"],
+                serde_json::json!(["https://example.com/p2.jpg"])
+            );
+            assert!(!html[start..end].contains("Original Miniflux Body"));
+            assert!(!html[start..end].contains("javascript:alert(3)"));
+            assert!(item.get("sanitized_content").is_none());
+            assert!(item.get("feed_title").is_none());
+            assert!(item.get("published_at").is_none());
+            assert!(item.get("formatted_date").is_none());
             assert!(item.get("author").is_none());
             assert!(item.get("reading_time").is_none());
             assert!(item.get("readingTime").is_none());
@@ -4272,7 +4752,10 @@ mod tests {
             ai_a_bg.in_flight.lock().await.remove(&key_a);
         });
 
-        let schema_a = build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string()));
+        let schema_a = build_schema(MinifluxClient::new(
+            mock_server.uri(),
+            "api-key".to_string(),
+        ));
         let resp_a = executive_brief_htmx(
             Query(make_query()),
             State(schema_a),
@@ -4282,7 +4765,13 @@ mod tests {
         .await;
         assert_eq!(resp_a.status(), StatusCode::OK);
         let html_a = String::from_utf8(
-            resp_a.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            resp_a
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(
@@ -4314,7 +4803,10 @@ mod tests {
         });
 
         let start_b = std::time::Instant::now();
-        let schema_b = build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string()));
+        let schema_b = build_schema(MinifluxClient::new(
+            mock_server.uri(),
+            "api-key".to_string(),
+        ));
         let resp_b = executive_brief_htmx(
             Query(make_query()),
             State(schema_b),
@@ -4327,7 +4819,13 @@ mod tests {
             "Must exit immediately when in_flight clears without brief instead of waiting 4s/250s"
         );
         let html_b = String::from_utf8(
-            resp_b.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            resp_b
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(html_b.contains("is-error"));
@@ -4363,7 +4861,10 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .into(),
             in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         });
-        let schema_c = build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string()));
+        let schema_c = build_schema(MinifluxClient::new(
+            mock_server.uri(),
+            "api-key".to_string(),
+        ));
         let resp_c = executive_brief_htmx(
             Query(make_query()),
             State(schema_c),
@@ -4372,7 +4873,13 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
         )
         .await;
         let html_c = String::from_utf8(
-            resp_c.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            resp_c
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(html_c.contains("is-error"));
@@ -4387,7 +4894,155 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .get_summary_and_title(910)
             .await
             .expect("Valid partial item should be persisted");
-        assert_eq!(saved_910.suggested_title.as_deref(), Some("Partial Title 910"));
+        assert_eq!(
+            saved_910.suggested_title.as_deref(),
+            Some("Partial Title 910")
+        );
+        assert!(
+            html_c
+                .contains(r#"<div id="executive-brief-sync-data" hidden hx-swap-oob="outerHTML""#),
+            "Case C partial response must emit #executive-brief-sync-data OOB"
+        );
+        assert!(!html_c.contains(r#"class="hidden""#));
+    }
+
+    #[tokio::test]
+    async fn test_executive_brief_emits_sync_data_for_magazine_and_guest() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total": 2,
+                "entries": [
+                    {
+                        "id": 930,
+                        "user_id": 1,
+                        "feed_id": 10,
+                        "title": "Original 930",
+                        "url": "http://example.com/930",
+                        "content": "<p>Body 930</p>",
+                        "status": "unread",
+                        "starred": false,
+                        "reading_time": 2,
+                        "created_at": chrono::Utc::now().to_rfc3339(),
+                        "published_at": chrono::Utc::now().to_rfc3339(),
+                        "feed": { "id": 10, "user_id": 1, "title": "Tech Feed" }
+                    },
+                    {
+                        "id": 931,
+                        "user_id": 1,
+                        "feed_id": 10,
+                        "title": "Original 931",
+                        "url": "http://example.com/931",
+                        "content": "<p>Body 931</p>",
+                        "status": "unread",
+                        "starred": false,
+                        "reading_time": 2,
+                        "created_at": chrono::Utc::now().to_rfc3339(),
+                        "published_at": chrono::Utc::now().to_rfc3339(),
+                        "feed": { "id": 10, "user_id": 1, "title": "Tech Feed" }
+                    }
+                ]
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let db = Arc::new(crate::ai::AiDb::new_mock());
+        let page_key = crate::ai::compute_page_key("unread", &[930, 931]);
+        db.save_page_brief_with_key(&page_key, "Cached Brief 930+931")
+            .await
+            .unwrap();
+        // 930 has rewrite & HTML-wrapped summary WITHOUT suggested_title -> must STILL sync as plain text
+        db.save_summary_and_title_with_rewrite(
+            930,
+            None,
+            "<p>Cached <b>brief</b> 930.</p>",
+            Some("Cached rewrite 930."),
+            "test-model",
+        )
+        .await
+        .unwrap();
+        // 931 is extractive-fallback -> must be ignored
+        db.save_summary_and_title_with_rewrite(
+            931,
+            Some("Stale Fallback Title 931"),
+            "Stale summary 931",
+            Some("Stale rewrite 931"),
+            "extractive-fallback",
+        )
+        .await
+        .unwrap();
+
+        let ai_service = Arc::new(crate::ai::AiService {
+            db: db.clone(),
+            extractor: crate::ai::ArticleExtractor::new(),
+            llm: crate::ai::llm::LlmCliRunner::new(
+                "/nonexistent/binary".to_string(),
+                "test-model".to_string(),
+                vec![],
+            )
+            .into(),
+            in_flight: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
+        });
+        let config = Arc::new(Config {
+            host: "127.0.0.1".to_string(),
+            port: 3000,
+            app_base_url: "http://127.0.0.1:3000".to_string(),
+            auth_enabled: false,
+            session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+            oidc_issuer_url: "https://id.example.com".to_string(),
+            oidc_client_id: "test-client".to_string(),
+            oidc_client_secret: "test-secret".to_string(),
+            oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+            miniflux_base_url: mock_server.uri(),
+            miniflux_api_key: "api-key".to_string(),
+            ai_enabled: true,
+            llm_cli_cmd: "/nonexistent/binary".to_string(),
+            llm_model: "test-model".to_string(),
+            llm_extra_args: vec![],
+            database_url: "mock:db".to_string(),
+            llm_provider: "openai".to_string(),
+            llm_api_key: None,
+            llm_api_base_url: None,
+        });
+
+        let query = EntriesFilterQuery {
+            status: Some("unread".to_string()),
+            limit: Some(15),
+            offset: Some(0),
+            feed_id: None,
+            category_id: None,
+            search: None,
+            request_brief: None,
+        };
+        let resp = executive_brief_htmx(
+            Query(query),
+            State(build_schema(MinifluxClient::new(
+                mock_server.uri(),
+                "api-key".to_string(),
+            ))),
+            State(config),
+            State(ai_service),
+        )
+        .await;
+        let html = String::from_utf8(
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(!html.contains(r#"class="hidden""#));
+        assert!(html.contains(
+            r#"<div id="executive-brief-sync-data" hidden hx-swap-oob="outerHTML" data-entries=""#
+        ));
+        assert!(html.contains("Cached rewrite 930."));
+        assert!(html.contains("Cached brief 930."));
+        assert!(!html.contains("<p>Cached"));
+        assert!(!html.contains("Stale Fallback Title 931"));
+        assert!(!html.contains("Stale rewrite 931"));
     }
 
     #[tokio::test]
@@ -4495,7 +5150,10 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
 
         let app = crate::app::build_app(
             config,
-            build_schema(MinifluxClient::new(mock_server.uri(), "api-key".to_string())),
+            build_schema(MinifluxClient::new(
+                mock_server.uri(),
+                "api-key".to_string(),
+            )),
         )
         .await;
 
@@ -4513,7 +5171,13 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .unwrap();
         assert_eq!(detail_resp.status(), StatusCode::OK);
         let detail_html = String::from_utf8(
-            detail_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            detail_resp
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(detail_html.contains("Original Miniflux Title 920"));
@@ -4535,7 +5199,13 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .unwrap();
         assert_eq!(sum_resp.status(), StatusCode::OK);
         let sum_html = String::from_utf8(
-            sum_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            sum_resp
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(sum_html.contains("id=\"ai-summary-slot-920\""));
@@ -4560,7 +5230,13 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .unwrap();
         assert_eq!(sum_404_resp.status(), StatusCode::OK);
         let sum_404_html = String::from_utf8(
-            sum_404_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            sum_404_resp
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(sum_404_html.contains("Summary unavailable"));
@@ -4581,7 +5257,13 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .unwrap();
         assert_eq!(analysis_resp.status(), StatusCode::OK);
         let analysis_html = String::from_utf8(
-            analysis_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            analysis_resp
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(analysis_html.contains("id=\"ai-analysis-box\""));
@@ -4602,7 +5284,13 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
             .unwrap();
         assert_eq!(rewrite_resp.status(), StatusCode::OK);
         let rewrite_html = String::from_utf8(
-            rewrite_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+            rewrite_resp
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
         )
         .unwrap();
         assert!(rewrite_html.contains("id=\"ai-rewrite-box\""));

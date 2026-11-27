@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | yes | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** Stop (paused-wait; Gate C commit, push done)
 - **Gate B settle gen:** 1
 - **Gate B approved:** yes — gen:1
 - **Build armed:** none
@@ -35,3 +35,4 @@
 - **20:28** · review · code-review-phase & lens-api clean · copied lens-api Result to Merged; Next=test-lite
 - **20:29** · test-lite · success (261 passed, 0 failed) · Next=gate-c (blocking)
 - **20:34** · gate-c · approved commit, push · clarity-check ok — merge; Next=merge
+- **20:35** · merge · committed 6a12a69 and pushed main (3e803cb..6a12a69) · Status=paused (PR/merge not requested)

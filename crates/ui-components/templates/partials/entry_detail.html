@@ -11,7 +11,7 @@
 
     <div class="flex items-center gap-2 h-8 shrink-0">
       <a 
-        href="{{ entry.url }}" 
+        href="{{ self.safe_entry_url() }}" 
         target="_blank" 
         rel="noopener noreferrer" 
         onclick="markArticleRead({{ entry.id }})" 
@@ -55,7 +55,7 @@
       <button 
         onclick="triggerNativeBookmark(this.dataset.title, this.dataset.url)" 
         data-title="{{ entry.title }}"
-        data-url="{{ entry.url }}"
+        data-url="{{ self.safe_entry_url() }}"
         class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
         title="Bookmark article">
         <i data-lucide="bookmark" class="w-4 h-4 shrink-0"></i>
@@ -71,13 +71,6 @@
       <img src="{{ hero }}" alt="{{ entry.title }}" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentElement.style.display='none'" class="absolute inset-0 w-full h-full object-cover">
       <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent"></div>
       <div class="relative z-10 p-5 md:p-6 w-full">
-        <div class="flex items-center gap-2 text-xs text-white/80 mb-2 font-sans tabular drop-shadow-sm">
-          <span class="font-medium text-white">{{ entry.feed_title }}</span>
-          {% if !entry.published_at.trim().is_empty() %}
-          <span>•</span>
-          <time datetime="{{ entry.published_at }}" data-date-format="dd/mm/yyyy">{{ self.formatted_published_at() }}</time>
-          {% endif %}
-        </div>
         <h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">
           {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
         </h1>
@@ -85,25 +78,36 @@
     </div>
     {% else %}
     <div class="mb-6">
-      <div class="flex items-center gap-2 text-xs text-muted-foreground mb-2 font-sans tabular">
-        <span class="font-medium text-foreground">{{ entry.feed_title }}</span>
-        {% if !entry.published_at.trim().is_empty() %}
-        <span>•</span>
-        <time datetime="{{ entry.published_at }}" data-date-format="dd/mm/yyyy">{{ self.formatted_published_at() }}</time>
-        {% endif %}
-      </div>
       <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">
         {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
       </h1>
     </div>
     {% endif %}
 
-    <div id="ai-rewrite-box" class="space-y-6">
+    {% if !needs_rewrite && !rewrite.trim().is_empty() %}
+    <div id="ai-rewrite-box" data-target-entry-id="{{ entry.id }}" class="space-y-6">
       <!-- Inverted Pyramid Rewrite Content -->
       <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">
         {{ rewrite }}
       </div>
     </div>
+    {% else if needs_rewrite %}
+    <div id="ai-rewrite-box" data-target-entry-id="{{ entry.id }}" class="space-y-6" hx-get="/hx/entries/{{ entry.id }}/rewrite" hx-trigger="load" hx-swap="outerHTML" data-fallback-summary="{{ fallback_summary }}">
+      <p class="text-xs text-muted-foreground font-sans">AI rewrite is not ready yet — generating...</p>
+      <div class="animate-pulse space-y-2.5">
+        <div class="h-3.5 bg-muted rounded w-full"></div>
+        <div class="h-3.5 bg-muted rounded w-11/12"></div>
+        <div class="h-3.5 bg-muted rounded w-4/5"></div>
+      </div>
+    </div>
+    {% else %}
+    <div id="ai-rewrite-box" data-target-entry-id="{{ entry.id }}" class="space-y-4">
+      <p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p>
+      <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">
+        {% if !fallback_summary.trim().is_empty() %}{{ fallback_summary }}{% else %}No summary available.{% endif %}
+      </div>
+    </div>
+    {% endif %}
 
     {% if !body_images.is_empty() %}
     <!-- Body Images Gallery -->
@@ -117,9 +121,11 @@
     {% endif %}
 
     {% if has_analysis %}
-    {% include "analysis_cards.html" %}
-    {% else %}
-    <div id="ai-analysis-box" class="animate-pulse space-y-4 my-4" hx-get="/hx/entries/{{ entry.id }}/analysis" hx-trigger="load" hx-swap="outerHTML">
+    <div id="ai-analysis-box" data-target-entry-id="{{ entry.id }}" class="space-y-6 mt-6">
+      {% include "analysis_cards_inner.html" %}
+    </div>
+    {% else if ai_enabled %}
+    <div id="ai-analysis-box" data-target-entry-id="{{ entry.id }}" class="animate-pulse space-y-4 my-4" hx-get="/hx/entries/{{ entry.id }}/analysis" hx-trigger="{% if needs_rewrite %}ai-rewrite-done-{{ entry.id }} from:body{% else %}load{% endif %}" hx-swap="outerHTML">
       <div class="rounded-lg p-4 bg-muted/30 border border-border space-y-2">
         <div class="h-4 bg-muted rounded w-1/4"></div>
         <div class="h-3 bg-muted rounded w-3/4"></div>

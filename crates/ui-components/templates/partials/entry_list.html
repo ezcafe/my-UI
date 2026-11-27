@@ -237,6 +237,8 @@
 <span id="filter-unread-count" hx-swap-oob="true" data-base-unread="{{ unread }}" class="text-xs tabular">({{ unread }})</span>
 {% endif %}
 
+<div id="executive-brief-sync-data" hidden></div>
+
 {% if let Some(guest_json) = self.guest_entries_json() %}
 <script id="entries-guest-data" type="application/json">{{ guest_json|safe }}</script>
 {% endif %}

@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -37,3 +37,4 @@
 - **15:07** · test-lite · success · 77 ui-components + 140 unit + 8 e2e passed, clippy clean; Next=gate-c
 - **15:08** · gate-c · approved · commit, push (user: "Commit and push"); Next=merge
 - **15:08** · clarity-check ok — merge
+- **15:10** · merge · success · committed and pushed to origin/main (e6d2082); Status=paused (PR/merge not approved)

@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -33,3 +33,4 @@
 - **14:07** · code-review-phase · clean · 05-code-review Adv+Quality clean; Next test-lite
 - **14:08** · test-lite · success · 87 ui-components tests + clippy passed (server loopback 127.0.0.1 blocked in sandbox); Next gate-c
 - **14:11** · gate-c · approved · commit, push (clarity-check ok — merge); Next merge
+- **14:13** · merge · success · committed ac53956 on main & pushed to origin/main; Status paused (PR/merge not requested)

@@ -160,14 +160,7 @@ pub async fn index_page(
         (std::collections::HashMap::new(), None)
     };
 
-    for entry in &mut view_models {
-        if let Some(record) = ai_summaries.get(&entry.id) {
-            entry.suggested_title = record.suggested_title.clone();
-            if !record.summary.is_empty() {
-                entry.summary = record.summary.clone();
-            }
-        }
-    }
+    crate::routes::entries::apply_ai_summaries_to_entries(&mut view_models, &ai_summaries);
 
     if config.ai_enabled {
         let candidates: Vec<crate::ai::prefetch::PrefetchCandidate> = view_models
@@ -207,6 +200,7 @@ pub async fn index_page(
         offset: 0,
         feed_id: None,
         category_id: None,
+        auth_enabled: config.auth_enabled,
     };
     let entries_list_html = list_template.render().unwrap_or_default();
 

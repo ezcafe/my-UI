@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** gate-c
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -37,3 +37,4 @@
 - **23:55** · code-review-phase · clean · M-01/M-02 fixed via fix-review (83 ui-components, 140 server, 8 e2e, clippy 0, fmt clean); Adv+Quality clean
 - **23:57** · test-lite · success · workspace tests (24+140+8+83 pass), clippy 0, fmt clean; Next: gate-c
 - **00:05** · gate-c · approved · user approved commit, push; clarity-check ok — merge
+- **00:07** · merge · paused · committed 3e803cb and pushed main -> origin/main (commit+push only; PR/merge not approved)

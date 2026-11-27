@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** done
+- **Last stage:** merge
+- **Next:** none
 - **Gate B settle gen:** 1
 - **Gate B approved:** none
 - **Build armed:** none
@@ -39,3 +39,4 @@
 - **07:49** · code-review-phase · 05-review-log.md clean (Adversarial: clean, Quality: clean) · Next: test-lite
 - **07:50** · test-lite · 06-test-log.md success (248/248 tests, clippy 0, fmt clean) · Next: gate-c
 - **07:51** · gate-c · user approved commit, push · clarity-check ok — merge
+- **07:52** · merge · committed 4cd95ba on main & pushed to origin/main · Status done

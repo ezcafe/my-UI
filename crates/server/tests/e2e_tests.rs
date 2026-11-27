@@ -778,7 +778,7 @@ async fn test_e2e_page_load_and_detail_drawer_rewrite_flow() {
         "Cached rewrite must not load skeleton"
     );
 
-    // 2. Open drawer for Story 2 -> renders rewrite on load and analysis skeleton loader with hx-get
+    // 2. Open drawer for Story 2 -> renders Option C rewrite on load and scoped analysis trigger
     let req2 = Request::builder()
         .uri("/hx/entries/2")
         .header("HX-Request", "true")
@@ -796,8 +796,11 @@ async fn test_e2e_page_load_and_detail_drawer_rewrite_flow() {
             .to_vec(),
     )
     .unwrap();
-    assert!(body2.contains("Executive brief for story 2."));
-    assert!(body2.contains("hx-get=\"/hx/entries/2/analysis\""));
+    assert!(body2.contains(r#"hx-get="/hx/entries/2/rewrite""#));
+    assert!(body2.contains(r#"data-fallback-summary="Executive brief for story 2.""#));
+    assert!(body2.contains(r#"hx-get="/hx/entries/2/analysis""#));
+    assert!(body2.contains(r#"hx-trigger="ai-rewrite-done-2 from:body""#));
+    assert!(!body2.contains("Content for second story 2"));
     assert!(body2.contains("animate-pulse"));
 
     // 3. Trigger HTMX lazy-load route for Story 2 analysis

@@ -1,31 +1,3 @@
-<div id="ai-analysis-box" class="space-y-6 mt-6">
-  <!-- Impact Analysis Highlight Card -->
-  {% if !impact.is_empty() %}
-  <div class="rounded-lg p-4 bg-muted/40 border border-border">
-    <div class="flex items-center gap-2 mb-2">
-      <div class="p-1 rounded bg-muted text-foreground">
-        <i data-lucide="trending-up" class="w-4 h-4 text-brand"></i>
-      </div>
-      <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Impact Analysis</span>
-    </div>
-    <p class="text-sm text-foreground/90 leading-relaxed font-sans">
-      {{ impact }}
-    </p>
-  </div>
-  {% endif %}
-
-  <!-- Logical Fallacy & Objectivity Check Highlight Card -->
-  {% if !fallacies.is_empty() %}
-  <div class="rounded-lg p-4 bg-muted/40 border border-border">
-    <div class="flex items-center gap-2 mb-2">
-      <div class="p-1 rounded bg-muted text-foreground">
-        <i data-lucide="shield-alert" class="w-4 h-4 text-brand"></i>
-      </div>
-      <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Logical Fallacy & Objectivity Check</span>
-    </div>
-    <p class="text-sm text-foreground/90 leading-relaxed font-sans">
-      {{ fallacies }}
-    </p>
-  </div>
-  {% endif %}
+<div id="ai-analysis-box"{% if oob %} hx-swap-oob="outerHTML"{% endif %}{% if let Some(eid) = entry_id %} data-target-entry-id="{{ eid }}"{% endif %} class="space-y-6 mt-6">
+  {% include "analysis_cards_inner.html" %}
 </div>

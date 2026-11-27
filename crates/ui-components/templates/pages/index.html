@@ -320,6 +320,7 @@
   let isSearchActive = false;
   let activeEntriesRequestXhr = null;
   let pendingAuthMarkReadXhr = null;
+  let autoAdvancingUnreadUrl = null;
 
   function escapeHtml(str) {
     if (!str) return '';
@@ -577,6 +578,7 @@
       closeDetailPanel();
     }
     cancelPendingMarkPageRead();
+    autoAdvancingUnreadUrl = null;
     const status = btn.getAttribute('data-status') || 'unread';
     isSearchActive = false;
     const searchInput = document.getElementById('search-input');
@@ -2145,6 +2147,7 @@
   }
 
   function refreshCurrentEntriesList() {
+    autoAdvancingUnreadUrl = null;
     const statusInput = document.getElementById('active-status');
     const status = (statusInput && statusInput.value) ? statusInput.value : 'unread';
     const searchInput = document.getElementById('search-input');
@@ -2321,13 +2324,28 @@
 
     const magView = document.getElementById('entries-magazine-view');
     const paginationNav = document.querySelector('#entries-list nav[aria-label="Pagination"]');
+    const nextBtn = document.getElementById('pagination-next-btn');
+    const nextUrl = nextBtn ? nextBtn.getAttribute('hx-get') : null;
+    const prevBtn = document.getElementById('pagination-prev-btn');
     let emptyEl = document.getElementById('client-empty-state');
     if (isUnreadFilter && visibleUnreadRowCount === 0 && rows.length > 0) {
+      if (nextUrl && !pendingGuestMarkRead) {
+        if (autoAdvancingUnreadUrl !== nextUrl && window.htmx && typeof htmx.ajax === 'function') {
+          autoAdvancingUnreadUrl = nextUrl;
+          if (typeof showEntriesLoadingState === 'function') {
+            showEntriesLoadingState();
+          }
+          htmx.ajax('GET', nextUrl, { target: '#entries-list', swap: 'innerHTML' });
+        }
+        return;
+      }
       if (magView) {
         magView.style.display = 'none';
       }
-      if (paginationNav) {
+      if (paginationNav && !prevBtn) {
         paginationNav.style.display = 'none';
+      } else if (paginationNav) {
+        paginationNav.style.display = '';
       }
       if (!emptyEl) {
         emptyEl = document.createElement('div');
@@ -2353,6 +2371,9 @@
         }
       }
     } else {
+      if (visibleUnreadRowCount > 0) {
+        autoAdvancingUnreadUrl = null;
+      }
       if (magView) {
         magView.style.display = '';
       }

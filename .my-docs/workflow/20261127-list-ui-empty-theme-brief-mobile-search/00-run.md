@@ -4,9 +4,9 @@
 - **Mode:** simple
 - **Review profile:** lite
 - **Has UI / API / DB / auth/PII/schema:** yes | no | no | no
-- **Status:** running
-- **Last stage:** gate-c
-- **Next:** merge
+- **Status:** paused
+- **Last stage:** merge
+- **Next:** Stop (paused-wait — Gate C approved commit, push; PR/merge not approved)
 - **Gate B settle gen:** 0
 - **Gate B approved:** none
 - **Build armed:** none
@@ -38,3 +38,4 @@
 - **15:52** · test-lite · success (`06-test-report.md`, Test path: lite, 273 passed, 0 failed) → Next: gate-c
 - **16:18** · gate-c · approved: commit, push (subset — PR/merge not approved)
 - **16:18** · clarity-check ok — merge · Tests success + Lenses clean + Gate C approved (commit, push)
+- **16:19** · merge · success (commit `d38a784`, push `9e9ac54..d38a784` to `origin/main`; Status: paused)

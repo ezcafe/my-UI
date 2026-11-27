@@ -340,26 +340,34 @@
         border: none;
       }
 
-      /* Mobile Search Toggle: Collapsible full-width search bar above filter pills */
+      /* Mobile Search Toggle: Overlay search bar on top of filter pills without pushing them down */
       #filter-search-bar {
-        flex-wrap: wrap;
-        gap: 0.5rem;
+        position: relative;
       }
 
       #mobile-search-toggle-btn {
         display: inline-flex;
+        position: relative;
+        z-index: 20;
       }
 
       #search-form {
         display: none;
-        order: -1;
-        flex-basis: 100%;
-        width: 100%;
-        flex-shrink: 0;
+      }
+
+      #filter-search-bar[data-mobile-search-open="true"] .filter-pills-row {
+        visibility: hidden;
+        pointer-events: none;
       }
 
       #filter-search-bar[data-mobile-search-open="true"] #search-form {
         display: flex;
+        position: absolute;
+        left: 1.5rem;
+        right: 4rem;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 15;
       }
 
       #search-input {

@@ -2215,24 +2215,29 @@ mod tests {
         let cq_slice = &html[cq_index..];
 
         assert!(
-            cq_slice.contains("#filter-search-bar") && cq_slice.contains("flex-wrap: wrap"),
-            "Mobile container query must wrap #filter-search-bar"
+            cq_slice.contains("#filter-search-bar") && cq_slice.contains("position: relative"),
+            "Mobile container query must position #filter-search-bar relatively for overlay search"
         );
         assert!(
-            cq_slice.contains("#mobile-search-toggle-btn") && cq_slice.contains("display: inline-flex"),
-            "Mobile container query must display #mobile-search-toggle-btn"
+            cq_slice.contains("#mobile-search-toggle-btn")
+                && cq_slice.contains("display: inline-flex")
+                && cq_slice.contains("z-index: 20"),
+            "Mobile container query must display #mobile-search-toggle-btn above overlay"
         );
         assert!(
-            cq_slice.contains("#search-form")
-                && cq_slice.contains("display: none")
-                && cq_slice.contains("order: -1")
-                && cq_slice.contains("flex-basis: 100%"),
-            "Mobile container query must hide #search-form by default and place it above filter pills"
+            cq_slice.contains("#search-form") && cq_slice.contains("display: none"),
+            "Mobile container query must hide #search-form by default"
+        );
+        assert!(
+            cq_slice.contains("#filter-search-bar[data-mobile-search-open=\"true\"] .filter-pills-row")
+                && cq_slice.contains("visibility: hidden"),
+            "Mobile container query must keep filter pills in-flow (visibility: hidden) so they are not pushed down"
         );
         assert!(
             cq_slice.contains("#filter-search-bar[data-mobile-search-open=\"true\"] #search-form")
-                && cq_slice.contains("display: flex"),
-            "Mobile container query must show #search-form when data-mobile-search-open=\"true\""
+                && cq_slice.contains("display: flex")
+                && cq_slice.contains("position: absolute"),
+            "Mobile container query must overlay #search-form on top of filter pills when data-mobile-search-open=\"true\""
         );
         assert!(
             cq_slice.contains("#search-input") && cq_slice.contains("width: 100%"),
@@ -5084,6 +5089,12 @@ mod tests {
             sync_fn.contains(r#"id="empty-refresh-btn""#)
                 && sync_fn.contains(r#"onclick="refreshCurrentEntriesList()""#),
             "syncDomReadStates #client-empty-state must include #empty-refresh-btn"
+        );
+        assert!(
+            sync_fn.contains("pagination-next-btn")
+                && sync_fn.contains("autoAdvancingUnreadUrl")
+                && sync_fn.contains("htmx.ajax('GET', nextUrl"),
+            "syncDomReadStates must auto-advance to next unread page when #pagination-next-btn exists instead of showing All caught up"
         );
     }
 

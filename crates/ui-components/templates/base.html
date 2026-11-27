@@ -189,6 +189,12 @@
       font-variant-numeric: tabular-nums lining-nums;
     }
 
+    /* Bionic Reading Fixation Bold */
+    b.bionic-fixation {
+      font-weight: 700;
+      display: inline;
+    }
+
     /* Annuaire Dotted Leader Utility */
     .leader {
       flex: 1 1 1rem;
@@ -485,15 +491,20 @@
       }
     }
 
+    .magazine-center-col {
+      container-type: inline-size;
+      container-name: mag-center;
+    }
+
     .magazine-p2-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
       gap: 0.875rem;
     }
 
-    @container (max-width: 32rem) {
+    @container mag-center (min-width: 43rem) {
       .magazine-p2-grid {
-        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
     }
 
@@ -740,19 +751,125 @@
       }
     });
 
+    const bionicWordSegmenter = (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function')
+      ? new Intl.Segmenter('vi', { granularity: 'word' })
+      : null;
+    const bionicGraphemeSegmenter = (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function')
+      ? new Intl.Segmenter('vi', { granularity: 'grapheme' })
+      : null;
+
+    function computeBionicFixationLength(graphemeCount) {
+      if (graphemeCount <= 0) return 0;
+      if (graphemeCount <= 3) return 1;
+      return Math.ceil(graphemeCount * 0.4);
+    }
+
+    function segmentBionicWords(normalized) {
+      if (bionicWordSegmenter) {
+        return bionicWordSegmenter.segment(normalized);
+      }
+      const tokens = [];
+      const regex = /([\p{L}\p{N}_]+)|([^\p{L}\p{N}_]+)/gu;
+      let match;
+      while ((match = regex.exec(normalized)) !== null) {
+        tokens.push({
+          segment: match[0],
+          isWordLike: Boolean(match[1]),
+        });
+      }
+      return tokens;
+    }
+
+    function createBionicFragment(rawText) {
+      const frag = document.createDocumentFragment();
+      const normalized = rawText.normalize('NFC');
+      for (const seg of segmentBionicWords(normalized)) {
+        if (seg.isWordLike && /^\p{L}/u.test(seg.segment)) {
+          const graphemes = bionicGraphemeSegmenter
+            ? Array.from(bionicGraphemeSegmenter.segment(seg.segment), (g) => g.segment)
+            : Array.from(seg.segment);
+          const fixLen = computeBionicFixationLength(graphemes.length);
+          const lead = graphemes.slice(0, fixLen).join('');
+          const rest = graphemes.slice(fixLen).join('');
+          if (lead) {
+            const b = document.createElement('b');
+            b.className = 'bionic-fixation';
+            b.textContent = lead;
+            frag.appendChild(b);
+          }
+          if (rest) {
+            frag.appendChild(document.createTextNode(rest));
+          }
+        } else {
+          frag.appendChild(document.createTextNode(seg.segment));
+        }
+      }
+      return frag;
+    }
+
+    function applyBionicToElement(el, force = false) {
+      if (!el || el.closest('.is-error')) return;
+      if (!force && el.dataset.bionicApplied === 'true') return;
+      if (force) {
+        el.querySelectorAll('b.bionic-fixation').forEach((b) => {
+          b.replaceWith(document.createTextNode(b.textContent || ''));
+        });
+        el.normalize();
+      }
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          if (!node.nodeValue || !/\p{L}/u.test(node.nodeValue)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          const parent = node.parentElement;
+          if (!parent || parent.closest('b.bionic-fixation, script, style, code, pre, button, a')) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      const textNodes = [];
+      let current;
+      while ((current = walker.nextNode())) {
+        textNodes.push(current);
+      }
+      textNodes.forEach((node) => {
+        if (!node.parentNode) return;
+        node.parentNode.replaceChild(createBionicFragment(node.nodeValue), node);
+      });
+      el.dataset.bionicApplied = 'true';
+    }
+
+    function applyBionicReading(root) {
+      const scope = root || document;
+      const selector = '.bionic-text, .magazine-brief, #ai-rewrite-box .prose';
+      if (typeof scope.matches === 'function' && scope.matches(selector)) {
+        applyBionicToElement(scope, false);
+      }
+      if (typeof scope.querySelectorAll === 'function') {
+        scope.querySelectorAll(selector).forEach((el) => applyBionicToElement(el, false));
+      }
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
       lucide.createIcons();
       const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
       updateThemeIcons(currentTheme);
+      applyBionicReading(document);
     });
     document.body.addEventListener("htmx:afterSwap", (evt) => {
-      if (window.lucide && typeof lucide.createIcons === 'function' && evt.detail && evt.detail.target) {
+      if (evt.detail && evt.detail.target) {
         const swapTarget = evt.detail.target;
         const liveRoot = swapTarget.isConnected
           ? swapTarget
           : (swapTarget.id ? document.getElementById(swapTarget.id) : null) ||
             (evt.target && evt.target.isConnected ? evt.target : document.body);
-        lucide.createIcons({ root: liveRoot });
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+          lucide.createIcons({ root: liveRoot });
+        }
+        if (typeof applyBionicReading === 'function') {
+          applyBionicReading(liveRoot);
+        }
       }
     });
     document.body.addEventListener("htmx:oobAfterSwap", (evt) => {

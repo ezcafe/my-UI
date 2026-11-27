@@ -9,7 +9,7 @@
       {% for item in group.entries %}
       <div class="rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/30">
         <div class="flex items-start justify-between gap-3">
-          <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" class="text-sm font-medium font-sans text-foreground hover:text-foreground/80 transition-colors line-clamp-2">
+          <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" class="text-lg font-bold font-sans text-foreground hover:text-foreground/80 transition-colors line-clamp-2">
             {{ item.title }}
           </a>
           <span class="text-xs text-muted-foreground whitespace-nowrap tabular font-sans">{{ item.published_at }}</span>

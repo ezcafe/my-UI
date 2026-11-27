@@ -35,7 +35,7 @@
       </div>
       <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Executive Brief</span>
     </div>
-    <p class="text-xs text-foreground/90 leading-relaxed font-sans">
+    <p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">
       {{ brief }}
     </p>
   </div>
@@ -107,7 +107,7 @@
           </div>
           <span class="text-xs font-bold tracking-wider uppercase text-foreground font-sans">Executive Brief</span>
         </div>
-        <p class="text-xs text-foreground/90 leading-relaxed font-sans">
+        <p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">
           {{ brief }}
         </p>
       </div>
@@ -115,7 +115,7 @@
     </div>
 
     <!-- Center Column: Priority 1 + Priority 2 -->
-    <div id="mag-col-center" class="w-full flex flex-col gap-6">
+    <div id="mag-col-center" class="magazine-center-col w-full flex flex-col gap-6">
       
       <!-- Priority 1: Lead Hero Story (Photo 50% width, 100% height) -->
       {% for entry in entries %}
@@ -134,14 +134,14 @@
         {% else %}
         <div class="p-5 flex flex-col justify-center flex-1 w-full">
         {% endif %}
-          <h3 class="magazine-title text-base font-bold font-sans leading-snug line-clamp-3 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}">
+          <h3 class="magazine-title text-xl font-bold font-sans leading-snug line-clamp-3 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}">
             <a id="mag-title-{{ entry.id }}"
                href="/entries/{{ entry.id }}"
                class="magazine-card-link"
                onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
           </h3>
 
-          <p class="magazine-brief text-xs text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6">
+          <p class="magazine-brief text-base text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6 bionic-text">
             {{ entry.summary }}
           </p>
         </div>
@@ -166,14 +166,14 @@
           {% endif %}
 
           <div class="p-3.5 flex flex-col flex-1">
-            <h4 class="magazine-title text-xs font-semibold font-sans leading-snug line-clamp-2 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}">
+            <h4 class="magazine-title text-lg font-bold font-sans leading-snug line-clamp-3 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}">
               <a id="mag-title-{{ entry.id }}"
                  href="/entries/{{ entry.id }}"
                  class="magazine-card-link"
                  onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
             </h4>
 
-            <p class="magazine-brief text-xs text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1">
+            <p class="magazine-brief text-base text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1 bionic-text">
               {{ entry.summary }}
             </p>
           </div>

@@ -120,7 +120,7 @@
     {% if !needs_rewrite && !rewrite.trim().is_empty() %}
     <div id="ai-rewrite-box" data-target-entry-id="{{ entry.id }}" class="space-y-6">
       <!-- Inverted Pyramid Rewrite Content -->
-      <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">
+      <div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">
         {{ rewrite }}
       </div>
     </div>
@@ -136,7 +136,7 @@
     {% else %}
     <div id="ai-rewrite-box" data-target-entry-id="{{ entry.id }}" class="space-y-4">
       <p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p>
-      <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">
+      <div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">
         {% if !fallback_summary.trim().is_empty() %}{{ fallback_summary }}{% else %}No summary available.{% endif %}
       </div>
     </div>

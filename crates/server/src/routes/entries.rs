@@ -2003,7 +2003,7 @@ pub async fn get_entry_detail_htmx(
 
 fn render_rewrite_box_html(id: i64, rewrite: &str, impact: &str, fallacies: &str) -> String {
     let mut html = format!(
-        r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div></div>"#,
+        r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">{}</div></div>"#,
         escape_html(rewrite)
     );
     let imp = impact.trim();
@@ -2234,7 +2234,7 @@ pub async fn get_entry_rewrite_htmx(
             plain
         };
         let html = format!(
-            r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-4"><p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p><div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div></div>"#,
+            r#"<div id="ai-rewrite-box" data-target-entry-id="{id}" class="space-y-4"><p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">{}</div></div>"#,
             escape_html(&fallback_text)
         );
         return rewrite_response_with_trigger(id, html);
@@ -2274,7 +2274,7 @@ pub async fn get_entry_rewrite_htmx(
             .unwrap_or_default();
 
             let fallback_html = format!(
-                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">{}</div>"#,
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">{}</div>"#,
                 escape_html(&fallback_text)
             );
 
@@ -5700,5 +5700,139 @@ printf '%s' '{"top":"","items":[{"i":910,"t":"Partial Title 910","r":"Partial re
         assert!(rewrite_html.contains("toast-container"));
         assert!(rewrite_html.contains(crate::error::LLM_HIGH_DEMAND_ERROR_MESSAGE));
         assert!(!rewrite_html.contains("Legacy extractive summary"));
+    }
+
+    #[tokio::test]
+    async fn test_entry_rewrite_endpoints_use_text_base_and_bionic_marker() {
+        // 1. Direct render_rewrite_box_html emits text-base + bionic-text with plain escaped text intact
+        let rendered_box = render_rewrite_box_html(
+            777,
+            "Plain & <escaped> rewrite content.",
+            "Impact note",
+            "Fallacy note",
+        );
+        assert!(
+            rendered_box.contains(
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">Plain &amp; &lt;escaped&gt; rewrite content.</div>"#
+            ),
+            "render_rewrite_box_html must emit text-base and bionic-text with plain escaped text intact: {rendered_box}"
+        );
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/entries/778"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": 778,
+                "user_id": 1,
+                "feed_id": 10,
+                "title": "Rewrite Fallback 778",
+                "url": "https://example.com/778",
+                "summary": "Plain & <safe> summary 778.",
+                "content": "<p>Plain & <safe> summary 778.</p>",
+                "published_at": "2026-11-27T00:00:00Z",
+                "feed": { "id": 10, "user_id": 1, "title": "Tech Source" }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let make_app = |ai_enabled: bool, db_url: String| {
+            let uri = mock_server.uri();
+            async move {
+                let config = Arc::new(Config {
+                    host: "127.0.0.1".to_string(),
+                    port: 3000,
+                    app_base_url: "http://127.0.0.1:3000".to_string(),
+                    auth_enabled: false,
+                    session_secret: "super-secret-key-that-is-at-least-32-bytes-long!".to_string(),
+                    oidc_issuer_url: "https://id.example.com".to_string(),
+                    oidc_client_id: "test-client".to_string(),
+                    oidc_client_secret: "test-secret".to_string(),
+                    oidc_redirect_url: "http://127.0.0.1:3000/auth/callback".to_string(),
+                    miniflux_base_url: uri.clone(),
+                    miniflux_api_key: "api-key".to_string(),
+                    ai_enabled,
+                    llm_cli_cmd: "/nonexistent/binary".to_string(),
+                    llm_model: "test-model".to_string(),
+                    llm_extra_args: vec![],
+                    database_url: db_url,
+                    llm_provider: "openai".to_string(),
+                    llm_api_key: None,
+                    llm_api_base_url: None,
+                });
+                crate::app::build_app(
+                    config,
+                    build_schema(MinifluxClient::new(uri, "api-key".to_string())),
+                )
+                .await
+            }
+        };
+
+        // 2. !ai_enabled fallback in get_entry_rewrite_htmx
+        let app_no_ai = make_app(false, ":memory:".to_string()).await;
+        let resp_no_ai = app_no_ai
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/778/rewrite")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_no_ai.status(), StatusCode::OK);
+        let html_no_ai = String::from_utf8(
+            resp_no_ai
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            html_no_ai.contains(
+                r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">"#
+            ) && (html_no_ai.contains("Plain &amp; summary 778.")
+                || html_no_ai.contains("Plain &amp; &lt;safe&gt; summary 778.")),
+            "!ai_enabled fallback must use text-base + bionic-text and keep plain text intact: {html_no_ai}"
+        );
+
+        // 3. LLM error fallback in get_entry_rewrite_htmx
+        let db_path = "mock:entry_rewrite_778";
+        let db = AiDb::new(db_path).await.unwrap();
+        db.save_summary(778, "Seeded brief 778.", "test-model")
+            .await
+            .unwrap();
+        let app_err = make_app(true, db_path.to_string()).await;
+        let resp_err = app_err
+            .oneshot(
+                Request::builder()
+                    .uri("/hx/entries/778/rewrite")
+                    .header("HX-Request", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_err.status(), StatusCode::OK);
+        let html_err = String::from_utf8(
+            resp_err
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            html_err.contains("is-error")
+                && html_err.contains("text-xs text-muted-foreground")
+                && html_err.contains(
+                    r#"<div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">Seeded brief 778.</div>"#
+                ),
+            "LLM error fallback must keep error card is-error + text-xs while fallback .prose carries text-base + bionic-text: {html_err}"
+        );
     }
 }

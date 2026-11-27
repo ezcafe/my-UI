@@ -198,7 +198,7 @@
                 <div class="h-2.5 bg-muted rounded w-3/4"></div>
               </div>
             </div>
-            <div class="w-full flex flex-col gap-6">
+            <div class="magazine-center-col w-full flex flex-col gap-6">
               <div class="rounded-lg border border-border bg-card overflow-hidden flex flex-col sm:flex-row">
                 <div class="bg-muted min-h-[220px] sm:w-1/2 shrink-0"></div>
                 <div class="p-5 sm:w-1/2 flex flex-col justify-center space-y-3">
@@ -571,6 +571,9 @@
 
   function seedInitialFilterCache() {
     const entriesList = document.getElementById('entries-list');
+    if (entriesList && typeof applyBionicReading === 'function') {
+      applyBionicReading(entriesList);
+    }
     const activeStatus = document.getElementById('active-status');
     const searchInput = document.getElementById('search-input');
     const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
@@ -611,6 +614,9 @@
       }
       if (typeof refreshRelativeTimes === 'function') {
         refreshRelativeTimes(entriesList);
+      }
+      if (typeof applyBionicReading === 'function') {
+        applyBionicReading(entriesList);
       }
       isSearchActive = false;
       const statusInput = document.getElementById('active-status');
@@ -949,12 +955,12 @@
 
   function openArticleCacheDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(ARTICLE_DB_NAME, 3);
+      const req = indexedDB.open(ARTICLE_DB_NAME, 4);
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(ARTICLE_STORE_NAME)) {
           db.createObjectStore(ARTICLE_STORE_NAME, { keyPath: 'id' });
-        } else if (e.oldVersion < 3 && e.target && e.target.transaction) {
+        } else if (e.oldVersion < 4 && e.target && e.target.transaction) {
           e.target.transaction.objectStore(ARTICLE_STORE_NAME).clear();
         }
       };
@@ -1128,7 +1134,13 @@
       history.pushState(null, '', currentUrl.pathname + '?' + currentUrl.searchParams.toString());
     }
 
-    const isCacheValid = Boolean(cached && cached.html && cached.html.includes('id="detail-prev-btn"'));
+    const isCacheValid = Boolean(
+      cached &&
+      cached.html &&
+      cached.html.includes('id="detail-prev-btn"') &&
+      !cached.html.includes('prose dark:prose-invert max-w-none text-foreground/90 text-sm') &&
+      !cached.html.includes('text-sm text-foreground/90 leading-relaxed font-sans')
+    );
 
     if (isCacheValid) {
       abortActiveDetailRequests();
@@ -1148,6 +1160,9 @@
       updateDetailNavButtons(numId);
       if (typeof refreshRelativeTimes === 'function') {
         refreshRelativeTimes(panel);
+      }
+      if (typeof applyBionicReading === 'function') {
+        applyBionicReading(panel);
       }
 
       // Mark locally read if guest mode
@@ -1500,6 +1515,9 @@
         const magBriefEl = magCardEl.querySelector('.magazine-brief');
         if (magBriefEl) {
           magBriefEl.textContent = summaryText;
+          if (typeof applyBionicToElement === 'function') {
+            applyBionicToElement(magBriefEl, true);
+          }
         }
         if (magCardEl.classList.contains('priority-3')) {
           magCardEl.setAttribute('title', summaryText);
@@ -1556,7 +1574,11 @@
             )
           );
           if (rewriteBox && isWaitingOrFallback) {
-            rewriteBox.outerHTML = '<div id="ai-rewrite-box" data-target-entry-id="' + numId + '" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">' + escapeHtml(rewriteText) + '</div></div>';
+            rewriteBox.outerHTML = '<div id="ai-rewrite-box" data-target-entry-id="' + numId + '" class="space-y-6"><div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">' + escapeHtml(rewriteText) + '</div></div>';
+            const updatedRewriteBox = document.getElementById('ai-rewrite-box');
+            if (updatedRewriteBox && typeof applyBionicReading === 'function') {
+              applyBionicReading(updatedRewriteBox);
+            }
             const analysisBox = openDetail.querySelector('#ai-analysis-box[hx-trigger]');
             if (analysisBox) {
               document.body.dispatchEvent(new CustomEvent('ai-rewrite-done-' + numId));
@@ -1592,6 +1614,7 @@
             const retryBtn = isErrorCard.querySelector('button');
             const retryUrl = retryBtn ? retryBtn.getAttribute('hx-get') : '/hx/executive-brief?status=unread';
             listBrief.classList.remove('animate-pulse');
+            listBrief.classList.add('is-error');
             listBrief.innerHTML = `
               <div class="flex items-center gap-2 mb-1.5 text-muted-foreground">
                 <div class="p-1 rounded bg-destructive/10 text-destructive">
@@ -1618,6 +1641,7 @@
             }
           } else if (pageBrief && listBrief) {
             listBrief.classList.remove('animate-pulse');
+            listBrief.classList.remove('is-error');
             listBrief.innerHTML = `
               <div class="flex items-center gap-2 mb-1.5">
                 <div class="p-1 rounded bg-muted text-foreground">
@@ -1625,7 +1649,7 @@
                 </div>
                 <span class="text-xs font-bold tracking-wide uppercase text-foreground font-sans">Executive Brief</span>
               </div>
-              <p class="text-xs text-foreground/90 leading-relaxed font-sans">${escapeHtml(pageBrief.innerText || pageBrief.textContent || '')}</p>
+              <p class="text-base text-foreground/90 leading-relaxed font-sans bionic-text">${escapeHtml(pageBrief.innerText || pageBrief.textContent || '')}</p>
             `;
             if (window.lucide && typeof lucide.createIcons === 'function') {
               lucide.createIcons({ root: listBrief });
@@ -1660,6 +1684,9 @@
         const entriesListEl = document.getElementById('entries-list');
         if (triggerElt && (triggerElt.id === 'mark-page-read-btn' || (triggerElt.classList && triggerElt.classList.contains('toast-undo-btn')))) {
           invalidateFilterCache();
+        }
+        if (typeof applyBionicReading === 'function') {
+          applyBionicReading(entriesListEl || evt.detail.target);
         }
         if (status && !searchQuery && entriesListEl) {
           filterCache.set(status, {
@@ -1752,6 +1779,9 @@
                 }
               }
             }
+            if (typeof applyBionicReading === 'function') {
+              applyBionicReading(panel);
+            }
             // Do not cache error cards or incomplete Option C skeletons
             if (AUTH_ENABLED && entryId && !panel.querySelector('[hx-get][hx-trigger], .stroke-destructive, .is-error')) {
               saveCachedArticle(entryId, panel.innerHTML);
@@ -1826,7 +1856,7 @@
             <span>Retry</span>
           </button>
         </div>
-        <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(fallbackText)}</div>
+        <div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">${escapeHtml(fallbackText)}</div>
       </div>
     `;
 
@@ -1837,6 +1867,9 @@
       }
       if (window.lucide && typeof lucide.createIcons === 'function') {
         lucide.createIcons({ root: newBox });
+      }
+      if (typeof applyBionicReading === 'function') {
+        applyBionicReading(newBox);
       }
     }
     if (numId) {
@@ -2137,7 +2170,7 @@
     const rewriteHtml = rewriteText
       ? `
         <div id="ai-rewrite-box" data-target-entry-id="${numId}" class="space-y-6">
-          <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(rewriteText)}</div>
+          <div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">${escapeHtml(rewriteText)}</div>
         </div>
       `
       : (AI_ENABLED
@@ -2154,7 +2187,7 @@
         : `
           <div id="ai-rewrite-box" data-target-entry-id="${numId}" class="space-y-4">
             <p class="text-xs font-medium text-muted-foreground font-sans">AI rewrite is unavailable.</p>
-            <div class="prose dark:prose-invert max-w-none text-foreground/90 text-sm leading-relaxed space-y-4 font-sans whitespace-pre-line">${escapeHtml(summaryText || 'No summary available.')}</div>
+            <div class="prose dark:prose-invert max-w-none text-foreground/90 text-base leading-relaxed space-y-4 font-sans whitespace-pre-line bionic-text">${escapeHtml(summaryText || 'No summary available.')}</div>
           </div>
         `);
 
@@ -2280,6 +2313,9 @@
     }
     if (typeof refreshRelativeTimes === 'function') {
       refreshRelativeTimes(panel);
+    }
+    if (typeof applyBionicReading === 'function') {
+      applyBionicReading(panel);
     }
     markLocallyRead(numId);
     syncDomReadStates();

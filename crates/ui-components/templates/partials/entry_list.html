@@ -194,7 +194,7 @@
            data-category="{% if let Some(cat) = entry.category_title %}{{ cat }}{% else %}General{% endif %}"
            title="{{ entry.summary }}">
         
-        <h5 class="magazine-title text-xs font-normal font-sans leading-snug line-clamp-2 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
+        <h5 class="magazine-title text-base font-normal font-sans leading-snug line-clamp-2 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
             title="{{ entry.summary }}">
           <a id="mag-title-{{ entry.id }}"
              href="/entries/{{ entry.id }}"

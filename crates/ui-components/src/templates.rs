@@ -5739,6 +5739,10 @@ mod tests {
             ),
             "Priority 2 .magazine-brief must use text-base and contiguous line-clamp-4 classes"
         );
+        assert!(
+            entry_list_html.contains(r#"<h5 class="magazine-title text-base font-normal"#),
+            "Priority 3 magazine title must use text-base font-normal"
+        );
 
         let raw_entry_list = include_str!("../templates/partials/entry_list.html");
         assert!(

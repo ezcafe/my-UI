@@ -42,15 +42,22 @@
   {% endif %}
 
   {% for entry in entries %}
-  <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0 {% if entry.is_read %}read opacity-55 grayscale{% else %}unread{% endif %}" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}" onclick="openEntryDetail({{ entry.id }})">
+  <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0 {% if entry.is_read %}read opacity-55 grayscale{% else %}unread{% endif %}" id="entry-{{ entry.id }}" data-entry-id="{{ entry.id }}" data-feed-title="{{ entry.feed_title }}" data-published-at="{{ entry.published_at }}" onclick="openEntryDetail({{ entry.id }})">
     <!-- 3px vertical positional red bar (Rule 1: Red marks position, never action) -->
     <div id="entry-{{ entry.id }}-bar" class="w-[3px] self-stretch rounded-full shrink-0 {% if !entry.is_read %}bg-brand{% else %}bg-transparent{% endif %}"></div>
 
     <div class="flex items-center gap-1.5 flex-1 min-w-0">
       <span id="entry-{{ entry.id }}-dot" class="inline-flex shrink-0 empty:hidden">{% if !entry.is_read %}<span class="w-2 h-2 rounded-full bg-brand shrink-0" title="Unread"></span>{% endif %}</span>
-      <span id="entry-title-{{ entry.id }}" class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors" {% if let Some(suggested) = entry.suggested_title %}title="{{ entry.title }}"{% endif %}>
-        {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
-      </span>
+      <div class="flex flex-col min-w-0 flex-1 gap-0.5">
+        <span id="entry-title-{{ entry.id }}" class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors" {% if let Some(suggested) = entry.suggested_title %}title="{{ entry.title }}"{% endif %}>
+          {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
+        </span>
+        {% if !entry.feed_title.trim().is_empty() || !entry.published_at.trim().is_empty() %}
+        <div class="entry-meta text-xs text-muted-foreground font-sans truncate">
+          {% if !entry.feed_title.trim().is_empty() %}<span>{{ entry.feed_title }}</span>{% endif %}{% if !entry.feed_title.trim().is_empty() && !entry.published_at.trim().is_empty() %}<span aria-hidden="true"> · </span>{% endif %}{% if !entry.published_at.trim().is_empty() %}<time datetime="{{ entry.published_at }}" data-relative-time="true">{{ entry.relative_published_at() }}</time>{% endif %}
+        </div>
+        {% endif %}
+      </div>
     </div>
 
     <div class="flex items-center gap-1.5 shrink-0">
@@ -127,10 +134,11 @@
         {% else %}
         <div class="p-5 flex flex-col justify-center flex-1 w-full">
         {% endif %}
-          <h3 class="magazine-title text-base font-bold font-sans leading-snug line-clamp-3 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
-              id="mag-title-{{ entry.id }}"
-              onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')">
-            {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
+          <h3 class="magazine-title text-base font-bold font-sans leading-snug line-clamp-3 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}">
+            <a id="mag-title-{{ entry.id }}"
+               href="/entries/{{ entry.id }}"
+               class="magazine-card-link"
+               onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
           </h3>
 
           <p class="magazine-brief text-xs text-muted-foreground/90 mt-3 leading-relaxed font-sans line-clamp-6">
@@ -158,10 +166,11 @@
           {% endif %}
 
           <div class="p-3.5 flex flex-col flex-1">
-            <h4 class="magazine-title text-xs font-semibold font-sans leading-snug line-clamp-2 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
-                id="mag-title-{{ entry.id }}"
-                onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')">
-              {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
+            <h4 class="magazine-title text-xs font-semibold font-sans leading-snug line-clamp-2 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}">
+              <a id="mag-title-{{ entry.id }}"
+                 href="/entries/{{ entry.id }}"
+                 class="magazine-card-link"
+                 onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
             </h4>
 
             <p class="magazine-brief text-xs text-muted-foreground/90 mt-1.5 line-clamp-4 leading-relaxed font-sans flex-1">
@@ -185,11 +194,13 @@
            data-category="{% if let Some(cat) = entry.category_title %}{{ cat }}{% else %}General{% endif %}"
            title="{{ entry.summary }}">
         
-        <h5 class="magazine-title text-xs font-normal font-sans leading-snug line-clamp-2 cursor-pointer transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
-            id="mag-title-{{ entry.id }}"
-            title="{{ entry.summary }}"
-            onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')">
-          {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
+        <h5 class="magazine-title text-xs font-normal font-sans leading-snug line-clamp-2 transition-colors {% if entry.is_read %}text-muted-foreground{% else %}text-foreground group-hover:text-foreground/80{% endif %}"
+            title="{{ entry.summary }}">
+          <a id="mag-title-{{ entry.id }}"
+             href="/entries/{{ entry.id }}"
+             class="magazine-card-link"
+             title="{{ entry.summary }}"
+             onclick="if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openEntryFromMagazine({{ entry.id }}, this.closest('.magazine-card')?.dataset.feedTitle || ''); }">{% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}</a>
         </h5>
       </div>
       {% endif %}

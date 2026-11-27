@@ -154,6 +154,40 @@ pub fn format_published_date_ddmmyyyy(raw: &str) -> String {
     trimmed.to_string()
 }
 
+/// Formats an ISO-8601 / RFC 3339 timestamp relative to `now`, or `YYYY-MM-DD` as `DD/MM/YYYY`.
+pub fn format_relative_time_at(raw: &str, now: chrono::DateTime<chrono::Utc>) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return date.format("%d/%m/%Y").to_string();
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        let utc_dt = dt.with_timezone(&chrono::Utc);
+        let diff_sec = (now - utc_dt).num_seconds().max(0);
+        return match diff_sec {
+            0..=59 => "Just now".to_string(),
+            60..=3599 => format!("{}m ago", diff_sec / 60),
+            3600..=86399 => format!("{}h ago", diff_sec / 3600),
+            86400..=604799 => format!("{}d ago", diff_sec / 86400),
+            _ => utc_dt.format("%d/%m/%Y").to_string(),
+        };
+    }
+    trimmed.to_string()
+}
+
+/// Formats a timestamp relative to the current UTC time.
+pub fn format_relative_time(raw: &str) -> String {
+    format_relative_time_at(raw, chrono::Utc::now())
+}
+
+impl EntryViewModel {
+    pub fn relative_published_at(&self) -> String {
+        format_relative_time(&self.published_at)
+    }
+}
+
 impl EntryDetailTemplate {
     pub fn safe_entry_url(&self) -> &str {
         let trimmed = self.entry.url.trim();
@@ -173,6 +207,8 @@ impl EntryDetailTemplate {
 struct GuestEntryPayload<'a> {
     id: i64,
     title: &'a str,
+    feed_title: &'a str,
+    published_at: &'a str,
     url: &'a str,
     summary: &'a str,
     rewrite: Option<&'a str>,
@@ -201,6 +237,8 @@ impl EntryListTemplate {
                 GuestEntryPayload {
                     id: e.id,
                     title,
+                    feed_title: &e.feed_title,
+                    published_at: &e.published_at,
                     url: &e.url,
                     summary: &e.summary,
                     rewrite: e.rewrite.as_deref(),
@@ -224,11 +262,47 @@ pub struct AnalysisCardsTemplate<'a> {
     pub entry_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ToastUndoPayload {
+    pub entry_ids: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feed_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category_id: Option<i64>,
+    pub offset: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToastUndoAction {
+    pub url: String,
+    pub vals_json: String,
+    pub label: String,
+}
+
+impl ToastUndoAction {
+    pub fn from_payload(
+        url: impl Into<String>,
+        label: impl Into<String>,
+        payload: &ToastUndoPayload,
+    ) -> Self {
+        Self {
+            url: url.into(),
+            vals_json: serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string()),
+            label: label.into(),
+        }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "partials/toast.html")]
 pub struct ToastTemplate {
     pub message: String,
     pub is_error: bool,
+    pub undo: Option<ToastUndoAction>,
 }
 
 #[derive(Template)]
@@ -384,15 +458,19 @@ mod tests {
             .render()
             .expect("Failed to render EntryItemTemplate");
 
-        // Title and styling
+        // Title, metadata, and styling
         assert!(html_unread.contains("Spatial Computing in Rust"));
         assert!(html_unread.contains("line-clamp-2"));
         assert!(html_unread.contains("text-sm font-medium"));
 
-        // Omission of summary, reading time, and feed title
+        // Feed title and relative time render cleanly while summary and reading time remain omitted
         assert!(
-            !html_unread.contains("Rust Optics"),
-            "Feed title must be omitted"
+            html_unread.contains("Rust Optics"),
+            "Feed title must render in entry item metadata"
+        );
+        assert!(
+            html_unread.contains("2 hours ago") && html_unread.contains(" · "),
+            "Published time and separator must render in entry item metadata"
         );
         assert!(
             !html_unread.contains("Extractive brief of the post"),
@@ -414,14 +492,10 @@ mod tests {
         // Unread indicator dot present when is_read = false
         assert!(html_unread.contains("title=\"Unread\"") || html_unread.contains("bg-brand"));
 
-        // Omission of dotted leader and date time per user preference
+        // Omission of dotted leader
         assert!(
             !html_unread.contains("leader"),
             "Must omit dotted leader in entry item"
-        );
-        assert!(
-            !html_unread.contains("2 hours ago"),
-            "Must omit published_at timestamp in entry item"
         );
         assert!(
             html_unread.contains("bg-brand") || html_unread.contains("var(--brand)"),
@@ -738,19 +812,18 @@ mod tests {
             .render()
             .expect("Failed to render EntryDetailTemplate");
 
-        // Author, feed_title, and publication date must all be omitted
+        // Author and reading_time must be omitted, while feed_title and <time> render cleanly
         assert!(
             !html.contains("By Visionary Designer"),
             "Author must be omitted from detail view"
         );
         assert!(!html.contains("By "), "Author prefix must not be rendered");
         assert!(
-            !html.contains("Audio Weekly"),
-            "Feed title must be omitted from detail view"
-        );
-        assert!(
-            !html.contains("2 hours ago"),
-            "Publication date must be omitted from detail view"
+            html.contains("Audio Weekly")
+                && html.contains("2 hours ago")
+                && html.contains(" · ")
+                && html.contains(r#"data-relative-time="true""#),
+            "Feed title and relative time must render in detail view: {html}"
         );
     }
 
@@ -792,9 +865,12 @@ mod tests {
         };
         assert_eq!(tmpl.safe_entry_url(), "#");
         let html = tmpl.render().expect("render Option C detail template");
-        assert!(!html.contains("Hidden Feed"));
-        assert!(!html.contains("2026-11-26T10:00:00Z"));
-        assert!(!html.contains("<time"));
+        assert!(html.contains("Hidden Feed"));
+        assert!(html.contains(r#"datetime="2026-11-26T10:00:00Z""#));
+        assert!(html.contains("<time"));
+        assert!(html.contains(r#"data-relative-time="true""#));
+        assert!(!html.contains("Hidden Author"));
+        assert!(!html.contains("5 min read"));
         assert!(!html.contains("data-date-format"));
         assert!(!html.contains("javascript:alert(1)"));
         assert!(html.contains(r##"href="#""##));
@@ -1163,11 +1239,14 @@ mod tests {
         let template = ToastTemplate {
             message: "Upstream service timeout".to_string(),
             is_error: true,
+            undo: None,
         };
         let html = template.render().expect("Failed to render ToastTemplate");
 
         assert!(html.contains("id=\"toast-container\""));
         assert!(html.contains("hx-swap-oob=\"beforeend\""));
+        assert!(html.contains("role=\"status\""));
+        assert!(html.contains("aria-atomic=\"true\""));
         assert!(html.contains("Upstream service timeout"));
         assert!(
             html.contains("shadow-float"),
@@ -3068,10 +3147,13 @@ mod tests {
             mag_view
         );
 
-        // Titles and click handler
+        // Titles and stretched-link click handler
         assert!(
-            mag_view.contains("onclick=\"openEntryFromMagazine(101, 'TechCrunch')\""),
-            "Must wire openEntryFromMagazine: {}",
+            mag_view.contains(r#"id="mag-title-101""#)
+                && mag_view.contains(r#"href="/entries/101""#)
+                && mag_view.contains(r#"class="magazine-card-link""#)
+                && mag_view.contains("openEntryFromMagazine(101, this.closest('.magazine-card')?.dataset.feedTitle || '')"),
+            "Must wire stretched-link openEntryFromMagazine using dataset.feedTitle: {}",
             mag_view
         );
 
@@ -3643,7 +3725,7 @@ mod tests {
             body_images: vec![],
         };
 
-        // Hero header must omit feed_title and <time>
+        // Hero header renders feed_title + <time data-relative-time="true"> with " · " while omitting data-date-format, author, and reading_time
         let hero_html = EntryDetailTemplate {
             entry: make_entry("2026-11-23T12:00:00Z"),
             summary: String::new(),
@@ -3660,12 +3742,15 @@ mod tests {
         }
         .render()
         .expect("render hero detail template");
-        assert!(!hero_html.contains("<time"));
+        assert!(hero_html.contains("<time"));
+        assert!(hero_html.contains(r#"data-relative-time="true""#));
+        assert!(hero_html.contains("Daily Wire"));
+        assert!(hero_html.contains(" · "));
+        assert!(hero_html.contains("text-white/85"));
         assert!(!hero_html.contains("data-date-format"));
-        assert!(!hero_html.contains("Daily Wire"));
-        assert!(!hero_html.contains("23/11/2026"));
+        assert!(!hero_html.contains("min read"));
 
-        // Standard header must omit feed_title and <time>
+        // Standard header renders feed_title + <time data-relative-time="true"> with " · " while omitting data-date-format, author, and reading_time
         let standard_html = EntryDetailTemplate {
             entry: make_entry("2026-11-23T12:00:00Z"),
             summary: String::new(),
@@ -3682,10 +3767,12 @@ mod tests {
         }
         .render()
         .expect("render standard detail template");
-        assert!(!standard_html.contains("<time"));
+        assert!(standard_html.contains("<time"));
+        assert!(standard_html.contains(r#"data-relative-time="true""#));
+        assert!(standard_html.contains("Daily Wire"));
+        assert!(standard_html.contains(" · "));
         assert!(!standard_html.contains("data-date-format"));
-        assert!(!standard_html.contains("Daily Wire"));
-        assert!(!standard_html.contains("23/11/2026"));
+        assert!(!standard_html.contains("min read"));
     }
 
     #[test]
@@ -3762,8 +3849,8 @@ mod tests {
         assert!(html.contains("target.outerHTML"));
         assert!(html.contains("'ai-rewrite-done-' + numId"));
 
-        // IndexedDB version bumps: article cache v2, guest db v3
-        assert!(html.contains("indexedDB.open(ARTICLE_DB_NAME, 2)"));
+        // IndexedDB version bumps: article cache v3, guest db v3
+        assert!(html.contains("indexedDB.open(ARTICLE_DB_NAME, 3)"));
         assert!(html.contains("indexedDB.open(DB_NAME, 3)"));
 
         // Cross-article swap guards & case-insensitive safeHref
@@ -3864,8 +3951,8 @@ mod tests {
         );
         assert_eq!(item["url"], "https://example.com/401");
         assert!(item.get("sanitized_content").is_none());
-        assert!(item.get("feed_title").is_none());
-        assert!(item.get("published_at").is_none());
+        assert_eq!(item["feed_title"], "Feed & Co");
+        assert_eq!(item["published_at"], "2026-11-23T12:00:00Z");
         assert!(item.get("formatted_date").is_none());
         assert!(item.get("author").is_none());
         assert!(item.get("reading_time").is_none());
@@ -3961,9 +4048,9 @@ mod tests {
         let render_fn = &html[render_pos..render_end];
         assert!(!render_fn.contains("guest-detail-content"));
         assert!(!render_fn.contains("data-date-format"));
-        assert!(!render_fn.contains("feed_title"));
+        assert!(render_fn.contains("feed_title"));
         assert!(!render_fn.contains("formatted_date"));
-        assert!(!render_fn.contains("published_at"));
+        assert!(render_fn.contains("published_at") && render_fn.contains("data-relative-time=\"true\""));
         assert!(!render_fn.contains("sanitized_content"));
         assert!(render_fn.contains("safeHref("));
         assert!(render_fn.contains("entry.image_url"));
@@ -4845,8 +4932,13 @@ mod tests {
             + show_toast_pos;
         let show_toast_fn = &html[show_toast_pos..show_toast_end];
         assert!(
-            show_toast_fn.contains("data-auto-dismiss"),
-            "Guest showToast must mark data-auto-dismiss=\"true\" to prevent duplicate OOB timers"
+            show_toast_fn.contains("showClientToast(message, false)"),
+            "Guest showToast must delegate to shared showClientToast(message, false)"
+        );
+        assert!(
+            html.contains(r#"toast.setAttribute('data-auto-dismiss', 'true')"#)
+                && html.contains(r#"toast.setAttribute('role', 'status')"#),
+            "base.html showClientToast must set data-auto-dismiss=\"true\" and role=\"status\""
         );
 
         let swap_pos = html
@@ -5230,9 +5322,9 @@ mod tests {
         // P1 (id=1), P2 (id=2), P3 (id=8) all use <a id="mag-title-..." class="magazine-card-link">
         for id in [1, 2, 8] {
             assert!(
-                mag_html.contains(&format!(
-                    r#"<a id="mag-title-{id}" href="/entries/{id}" class="magazine-card-link""#
-                )),
+                mag_html.contains(&format!(r#"<a id="mag-title-{id}""#))
+                    && mag_html.contains(&format!(r#"href="/entries/{id}""#))
+                    && mag_html.contains(r#"class="magazine-card-link""#),
                 "Magazine card {id} must use <a id=\"mag-title-{id}\" class=\"magazine-card-link\">: {mag_html}"
             );
             assert!(
@@ -5249,9 +5341,12 @@ mod tests {
             !mag_html.contains(r#"class="hero-content-box p-5 flex flex-col justify-center flex-1 w-full relative"#),
             "hero-content-box must remain position: static (no relative class)"
         );
+        let p3_anchor_pos = mag_html.find(r#"<a id="mag-title-8""#).unwrap();
+        let p3_anchor_end = mag_html[p3_anchor_pos..].find('>').unwrap() + p3_anchor_pos;
+        let p3_anchor = &mag_html[p3_anchor_pos..=p3_anchor_end];
         assert!(
-            mag_html.contains(r#"<a id="mag-title-8" href="/entries/8" class="magazine-card-link" title="Summary 8""#),
-            "P3 anchor must carry title tooltip"
+            p3_anchor.contains(r#"title="Summary 8""#),
+            "P3 anchor must carry title tooltip: {p3_anchor}"
         );
 
         let index_html = IndexTemplate {
@@ -5321,8 +5416,10 @@ mod tests {
                 && detail_html.contains(r#"onclick="navigateDetailArticle(-1)""#)
                 && detail_html.contains(r#"onclick="navigateDetailArticle(1)""#)
                 && detail_html.contains(r#"type="button""#)
+                && detail_html.contains(r#"class="detail-original-link"#)
+                && detail_html.contains(r#"<span class="detail-original-label">Original</span>"#)
                 && detail_html.contains("flex items-center gap-1.5"),
-            "entry_detail.html must render type=button Prev/Next buttons with gap-1.5"
+            "entry_detail.html must render type=button Prev/Next buttons, compactable Original link, and gap-1.5"
         );
 
         let index_guest = IndexTemplate {
@@ -5335,6 +5432,13 @@ mod tests {
         .render()
         .expect("render guest IndexTemplate");
 
+        assert!(
+            index_guest.contains("@container workspace (max-width: 360px)")
+                && index_guest.contains(".detail-original-label")
+                && index_guest.contains(".detail-original-link")
+                && index_guest.contains("function finishGuestDbInit()"),
+            "base.html and index.html must include <=360px container query compact header and finishGuestDbInit"
+        );
         assert!(
             index_guest.contains("indexedDB.open(ARTICLE_DB_NAME, 3)")
                 && index_guest.contains("e.oldVersion < 3")
@@ -5357,8 +5461,10 @@ mod tests {
         assert!(
             skel_fn.contains(r#"id="detail-prev-btn""#)
                 && skel_fn.contains(r#"id="detail-next-btn""#)
+                && skel_fn.contains(r#"disabled:opacity-40 disabled:pointer-events-none"#)
+                && skel_fn.contains(r#"onclick="navigateDetailArticle(-1)""#)
                 && skel_fn.contains("gap-1.5"),
-            "openDetailWithSkeleton must render Prev/Next controls with gap-1.5"
+            "openDetailWithSkeleton must render interactive disabled-aware Prev/Next controls with gap-1.5"
         );
 
         // renderGuestEntryDetail must include Prev/Next controls and call updateDetailNavButtons
@@ -5493,8 +5599,8 @@ mod tests {
                 && toast_html.contains(r#"aria-atomic="true""#)
                 && toast_html.contains(r#"class="toast-undo-btn"#)
                 && toast_html.contains(r#"hx-post="/hx/mark-page-unread""#)
-                && toast_html.contains(r#"hx-target="#entries-list""#)
-                && toast_html.contains(r#"hx-indicator="#entries-loading-bar""#)
+                && toast_html.contains(r##"hx-target="#entries-list""##)
+                && toast_html.contains(r##"hx-indicator="#entries-loading-bar""##)
                 && toast_html.contains(r#"hx-disabled-elt="this""#)
                 && !toast_html.contains(r#"id="toast-undo-btn""#),
             "ToastTemplate with undo must render accessible role=status and .toast-undo-btn: {toast_html}"
@@ -5530,6 +5636,8 @@ mod tests {
             index_guest.contains("function escapeToastHtml(str)")
                 && index_guest.contains("function attachToastAutoDismiss(toast, durationMs)")
                 && index_guest.contains("function showClientToast(message, isError = false)")
+                && index_guest.contains("toast.contains(document.activeElement)")
+                && index_guest.contains("toast.matches(':hover')")
                 && index_guest.contains("reswap.toLowerCase() !== 'none'")
                 && index_guest.contains("toast.dataset.undoInFlight = 'true'")
                 && index_guest.contains("attachToastAutoDismiss(toast, hasUndo ? 8000 : 5000)"),

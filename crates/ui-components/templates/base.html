@@ -282,6 +282,22 @@
       }
     }
 
+    /* Compact Detail Header on narrow mobile viewports (<= 360px) to prevent horizontal overflow */
+    @container workspace (max-width: 360px) {
+      #detail-panel .detail-original-label {
+        display: none;
+      }
+      #detail-panel .detail-original-link {
+        width: 2rem;
+        padding-left: 0;
+        padding-right: 0;
+        justify-content: center;
+      }
+      #detail-panel .detail-original-skeleton {
+        width: 2rem;
+      }
+    }
+
 
     /* AR Optical Waveguide & Gaze Target Ergonomics */
     [data-theme="dark"] .spatial-window,
@@ -495,6 +511,15 @@
       filter: grayscale(0%);
     }
 
+    .magazine-card { position: relative; cursor: pointer; }
+    .magazine-card-link { color: inherit; text-decoration: none; }
+    .magazine-card-link::after { content: ""; position: absolute; inset: 0; z-index: 1; }
+    .magazine-card-link:focus-visible { outline: none; }
+    .magazine-card:has(.magazine-card-link:focus-visible) {
+      outline: 2px solid var(--ring);
+      outline-offset: 2px;
+    }
+
     .magazine-card.read {
       opacity: 0.45;
       filter: grayscale(85%);
@@ -504,7 +529,8 @@
       opacity: 0.9;
       filter: grayscale(0%);
     }
-    .magazine-card.read .magazine-title {
+    .magazine-card.read .magazine-title,
+    .magazine-card.read .magazine-card-link {
       color: var(--muted-foreground) !important;
     }
 
@@ -584,13 +610,135 @@
   <div id="toast-container" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none w-max max-w-[calc(100vw-2rem)]"></div>
 
   <script>
+    const toastTimerState = new WeakMap();
+
+    function escapeToastHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function clearToastTimer(toast) {
+      if (!toast) return;
+      const state = toastTimerState.get(toast);
+      if (state && state.timeoutId) {
+        clearTimeout(state.timeoutId);
+        state.timeoutId = null;
+      }
+    }
+
+    function pauseToastTimer(toast) {
+      const state = toastTimerState.get(toast);
+      if (!state || !state.timeoutId) return;
+      clearTimeout(state.timeoutId);
+      state.timeoutId = null;
+      const elapsed = Date.now() - state.startedAt;
+      state.remainingMs = Math.max(250, state.remainingMs - elapsed);
+    }
+
+    function resumeToastTimer(toast) {
+      const state = toastTimerState.get(toast);
+      if (!state || state.timeoutId || !toast.isConnected || toast.dataset.undoInFlight === 'true') return;
+      if (toast.contains(document.activeElement) || (typeof toast.matches === 'function' && toast.matches(':hover'))) return;
+      state.startedAt = Date.now();
+      state.timeoutId = setTimeout(() => {
+        if (!toast.isConnected) return;
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, state.remainingMs);
+    }
+
+    function attachToastAutoDismiss(toast, durationMs) {
+      if (!toast) return;
+      clearToastTimer(toast);
+      toast.setAttribute('data-auto-dismiss', 'true');
+      const state = {
+        timeoutId: null,
+        remainingMs: durationMs,
+        startedAt: Date.now(),
+      };
+      toastTimerState.set(toast, state);
+      toast.addEventListener('mouseenter', () => pauseToastTimer(toast));
+      toast.addEventListener('mouseleave', () => resumeToastTimer(toast));
+      toast.addEventListener('focusin', () => pauseToastTimer(toast));
+      toast.addEventListener('focusout', (evt) => {
+        if (!toast.contains(evt.relatedTarget)) {
+          resumeToastTimer(toast);
+        }
+      });
+      resumeToastTimer(toast);
+    }
+
+    function showClientToast(message, isError = false) {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+      const trimmed = String(message).trim();
+      container.querySelectorAll('.pointer-events-auto').forEach((existing) => {
+        const textEl = existing.querySelector('span');
+        if (textEl && textEl.textContent && textEl.textContent.trim() === trimmed) {
+          clearToastTimer(existing);
+          existing.remove();
+        }
+      });
+      const toast = document.createElement('div');
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-atomic', 'true');
+      toast.setAttribute('data-auto-dismiss', 'true');
+      toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
+      const iconName = isError ? 'alert-circle' : 'bookmark';
+      const iconColor = isError ? 'text-destructive' : 'text-brand';
+      toast.innerHTML = `<i data-lucide="${iconName}" class="w-4 h-4 ${iconColor} shrink-0"></i><span>${escapeToastHtml(message)}</span><button type="button" onclick="dismissToast(this)" class="p-1 rounded-full text-background/60 hover:text-background hover:bg-background/20 transition-colors shrink-0" title="Close notification" aria-label="Close notification"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>`;
+      container.appendChild(toast);
+      if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons({ root: toast });
+      }
+      attachToastAutoDismiss(toast, 4000);
+    }
+
     function dismissToast(btn) {
       const toast = btn.closest('.pointer-events-auto') || btn.parentElement;
       if (toast) {
+        clearToastTimer(toast);
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 300);
       }
     }
+
+    document.body.addEventListener('htmx:beforeRequest', (evt) => {
+      const triggerElt = (evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.elt) || (evt.detail && evt.detail.elt);
+      if (triggerElt && typeof triggerElt.closest === 'function') {
+        const undoBtn = triggerElt.closest('.toast-undo-btn');
+        const toast = undoBtn ? undoBtn.closest('.pointer-events-auto') : null;
+        if (toast) {
+          toast.dataset.undoInFlight = 'true';
+          pauseToastTimer(toast);
+        }
+      }
+    });
+
+    document.body.addEventListener('htmx:afterRequest', (evt) => {
+      const triggerElt = (evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.elt) || (evt.detail && evt.detail.elt);
+      if (triggerElt && typeof triggerElt.closest === 'function') {
+        const undoBtn = triggerElt.closest('.toast-undo-btn');
+        const toast = undoBtn ? undoBtn.closest('.pointer-events-auto') : null;
+        if (toast) {
+          const reswap = (evt.detail.xhr && typeof evt.detail.xhr.getResponseHeader === 'function')
+            ? (evt.detail.xhr.getResponseHeader('HX-Reswap') || '')
+            : '';
+          if (evt.detail.successful === true && reswap.toLowerCase() !== 'none') {
+            clearToastTimer(toast);
+            toast.remove();
+          } else {
+            delete toast.dataset.undoInFlight;
+            resumeToastTimer(toast);
+          }
+        }
+      }
+    });
 
     document.addEventListener("DOMContentLoaded", () => {
       lucide.createIcons();
@@ -614,6 +762,15 @@
         }
         const container = evt.detail.target;
         container.querySelectorAll('.pointer-events-auto:not([data-auto-dismiss])').forEach((toast) => {
+          const hasUndo = Boolean(toast.querySelector('.toast-undo-btn'));
+          if (hasUndo) {
+            container.querySelectorAll('.pointer-events-auto').forEach((existing) => {
+              if (existing !== toast && existing.querySelector('.toast-undo-btn')) {
+                clearToastTimer(existing);
+                existing.remove();
+              }
+            });
+          }
           const textEl = toast.querySelector('span');
           const msg = textEl && textEl.textContent ? textEl.textContent.trim() : '';
           if (msg) {
@@ -621,15 +778,15 @@
               if (existing === toast) return;
               const existingSpan = existing.querySelector('span');
               if (existingSpan && existingSpan.textContent && existingSpan.textContent.trim() === msg) {
+                clearToastTimer(existing);
                 existing.remove();
               }
             });
           }
-          toast.setAttribute('data-auto-dismiss', 'true');
-          setTimeout(() => {
-            toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 300);
-          }, 5000);
+          if (window.htmx && typeof htmx.process === 'function') {
+            htmx.process(toast);
+          }
+          attachToastAutoDismiss(toast, hasUndo ? 8000 : 5000);
         });
       }
     });

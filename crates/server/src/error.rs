@@ -11,6 +11,7 @@ pub fn render_llm_error_toast() -> String {
     ToastTemplate {
         message: LLM_HIGH_DEMAND_ERROR_MESSAGE.to_string(),
         is_error: true,
+        undo: None,
     }
     .render()
     .unwrap_or_default()
@@ -53,6 +54,7 @@ pub fn handle_htmx_error(headers: &HeaderMap, error: AppError) -> Response {
         let toast = ToastTemplate {
             message: error.user_facing_message().to_string(),
             is_error: true,
+            undo: None,
         };
         let toast_html = toast.render().unwrap_or_default();
         let mut resp = Html(toast_html).into_response();

@@ -6,7 +6,8 @@ use crate::rate_limit::{rate_limit_middleware, RateLimiter};
 use crate::routes::entries::{
     executive_brief_htmx, get_entry_ai_summary_htmx, get_entry_analysis_htmx,
     get_entry_detail_htmx, get_entry_rewrite_htmx, list_entries_htmx, mark_all_read_htmx,
-    mark_entry_read_htmx, mark_feed_read_htmx, mark_page_read_htmx, toggle_bookmark_htmx,
+    mark_entry_read_htmx, mark_feed_read_htmx, mark_page_read_htmx, mark_page_unread_htmx,
+    toggle_bookmark_htmx,
 };
 use crate::routes::graphql::graphql_handler;
 use crate::routes::pages::{index_page, login_page, serve_annuaire_theme_css};
@@ -110,6 +111,7 @@ pub fn build_app_with_ai(
         .route("/hx/feeds/{id}/mark-all-read", post(mark_feed_read_htmx))
         .route("/hx/mark-all-read", post(mark_all_read_htmx))
         .route("/hx/mark-page-read", post(mark_page_read_htmx))
+        .route("/hx/mark-page-unread", post(mark_page_unread_htmx))
         .route("/graphql", post(graphql_handler))
         .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
         .layer(DefaultBodyLimit::max(64 * 1024))

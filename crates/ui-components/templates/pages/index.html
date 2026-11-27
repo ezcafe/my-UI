@@ -54,7 +54,7 @@
           hx-indicator="#entries-loading-bar"
           hx-disabled-elt="this"
           hx-include="#active-status, #active-offset, [name='search']"
-          hx-vals="js:{entry_ids: getVisibleEntryIds()}"
+          hx-vals="js:{entry_ids: getVisibleEntryIds(), unread_entry_ids: getVisibleUnreadEntryIds()}"
           onclick="closeDetailPanel()"
           class="p-2 rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors" 
           title="Mark This Page as Read">
@@ -349,6 +349,41 @@
     return '#';
   }
 
+  function formatRelativeTimeLabel(raw) {
+    if (!raw) return '';
+    const trimmed = String(raw).trim();
+    if (!trimmed) return '';
+    const dateOnlyMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnlyMatch) {
+      return `${dateOnlyMatch[3]}/${dateOnlyMatch[2]}/${dateOnlyMatch[1]}`;
+    }
+    const parsedMs = Date.parse(trimmed);
+    if (Number.isNaN(parsedMs)) {
+      return trimmed;
+    }
+    const diffSec = Math.max(0, Math.floor((Date.now() - parsedMs) / 1000));
+    if (diffSec <= 59) return 'Just now';
+    if (diffSec < 3600) return Math.floor(diffSec / 60) + 'm ago';
+    if (diffSec < 86400) return Math.floor(diffSec / 3600) + 'h ago';
+    if (diffSec < 604800) return Math.floor(diffSec / 86400) + 'd ago';
+    const dt = new Date(parsedMs);
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const yyyy = dt.getUTCFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }
+
+  function refreshRelativeTimes(root) {
+    const scope = root && typeof root.querySelectorAll === 'function' ? root : document;
+    scope.querySelectorAll('time[data-relative-time="true"]').forEach((el) => {
+      const raw = el.getAttribute('datetime') || '';
+      const formatted = formatRelativeTimeLabel(raw);
+      if (formatted) {
+        el.textContent = formatted;
+      }
+    });
+  }
+
   function shouldHideAiToggle(status, searchActive) {
     return !searchActive && (status === 'today' || status === 'all');
   }
@@ -495,11 +530,12 @@
 
   function openEntryFromMagazine(id, feedTitle) {
     const numId = Number(id);
-    if (feedTitle) {
-      recordSourceClick(feedTitle);
+    const cardEl = numId ? document.getElementById('mag-entry-' + numId) : null;
+    const resolvedFeedTitle = feedTitle || (cardEl && cardEl.dataset ? cardEl.dataset.feedTitle : '') || '';
+    if (resolvedFeedTitle) {
+      recordSourceClick(resolvedFeedTitle);
     }
     if (numId) {
-      const cardEl = document.getElementById('mag-entry-' + numId);
       if (cardEl) {
         cardEl.classList.remove('unread');
         cardEl.classList.add('read', 'opacity-50', 'grayscale');
@@ -569,6 +605,12 @@
       }
       if (typeof syncDomReadStates === 'function') {
         syncDomReadStates();
+      }
+      if (typeof syncDetailNavigationIds === 'function') {
+        syncDetailNavigationIds();
+      }
+      if (typeof refreshRelativeTimes === 'function') {
+        refreshRelativeTimes(entriesList);
       }
       isSearchActive = false;
       const statusInput = document.getElementById('active-status');
@@ -861,6 +903,9 @@
         pagination.style.display = '';
       }
     }
+    if (typeof syncDetailNavigationIds === 'function') {
+      syncDetailNavigationIds();
+    }
   }
 
   function getVisibleEntryIds() {
@@ -868,6 +913,18 @@
     const ids = [];
     items.forEach(item => {
       if (item.style.display !== 'none') {
+        const id = item.getAttribute('data-entry-id') || (item.id ? item.id.replace('entry-', '') : null);
+        if (id) ids.push(id);
+      }
+    });
+    return ids.join(',');
+  }
+
+  function getVisibleUnreadEntryIds() {
+    const items = document.querySelectorAll('#entries-list .annuaire-row, #entries-list .ar-list-item');
+    const ids = [];
+    items.forEach(item => {
+      if (item.style.display !== 'none' && !item.classList.contains('read')) {
         const id = item.getAttribute('data-entry-id') || (item.id ? item.id.replace('entry-', '') : null);
         if (id) ids.push(id);
       }
@@ -892,12 +949,12 @@
 
   function openArticleCacheDb() {
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(ARTICLE_DB_NAME, 2);
+      const req = indexedDB.open(ARTICLE_DB_NAME, 3);
       req.onupgradeneeded = (e) => {
         const db = e.target.result;
         if (!db.objectStoreNames.contains(ARTICLE_STORE_NAME)) {
           db.createObjectStore(ARTICLE_STORE_NAME, { keyPath: 'id' });
-        } else if (e.oldVersion < 2 && e.target && e.target.transaction) {
+        } else if (e.oldVersion < 3 && e.target && e.target.transaction) {
           e.target.transaction.objectStore(ARTICLE_STORE_NAME).clear();
         }
       };
@@ -992,6 +1049,48 @@
     }
   }
 
+  let detailNavIds = [];
+
+  function syncDetailNavigationIds() {
+    const rows = document.querySelectorAll('#entries-list .annuaire-row, #entries-list .ar-list-item');
+    const nextIds = [];
+    rows.forEach((row) => {
+      if (row.style.display === 'none') return;
+      const rawId = row.getAttribute('data-entry-id') || (row.id ? row.id.replace('entry-', '') : '');
+      const numId = Number(rawId);
+      if (numId > 0) nextIds.push(numId);
+    });
+    detailNavIds = nextIds;
+    const activeId = getActiveDetailEntryId();
+    if (activeId) {
+      updateDetailNavButtons(activeId);
+    }
+  }
+
+  function updateDetailNavButtons(entryId) {
+    const prevBtn = document.getElementById('detail-prev-btn');
+    const nextBtn = document.getElementById('detail-next-btn');
+    if (!prevBtn && !nextBtn) return;
+    const idx = detailNavIds.indexOf(Number(entryId));
+    const hasPrev = idx > 0;
+    const hasNext = idx !== -1 && idx < detailNavIds.length - 1;
+    if (prevBtn) prevBtn.disabled = !hasPrev;
+    if (nextBtn) nextBtn.disabled = !hasNext;
+  }
+
+  function navigateDetailArticle(delta) {
+    const activeId = getActiveDetailEntryId();
+    if (!activeId) return;
+    const idx = detailNavIds.indexOf(Number(activeId));
+    if (idx === -1) return;
+    const targetIdx = idx + Number(delta);
+    if (targetIdx < 0 || targetIdx >= detailNavIds.length) return;
+    const targetId = detailNavIds[targetIdx];
+    if (targetId) {
+      openEntryDetail(targetId);
+    }
+  }
+
   function abortActiveDetailRequests() {
     const panel = document.getElementById('detail-panel');
     if (!panel || !window.htmx || typeof htmx.trigger !== 'function') return;
@@ -1029,7 +1128,7 @@
       history.pushState(null, '', currentUrl.pathname + '?' + currentUrl.searchParams.toString());
     }
 
-    const isCacheValid = Boolean(cached && cached.html);
+    const isCacheValid = Boolean(cached && cached.html && cached.html.includes('id="detail-prev-btn"'));
 
     if (isCacheValid) {
       abortActiveDetailRequests();
@@ -1045,6 +1144,10 @@
       }
       if (window.htmx && typeof htmx.process === 'function') {
         htmx.process(panel);
+      }
+      updateDetailNavButtons(numId);
+      if (typeof refreshRelativeTimes === 'function') {
+        refreshRelativeTimes(panel);
       }
 
       // Mark locally read if guest mode
@@ -1095,6 +1198,7 @@
 
       // Cache miss or expired: show skeleton and fetch via HTMX
       openDetailWithSkeleton(title, brief, imageUrl);
+      updateDetailNavButtons(numId);
       htmx.ajax('GET', '/hx/entries/' + encodeURIComponent(numId), {
         target: '#detail-panel',
         swap: 'innerHTML'
@@ -1135,17 +1239,40 @@
       <div class="flex flex-col h-full animate-pulse select-none w-full">
         <!-- Skeleton Header: fixed h-8 matching real detail header, no vertical jump -->
         <div class="flex items-center justify-between mb-6 shrink-0 w-full h-8">
-          <button 
-            type="button"
-            onclick="closeDetailPanel()" 
-            class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold pointer-events-auto shrink-0">
-            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-            </svg>
-            <span>Back</span>
-          </button>
-          <div class="flex items-center gap-2 h-8 shrink-0">
-            <div class="h-8 w-20 bg-muted rounded-full shrink-0"></div>
+          <div class="flex items-center gap-1.5 h-8 shrink-0">
+            <button 
+              id="detail-back-btn"
+              type="button"
+              onclick="closeDetailPanel()" 
+              class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold pointer-events-auto shrink-0">
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+              </svg>
+              <span>Back</span>
+            </button>
+            <button
+              id="detail-prev-btn"
+              type="button"
+              disabled
+              onclick="navigateDetailArticle(-1)"
+              aria-label="Previous article"
+              title="Previous article"
+              class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+              <i data-lucide="chevron-up" class="w-4 h-4 shrink-0"></i>
+            </button>
+            <button
+              id="detail-next-btn"
+              type="button"
+              disabled
+              onclick="navigateDetailArticle(1)"
+              aria-label="Next article"
+              title="Next article"
+              class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+              <i data-lucide="chevron-down" class="w-4 h-4 shrink-0"></i>
+            </button>
+          </div>
+          <div class="flex items-center gap-1.5 h-8 shrink-0">
+            <div class="detail-original-skeleton h-8 w-20 bg-muted rounded-full shrink-0"></div>
             <div class="w-8 h-8 rounded-full bg-muted shrink-0"></div>
             <div class="w-8 h-8 rounded-full bg-muted shrink-0"></div>
           </div>
@@ -1243,7 +1370,15 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    checkUrlForEntry();
+    if (typeof refreshRelativeTimes === 'function') {
+      refreshRelativeTimes(document.getElementById('entries-list'));
+    }
+    if (AUTH_ENABLED) {
+      if (typeof syncDetailNavigationIds === 'function') {
+        syncDetailNavigationIds();
+      }
+      checkUrlForEntry();
+    }
   });
 
   window.addEventListener('popstate', () => {
@@ -1357,7 +1492,7 @@
 
       const magTitleEl = document.getElementById('mag-title-' + numId);
       if (magTitleEl && suggestedTitle) {
-        magTitleEl.textContent = suggestedTitle;
+        (magTitleEl.querySelector('.magazine-card-link') || magTitleEl).textContent = suggestedTitle;
       }
 
       const magCardEl = document.getElementById('mag-entry-' + numId);
@@ -1523,7 +1658,7 @@
         const searchInput = document.getElementById('search-input');
         const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
         const entriesListEl = document.getElementById('entries-list');
-        if (triggerElt && triggerElt.id === 'mark-page-read-btn') {
+        if (triggerElt && (triggerElt.id === 'mark-page-read-btn' || (triggerElt.classList && triggerElt.classList.contains('toast-undo-btn')))) {
           invalidateFilterCache();
         }
         if (status && !searchQuery && entriesListEl) {
@@ -1537,6 +1672,12 @@
         }
         if (typeof syncDomReadStates === 'function') {
           syncDomReadStates();
+        }
+        if (isEntriesSwap && typeof syncDetailNavigationIds === 'function') {
+          syncDetailNavigationIds();
+        }
+        if (typeof refreshRelativeTimes === 'function' && entriesListEl) {
+          refreshRelativeTimes(entriesListEl);
         }
         const effectiveStatus = status || 'unread';
         if (isSearchSwap) {
@@ -1577,6 +1718,12 @@
             const isMatchingEntryRequest = !reqMatch || String(reqMatch[1]) === String(entryId);
             if (!isMatchingEntryRequest) return;
             recordReadArticle(entryId);
+            if (targetId === 'detail-panel' && typeof updateDetailNavButtons === 'function') {
+              updateDetailNavButtons(entryId);
+            }
+            if (typeof refreshRelativeTimes === 'function') {
+              refreshRelativeTimes(panel);
+            }
             if (!AUTH_ENABLED && (targetId === 'ai-rewrite-box' || (evt.target && evt.target.id === 'ai-rewrite-box'))) {
               const rewriteBox = document.getElementById('ai-rewrite-box');
               if (
@@ -1613,6 +1760,9 @@
         }
       } else if (targetId.startsWith('entry-')) {
         invalidateFilterCache();
+        if (typeof refreshRelativeTimes === 'function') {
+          refreshRelativeTimes(evt.detail.target);
+        }
       }
     }
   });
@@ -1696,9 +1846,16 @@
   }
 
   document.addEventListener('htmx:responseError', (evt) => {
+    const triggerElt = (evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.elt) || (evt.detail && evt.detail.elt);
+    if (triggerElt && typeof triggerElt.closest === 'function' && triggerElt.closest('.toast-undo-btn')) {
+      if (typeof showClientToast === 'function') {
+        showClientToast('Could not undo. Please try again.', true);
+      }
+      return;
+    }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
-      if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showToast === 'function') {
-        showToast('Failed to load articles. Please try again.');
+      if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showClientToast === 'function') {
+        showClientToast('Failed to load articles. Please try again.', true);
       }
     }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'ai-rewrite-box') {
@@ -1728,9 +1885,16 @@
   });
 
   document.addEventListener('htmx:sendError', (evt) => {
+    const triggerElt = (evt.detail && evt.detail.requestConfig && evt.detail.requestConfig.elt) || (evt.detail && evt.detail.elt);
+    if (triggerElt && typeof triggerElt.closest === 'function' && triggerElt.closest('.toast-undo-btn')) {
+      if (typeof showClientToast === 'function') {
+        showClientToast('Could not undo. Please try again.', true);
+      }
+      return;
+    }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'entries-list') {
-      if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showToast === 'function') {
-        showToast('Network error while loading articles.');
+      if (clearCurrentEntriesLoadingState(evt.detail.xhr) && typeof showClientToast === 'function') {
+        showClientToast('Network error while loading articles.', true);
       }
     }
     if (evt.detail && evt.detail.target && evt.detail.target.id === 'ai-rewrite-box') {
@@ -1844,6 +2008,8 @@
       id: numId,
       title: (guest && guest.title) || (fallback && fallback.title) || '',
       url: (guest && guest.url) || (fallback && fallback.url) || '',
+      feed_title: (guest && guest.feed_title) || (existing && existing.feed_title) || (fallback && fallback.feed_title) || '',
+      published_at: (guest && guest.published_at) || (existing && existing.published_at) || (fallback && fallback.published_at) || '',
       summary: (guest && guest.summary) || (fallback && fallback.summary) || '',
       rewrite,
       image_url: (guest && guest.image_url) || (fallback && fallback.image_url) || null,
@@ -1878,6 +2044,8 @@
           return {
             ...entry,
             title: synced.title || entry.title,
+            feed_title: synced.feed_title || entry.feed_title || '',
+            published_at: synced.published_at || entry.published_at || '',
             summary: synced.summary || entry.summary,
             rewrite: synced.rewrite || entry.rewrite || null,
           };
@@ -1940,6 +2108,12 @@
     const hasHeroImg = Boolean(safeImg && safeImg !== '#');
     const summaryText = entry.summary ? String(entry.summary).trim() : '';
     const rewriteText = entry.rewrite ? String(entry.rewrite).trim() : '';
+    const feedTitle = entry.feed_title ? String(entry.feed_title).trim() : '';
+    const publishedAt = entry.published_at ? String(entry.published_at).trim() : '';
+    const relTime = publishedAt && typeof formatRelativeTimeLabel === 'function' ? formatRelativeTimeLabel(publishedAt) : '';
+    const metaInnerHtml = (feedTitle || publishedAt)
+      ? `${feedTitle ? `<span>${escapeHtml(feedTitle)}</span>` : ''}${feedTitle && publishedAt ? '<span aria-hidden="true"> · </span>' : ''}${publishedAt ? `<time datetime="${escapeHtml(publishedAt)}" data-relative-time="true">${escapeHtml(relTime)}</time>` : ''}`
+      : '';
     const awaitingRewrite = !rewriteText && AI_ENABLED;
 
     const headerHtml = hasHeroImg
@@ -1949,12 +2123,14 @@
           <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-transparent"></div>
           <div class="relative z-10 p-5 md:p-6 w-full">
             <h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">${escapeHtml(titleText)}</h1>
+            ${metaInnerHtml ? `<div class="text-xs text-white/85 font-sans mt-1.5 truncate">${metaInnerHtml}</div>` : ''}
           </div>
         </div>
       `
       : `
         <div class="mb-6">
           <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">${escapeHtml(titleText)}</h1>
+          ${metaInnerHtml ? `<div class="text-xs text-muted-foreground font-sans mt-1.5 truncate">${metaInnerHtml}</div>` : ''}
         </div>
       `;
 
@@ -2018,22 +2194,45 @@
     panel.innerHTML = `
       <div class="flex flex-col h-full w-full" data-entry-id="${numId}">
         <div class="flex items-center justify-between mb-6 shrink-0 w-full h-8">
-          <button
-            id="detail-back-btn"
-            onclick="closeDetailPanel()"
-            class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity shrink-0">
-            <i data-lucide="chevron-left" class="w-4 h-4 shrink-0"></i>
-            <span>Back</span>
-          </button>
+          <div class="flex items-center gap-1.5 h-8 shrink-0">
+            <button
+              id="detail-back-btn"
+              type="button"
+              onclick="closeDetailPanel()"
+              class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity shrink-0">
+              <i data-lucide="chevron-left" class="w-4 h-4 shrink-0"></i>
+              <span>Back</span>
+            </button>
+            <button
+              id="detail-prev-btn"
+              type="button"
+              onclick="navigateDetailArticle(-1)"
+              aria-label="Previous article"
+              title="Previous article"
+              class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+              <i data-lucide="chevron-up" class="w-4 h-4 shrink-0"></i>
+            </button>
+            <button
+              id="detail-next-btn"
+              type="button"
+              onclick="navigateDetailArticle(1)"
+              aria-label="Next article"
+              title="Next article"
+              class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+              <i data-lucide="chevron-down" class="w-4 h-4 shrink-0"></i>
+            </button>
+          </div>
 
-          <div class="flex items-center gap-2 h-8 shrink-0">
+          <div class="flex items-center gap-1.5 h-8 shrink-0">
             <a
               href="${escapeHtml(href)}"
               target="_blank"
               rel="noopener noreferrer"
               onclick="markArticleRead(${numId})"
-              class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors shrink-0">
-              <span>Original</span>
+              aria-label="Original article"
+              title="Original article"
+              class="detail-original-link h-8 px-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors shrink-0">
+              <span class="detail-original-label">Original</span>
               <i data-lucide="external-link" class="w-3.5 h-3.5 shrink-0"></i>
             </a>
 
@@ -2075,6 +2274,12 @@
     }
     if (window.htmx && typeof htmx.process === 'function') {
       htmx.process(panel);
+    }
+    if (typeof updateDetailNavButtons === 'function') {
+      updateDetailNavButtons(numId);
+    }
+    if (typeof refreshRelativeTimes === 'function') {
+      refreshRelativeTimes(panel);
     }
     markLocallyRead(numId);
     syncDomReadStates();
@@ -2126,15 +2331,28 @@
     }
   }
 
+  function finishGuestDbInit() {
+    guestDbReady = true;
+    syncDomReadStates();
+    if (typeof syncDetailNavigationIds === 'function') {
+      syncDetailNavigationIds();
+    }
+    if (typeof refreshRelativeTimes === 'function') {
+      refreshRelativeTimes(document.getElementById('entries-list'));
+    }
+    cacheLoadedArticlesFromDom();
+    flushPendingGuestBrief();
+    if (typeof checkUrlForEntry === 'function') {
+      checkUrlForEntry();
+    }
+  }
+
   function initGuestDb() {
     hydrateGuestEntriesFromDom();
     openGuestDb()
       .then((db) => {
         if (!db.objectStoreNames.contains(STORE_NAME)) {
-          guestDbReady = true;
-          syncDomReadStates();
-          cacheLoadedArticlesFromDom();
-          flushPendingGuestBrief();
+          finishGuestDbInit();
           return;
         }
         const tx = db.transaction(STORE_NAME, 'readonly');
@@ -2142,20 +2360,15 @@
         const getAllReq = store.getAllKeys();
         getAllReq.onsuccess = (ev) => {
           (ev.target.result || []).forEach(id => readSet.add(id));
-          guestDbReady = true;
-          syncDomReadStates();
-          cacheLoadedArticlesFromDom();
-          flushPendingGuestBrief();
+          finishGuestDbInit();
         };
         getAllReq.onerror = () => {
-          guestDbReady = true;
-          flushPendingGuestBrief();
+          finishGuestDbInit();
         };
       })
       .catch((e) => {
         console.warn('Could not open guest IndexedDB:', e);
-        guestDbReady = true;
-        flushPendingGuestBrief();
+        finishGuestDbInit();
       });
   }
 
@@ -2184,6 +2397,8 @@
         articlesToSave.push(buildGuestArticleRecord(numId, guest, existing, {
           title: titleEl ? titleEl.textContent.trim() : '',
           url: linkEl ? linkEl.getAttribute('href') : '',
+          feed_title: row.getAttribute('data-feed-title') || '',
+          published_at: row.getAttribute('data-published-at') || '',
           summary: (magBrief ? magBrief.textContent.trim() : '') || (magEl && magEl.getAttribute('title') ? magEl.getAttribute('title').trim() : ''),
           image_url: magImg ? magImg.getAttribute('src') : null,
         }));
@@ -2259,14 +2474,24 @@
             `;
           } else {
             articles.sort((a, b) => b.id - a.id);
-            const rowsHtml = articles.map(art => `
-              <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}" onclick="openEntryDetail(${art.id})">
+            const rowsHtml = articles.map(art => {
+              const feedTitle = art.feed_title ? String(art.feed_title).trim() : '';
+              const publishedAt = art.published_at ? String(art.published_at).trim() : '';
+              const relTime = publishedAt && typeof formatRelativeTimeLabel === 'function' ? formatRelativeTimeLabel(publishedAt) : '';
+              const metaHtml = (feedTitle || publishedAt)
+                ? `<div class="entry-meta text-xs text-muted-foreground font-sans truncate">${feedTitle ? `<span>${escapeHtml(feedTitle)}</span>` : ''}${feedTitle && publishedAt ? '<span aria-hidden="true"> · </span>' : ''}${publishedAt ? `<time datetime="${escapeHtml(publishedAt)}" data-relative-time="true">${escapeHtml(relTime)}</time>` : ''}</div>`
+                : '';
+              return `
+              <div class="annuaire-row ar-list-item relative px-4 py-2.5 rounded-lg flex items-center justify-between gap-1.5 cursor-pointer select-none group hover:bg-muted/60 transition-colors border-b border-border/60 last:border-b-0" id="entry-${art.id}" data-entry-id="${art.id}" data-feed-title="${escapeHtml(feedTitle)}" data-published-at="${escapeHtml(publishedAt)}" onclick="openEntryDetail(${art.id})">
                 <div id="entry-${art.id}-bar" class="w-[3px] self-stretch rounded-full shrink-0 bg-transparent"></div>
                 <div class="flex items-center gap-1.5 flex-1 min-w-0">
                   <span id="entry-${art.id}-dot" class="inline-flex shrink-0 empty:hidden"></span>
-                  <span class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
-                    ${escapeHtml(art.title)}
-                  </span>
+                  <div class="flex flex-col min-w-0 flex-1 gap-0.5">
+                    <span id="entry-title-${art.id}" class="article-title text-sm font-medium font-sans leading-snug line-clamp-2 text-foreground group-hover:text-foreground/80 transition-colors">
+                      ${escapeHtml(art.title)}
+                    </span>
+                    ${metaHtml}
+                  </div>
                 </div>
                 <div class="flex items-center gap-1.5 shrink-0">
                   <a 
@@ -2281,7 +2506,8 @@
                   <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors"></i>
                 </div>
               </div>
-            `).join('');
+            `;
+            }).join('');
             list.innerHTML = `<div id="entries-list-view" class="space-y-1.5">${rowsHtml}</div>`;
           }
           list.scrollTop = 0;
@@ -2289,6 +2515,12 @@
             lucide.createIcons({ root: list });
           }
           syncDomReadStates();
+          if (typeof syncDetailNavigationIds === 'function') {
+            syncDetailNavigationIds();
+          }
+          if (typeof refreshRelativeTimes === 'function') {
+            refreshRelativeTimes(list);
+          }
           isSearchActive = false;
           applyAiViewMode('list', 'all', false);
         };
@@ -2585,11 +2817,21 @@
     const ids = parseVisibleEntryIds();
     if (ids.length === 0) return;
 
+    const newlyReadIds = ids.filter(id => !readSet.has(id));
+    const statusInput = document.getElementById('active-status');
+    const offsetInput = document.getElementById('active-offset');
+    const searchInput = document.getElementById('search-input');
+    const status = (statusInput && statusInput.value) ? statusInput.value : 'unread';
+    const offset = (offsetInput && offsetInput.value) ? offsetInput.value : '0';
+    const search = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+
     const nextBtn = document.getElementById('pagination-next-btn');
     const nextUrl = nextBtn ? nextBtn.getAttribute('hx-get') : null;
     const markBtn = document.getElementById('mark-page-read-btn');
+    const advancedPage = Boolean(nextUrl && window.htmx && markBtn);
+    const snapshot = { status, offset, search, ids: newlyReadIds, advancedPage };
 
-    if (nextUrl && window.htmx && markBtn) {
+    if (advancedPage) {
       const token = { ids, committed: false, cancelled: false, xhr: null };
       pendingGuestMarkRead = token;
       htmx.ajax('GET', nextUrl, {
@@ -2601,7 +2843,11 @@
           pendingGuestMarkRead = null;
         }
         if (token.committed && !token.cancelled) {
-          showToast('Page marked as read.');
+          if (newlyReadIds.length > 0) {
+            showUndoToast('Page marked as read.', () => undoGuestMarkPageRead(snapshot));
+          } else {
+            showToast('Page marked as read.');
+          }
         }
       }).catch(() => {
         if (pendingGuestMarkRead === token) {
@@ -2615,31 +2861,17 @@
     }
 
     persistLocallyReadIds(ids, { syncDom: true });
-    showToast('Page marked as read.');
+    if (newlyReadIds.length > 0) {
+      showUndoToast('Page marked as read.', () => undoGuestMarkPageRead(snapshot));
+    } else {
+      showToast('Page marked as read.');
+    }
   }
 
   function showToast(message) {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    const trimmed = String(message).trim();
-    container.querySelectorAll('.pointer-events-auto').forEach((existing) => {
-      const textEl = existing.querySelector('span');
-      if (textEl && textEl.textContent && textEl.textContent.trim() === trimmed) {
-        existing.remove();
-      }
-    });
-    const toast = document.createElement('div');
-    toast.setAttribute('data-auto-dismiss', 'true');
-    toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
-    toast.innerHTML = '<i data-lucide="bookmark" class="w-4 h-4 text-brand shrink-0"></i><span>' + message + '</span><button type="button" onclick="dismissToast(this)" class="p-1 rounded-full text-background/60 hover:text-background hover:bg-background/20 transition-colors shrink-0" title="Close notification" aria-label="Close notification"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>';
-    container.appendChild(toast);
-    if (window.lucide && typeof lucide.createIcons === 'function') {
-      lucide.createIcons({ root: toast });
+    if (typeof showClientToast === 'function') {
+      showClientToast(message, false);
     }
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      setTimeout(() => toast.remove(), 300);
-    }, 4000);
   }
 
   function triggerNativeBookmark(title, url) {
@@ -2656,6 +2888,92 @@
     }
   }
 
+  function showUndoToast(message, onUndo) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    container.querySelectorAll('.pointer-events-auto').forEach((existing) => {
+      if (existing.querySelector('.toast-undo-btn')) {
+        if (typeof clearToastTimer === 'function') clearToastTimer(existing);
+        existing.remove();
+      }
+    });
+    const toast = document.createElement('div');
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-atomic', 'true');
+    toast.setAttribute('data-auto-dismiss', 'true');
+    toast.className = 'pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300';
+    toast.innerHTML = `<i data-lucide="check-circle-2" class="w-4 h-4 text-brand shrink-0"></i><span>${escapeHtml(message)}</span><button type="button" class="toast-undo-btn ml-1 px-2.5 py-1 rounded-full bg-background/15 hover:bg-background/25 text-background font-bold transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background disabled:opacity-50 disabled:cursor-not-allowed">Undo</button><button type="button" onclick="dismissToast(this)" class="p-1 rounded-full text-background/60 hover:text-background hover:bg-background/20 transition-colors shrink-0" title="Close notification" aria-label="Close notification"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>`;
+    const undoBtn = toast.querySelector('.toast-undo-btn');
+    if (undoBtn) {
+      undoBtn.addEventListener('click', () => {
+        undoBtn.disabled = true;
+        if (typeof clearToastTimer === 'function') clearToastTimer(toast);
+        toast.remove();
+        if (typeof onUndo === 'function') onUndo();
+        if (typeof showClientToast === 'function') {
+          showClientToast('Mark as read undone.', false);
+        }
+      });
+    }
+    container.appendChild(toast);
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+      lucide.createIcons({ root: toast });
+    }
+    if (typeof attachToastAutoDismiss === 'function') {
+      attachToastAutoDismiss(toast, 8000);
+    }
+  }
+
+  function undoGuestMarkPageRead(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.ids) || snapshot.ids.length === 0) return;
+    autoAdvancingUnreadUrl = null;
+    cancelPendingMarkPageRead();
+    snapshot.ids.forEach(id => readSet.delete(Number(id)));
+
+    openGuestDb()
+      .then((db) => {
+        if (!db.objectStoreNames.contains(STORE_NAME)) return;
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        snapshot.ids.forEach(id => store.delete(Number(id)));
+      })
+      .catch(() => {});
+
+    if (typeof invalidateFilterCache === 'function') {
+      invalidateFilterCache();
+    }
+
+    if (snapshot.advancedPage) {
+      const targetStatus = snapshot.status || 'unread';
+      const pill = document.querySelector('.filter-pill[data-status="' + targetStatus + '"]');
+      if (pill && typeof setActiveFilter === 'function') {
+        setActiveFilter(pill);
+      }
+      if (typeof showEntriesLoadingState === 'function') {
+        showEntriesLoadingState();
+      }
+      let restoreUrl = '/hx/entries?status=' + encodeURIComponent(targetStatus)
+        + '&offset=' + encodeURIComponent(snapshot.offset || '0');
+      if (snapshot.search) {
+        restoreUrl += '&search=' + encodeURIComponent(snapshot.search);
+      }
+      if (window.htmx && typeof htmx.ajax === 'function') {
+        htmx.ajax('GET', restoreUrl, { target: '#entries-list', swap: 'innerHTML' });
+      }
+      return;
+    }
+
+    syncDomReadStates();
+    const searchInput = document.getElementById('search-input');
+    const searchQuery = (searchInput && searchInput.value) ? searchInput.value.trim() : '';
+    if (!isSearchActive && searchQuery && typeof filterArticlesClientSide === 'function') {
+      filterArticlesClientSide(searchQuery);
+    }
+    if (typeof syncDetailNavigationIds === 'function') {
+      syncDetailNavigationIds();
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     initGuestDb();
   });
@@ -2665,6 +2983,12 @@
     if (target) {
       if (target.id === 'entries-list') {
         cacheLoadedArticlesFromDom();
+        if (typeof syncDetailNavigationIds === 'function') {
+          syncDetailNavigationIds();
+        }
+        if (typeof refreshRelativeTimes === 'function') {
+          refreshRelativeTimes(target);
+        }
         return;
       } else if (target.id === 'page-executive-brief') {
         return;
@@ -2672,7 +2996,15 @@
         const detail = target.querySelector('[data-entry-id]');
         if (detail) {
           const id = detail.getAttribute('data-entry-id');
-          if (id) markLocallyRead(id);
+          if (id) {
+            markLocallyRead(id);
+            if (typeof updateDetailNavButtons === 'function') {
+              updateDetailNavButtons(id);
+            }
+          }
+        }
+        if (typeof refreshRelativeTimes === 'function') {
+          refreshRelativeTimes(target);
         }
       }
     }

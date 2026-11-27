@@ -1,0 +1,49 @@
+# Analysis — Reading Flow & Triaging Pack
+
+**Result:** done
+
+## Context & Affected Files
+
+The confirmed scope from [01-idea.md](file:///Users/ptquang86/ws/my-ui/.my-docs/workflow/20261127-reading-flow-triaging-pack/01-idea.md) covers four connected improvements across Magazine view, List view, Detail view, and bulk page triaging in both Auth and Guest modes:
+
+1. **Full-card click on Magazine view**
+   - [entry_list.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/entry_list.html#L113-L197): P1 (`#mag-entry-{{ entry.id }}`), P2, and P3 cards currently bind `onclick="openEntryFromMagazine({{ entry.id }}, '{{ entry.feed_title }}')"` and `cursor-pointer` only on the inner `<h3>`/`<h4>`/`<h5>` title element, leaving padding, summary, and thumbnail areas unclickable.
+   - [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L493-L514): `openEntryFromMagazine(id, feedTitle)` marks the card read, records source click, and opens the detail panel. Inline `'{{ entry.feed_title }}'` interpolation inside `onclick` must be replaced with reading `this.closest('.magazine-card')?.dataset.feedTitle || ''` (keeping `data-feed-title` on `#mag-entry-{id}`) so apostrophes in feed names (e.g., `O'Reilly`) do not cause JS syntax errors.
+
+2. **Prev / Next buttons in Detail view**
+   - [entry_detail.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/entry_detail.html#L3-L65) renders the Auth/server detail header with `#detail-back-btn` on the left and action buttons (`Original`, mark unread / toggle read, bookmark) on the right.
+   - [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L1068-L1140) renders `openDetailWithSkeleton(...)` (loading state), and [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L1892-L2027) renders `renderGuestEntryDetail(entry)` (Guest detail).
+   - **Important edge case (Guest Unread mode & IndexedDB Auth cache):**
+     - Auth mode caches rendered `#detail-panel` HTML in IndexedDB (`saveCachedArticle` at [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L1571-L1573)), so Prev/Next `disabled` states cannot be statically baked into cached HTML; they must be synced dynamically whenever `#detail-panel` opens or swaps.
+     - Guest `unread` mode calls `markLocallyRead(numId)` -> `syncDomReadStates()` ([index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L2040-L2041)), which sets `row.style.display = 'none'` on read `.annuaire-row` elements ([index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L2263-L2265)). If Prev/Next only queried currently visible `display !== 'none'` rows, the active article would vanish from the list on open and `Prev` would break. Tracking the active page's ordered navigation IDs (`detailNavigationIds`) captured from the visible list on page load/filter/search keeps Prev/Next consistent.
+
+3. **`Feed · Time` metadata in list rows and detail header**
+   - [entry_list.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/entry_list.html#L44-L69) and [entry_item.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/entry_item.html#L1-L24) currently omit `feed_title` and `published_at`. Note that [entries.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/routes/entries.rs#L686-L693) sends OOB `outerHTML` swaps targeting `#entry-title-{id}`, so any metadata element must be a sibling outside `#entry-title-{id}` so OOB title sync never overwrites it.
+   - [entry_detail.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/entry_detail.html#L69-L85) currently omits `feed_title` and `<time>` in both hero-image and standard headers.
+   - [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L172-L216): `GuestEntryPayload` currently omits `feed_title` and `published_at`, and [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L1797-L1815) (`buildGuestArticleRecord`), `cacheLoadedArticlesFromDom`, `renderLocalAllArticles`, and `renderGuestEntryDetail` do not store or display them.
+   - [crates/ui-components/Cargo.toml](file:///Users/ptquang86/ws/my-ui/crates/ui-components/Cargo.toml#L6-L14) currently lists `chrono = "0.4"` only under `[dev-dependencies]`, so [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L142-L155) gates `chrono::DateTime::parse_from_rfc3339` behind `#[cfg(test)]`. Moving `chrono = "0.4"` to `[dependencies]` lets us compute compact relative time (`Just now`, `Xm ago`, `Xh ago`, `Xd ago`, or `DD/MM/YYYY` for >= 7 days) server-side and refresh `<time datetime="...">` client-side so cached Auth/Guest detail views never show stale relative times.
+   - Magazine cards (`#entries-magazine-view`) stay unchanged without visible `feed_title` or time text, preserving existing editorial layout assertions.
+
+4. **Undo toast on "Mark This Page as Read"**
+   - Auth mode (`#mark-page-read-btn` in [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L48-L62)) posts `entry_ids`, `status`, `offset`, `search` to `POST /hx/mark-page-read` ([entries.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/routes/entries.rs#L1291-L1432)), which calls GraphQL `updateEntriesStatus(..., status: READ)`, invalidates cache, loads the next/offset-0 page, and appends [toast.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/toast.html).
+   - Existing `/hx/entries/{id}/read?status=unread` ([entries.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/routes/entries.rs#L2101-L2239)) only handles a single entry ID and returns `EntryItemTemplate`. Calling it 50 times in a burst would consume 50 of the 60 tokens in `RateLimiter::default()` ([rate_limit.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/rate_limit.rs#L75-L79)) and issue ~150 upstream Miniflux requests.
+   - Adding `POST /hx/mark-page-unread` in [entries.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/routes/entries.rs) and [app.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/app.rs#L112) reuses `MarkPageReadForm` and GraphQL `updateEntriesStatus(entryIds: [...], status: UNREAD)` ([mutation.rs](file:///Users/ptquang86/ws/my-ui/crates/miniflux/src/schema/mutation.rs#L34-L50)) in a single upstream request, restores the original page at `form.offset`, and refreshes the unread counter.
+   - Guest mode (`markVisiblePageLocallyRead` in [index.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/pages/index.html#L2515-L2555)) must snapshot only newly marked IDs (`!readSet.has(id)`), `status`, `offset`, `search`, and whether `nextUrl` caused a page advance, so Undo removes only those IDs from `readSet` / IndexedDB `read_entries` and restores the previous page.
+   - Both [toast.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/partials/toast.html) and [base.html](file:///Users/ptquang86/ws/my-ui/crates/ui-components/templates/base.html#L610-L635) / `showToast` need `role="status"` and hover/focus auto-dismiss pause.
+
+## Constraints & Risks
+
+- **Preserving `templates.rs` script slice boundaries:**
+  - Tests in [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L3990-L4005), [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L4414-L4435), and [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L5063-L5071) assert exact function order (`refreshCurrentEntriesList()` before `renderLocalAllArticles()`, nothing added between `renderLocalAllArticles()` and `syncDomReadStates()`, guest mark-read helpers between `syncDomReadStates()` and `markLocallyRead()`, and `function showToast(message)` before `function triggerNativeBookmark`). New helpers must respect those boundaries.
+- **Updating legacy metadata-omission tests:**
+  - Existing tests in [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L359-L466), [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L702-L841), [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L3626-L3775), [templates.rs](file:///Users/ptquang86/ws/my-ui/crates/ui-components/src/templates.rs#L3778-L4018), and [entries.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/routes/entries.rs#L3243-L3335), [entries.rs](file:///Users/ptquang86/ws/my-ui/crates/server/src/routes/entries.rs#L4497-L4503) intentionally assert that `feed_title` and `<time>` / `published_at` are omitted. Those tests will be updated to verify the new `Feed · Relative time` rendering while keeping `author`, `reading_time`, and `sanitized_content` omitted.
+- **Undo button HTMX lifecycle:**
+  - In Auth mode, clicking the Undo `<button hx-post="/hx/mark-page-unread">` inside the toast must pause the toast timer while in flight and dismiss the toast after the swap/request completes rather than removing the button element before HTMX dispatches.
+- **CSS & Accessibility:**
+  - Keep container queries only (no hardcoded `@media` breakpoints), preserve `#detail-back-btn` visibility, avoid nested interactive tags inside clickable Magazine cards by using the CSS stretched-link (`::after`) pattern, and keep `role="status"` without stealing focus on toasts.
+- **API & Scope Classification:**
+  - Adding `POST /hx/mark-page-unread` flips `Has API` from `unknown` to `yes` (`Has UI=yes`, `Has API=yes`, `Has DB=no`, `Has auth/PII/schema=no`).
+
+## Open Questions
+
+None — all product decisions were confirmed during ideation.

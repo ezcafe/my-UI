@@ -1,11 +1,24 @@
 <div id="toast-container" hx-swap-oob="beforeend">
-  <div class="pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300">
+  <div role="status" aria-atomic="true" class="pointer-events-auto shadow-float rounded-full bg-foreground text-background pl-4 pr-2.5 py-2 flex items-center gap-2.5 text-xs font-bold font-sans transition-opacity duration-300">
     {% if is_error %}
     <i data-lucide="alert-circle" class="w-4 h-4 text-destructive shrink-0"></i>
     {% else %}
     <i data-lucide="check-circle-2" class="w-4 h-4 text-brand shrink-0"></i>
     {% endif %}
     <span>{{ message }}</span>
+    {% if let Some(u) = undo %}
+    <button
+      type="button"
+      hx-post="{{ u.url }}"
+      hx-target="#entries-list"
+      hx-swap="innerHTML"
+      hx-indicator="#entries-loading-bar"
+      hx-disabled-elt="this"
+      hx-vals="{{ u.vals_json }}"
+      class="toast-undo-btn ml-1 px-2.5 py-1 rounded-full bg-background/15 hover:bg-background/25 text-background font-bold transition-colors shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-background disabled:opacity-50 disabled:cursor-not-allowed">
+      {{ u.label }}
+    </button>
+    {% endif %}
     <button 
       type="button" 
       onclick="dismissToast(this)" 

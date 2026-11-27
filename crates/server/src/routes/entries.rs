@@ -14,7 +14,8 @@ use std::time::Duration;
 use ui_components::templates::{
     AiErrorCardTemplate, AiGroupedListTemplate, AiSummaryCardTemplate, AnalysisCardsTemplate,
     EntryDetailTemplate, EntryItemTemplate, EntryListTemplate, EntryViewModel, ErrorCardTemplate,
-    ExecutiveBriefCardTemplate, FeedSummaryGroupViewModel, ToastTemplate,
+    ExecutiveBriefCardTemplate, FeedSummaryGroupViewModel, ToastTemplate, ToastUndoAction,
+    ToastUndoPayload,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -31,11 +32,63 @@ pub struct EntriesFilterQuery {
 #[derive(Debug, Deserialize, Default)]
 pub struct MarkPageReadForm {
     pub entry_ids: Option<String>,
+    #[serde(default)]
+    pub unread_entry_ids: Option<String>,
     pub status: Option<String>,
     pub search: Option<String>,
     pub feed_id: Option<i64>,
     pub category_id: Option<i64>,
     pub offset: Option<i64>,
+}
+
+fn parse_validated_entry_ids(raw: Option<&str>, allow_json_array: bool) -> Result<Vec<i64>, AppError> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut ids = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if allow_json_array && trimmed.starts_with('[') {
+        let arr: Vec<serde_json::Value> = serde_json::from_str(trimmed)
+            .map_err(|_| AppError::BadRequest("Invalid entry IDs".to_string()))?;
+        ids.reserve(arr.len());
+        for v in arr {
+            let parsed = if let Some(s) = v.as_str() {
+                s.trim().parse::<i64>().ok()
+            } else {
+                v.as_i64()
+            };
+            match parsed {
+                Some(id) if id > 0 => {
+                    if seen.insert(id) {
+                        ids.push(id);
+                    }
+                }
+                _ => return Err(AppError::BadRequest("Invalid entry IDs".to_string())),
+            }
+        }
+        return Ok(ids);
+    }
+
+    for part in trimmed.split(',') {
+        let token = part.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let id = token
+            .parse::<i64>()
+            .map_err(|_| AppError::BadRequest("Invalid entry IDs".to_string()))?;
+        if id <= 0 {
+            return Err(AppError::BadRequest("Invalid entry IDs".to_string()));
+        }
+        if seen.insert(id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
 }
 
 static IMG_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -1378,11 +1431,89 @@ pub async fn get_entry_ai_summary_htmx(
     }
 }
 
+async fn update_entries_status_and_invalidate(
+    schema: &AppSchema,
+    cache: &MinifluxCache,
+    headers: &HeaderMap,
+    ids: &[i64],
+    status_enum: &str,
+) -> Result<(), Box<Response>> {
+    if !ids.is_empty() {
+        let id_strings: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        let ids_json = serde_json::to_string(&id_strings).unwrap_or_else(|_| "[]".to_string());
+        let gql = format!(
+            r#"mutation {{
+                updateEntriesStatus(entryIds: {ids_json}, status: {status_enum})
+            }}"#
+        );
+        let res = schema.execute(&gql).await;
+        if !res.errors.is_empty() {
+            return Err(Box::new(handle_htmx_error(
+                headers,
+                AppError::Upstream(format!("{:?}", res.errors)),
+            )));
+        }
+        for id in ids {
+            cache.invalidate(&format!("entry:{}", id)).await;
+        }
+    }
+    cache.invalidate("entries:").await;
+    cache.invalidate("index_page_entries").await;
+    Ok(())
+}
+
+async fn query_entries_total(
+    schema: &AppSchema,
+    config: &Config,
+    headers: &HeaderMap,
+    form: &MarkPageReadForm,
+) -> Result<i64, Box<Response>> {
+    let count_filter = build_graphql_filter(
+        &EntriesFilterQuery {
+            status: form.status.clone(),
+            search: form.search.clone(),
+            feed_id: form.feed_id,
+            category_id: form.category_id,
+            limit: Some(1),
+            offset: Some(0),
+            request_brief: None,
+        },
+        1,
+        0,
+        config.auth_enabled,
+    );
+    let gql = format!(
+        r#"query {{
+            entriesResult(filter: {{ {count_filter} }}) {{
+                total
+            }}
+        }}"#
+    );
+    let res = schema.execute(&gql).await;
+    if !res.errors.is_empty() {
+        return Err(Box::new(handle_htmx_error(
+            headers,
+            AppError::Upstream(format!("{:?}", res.errors)),
+        )));
+    }
+    Ok(res
+        .data
+        .into_json()
+        .ok()
+        .and_then(|d| {
+            d.get("entriesResult")
+                .and_then(|r| r.get("total"))
+                .and_then(|v| v.as_i64())
+        })
+        .unwrap_or(0))
+}
+
 pub async fn mark_page_read_htmx(
     _user: AuthenticatedUser,
     State(schema): State<AppSchema>,
     State(config): State<Arc<Config>>,
     State(cache): State<Arc<MinifluxCache>>,
+    State(ai_service): State<Arc<AiService>>,
     headers: HeaderMap,
     Form(form): Form<MarkPageReadForm>,
 ) -> Response {
@@ -1390,92 +1521,41 @@ pub async fn mark_page_read_htmx(
         return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
     }
 
-    let ids: Vec<String> = if let Some(raw) = &form.entry_ids {
-        if raw.trim().starts_with('[') {
-            serde_json::from_str::<Vec<serde_json::Value>>(raw)
-                .map(|arr| {
-                    arr.into_iter()
-                        .filter_map(|v| {
-                            if let Some(s) = v.as_str() {
-                                Some(s.to_string())
-                            } else {
-                                v.as_i64().map(|n| n.to_string())
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            raw.split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect()
-        }
-    } else {
-        Vec::new()
+    let ids = match parse_validated_entry_ids(form.entry_ids.as_deref(), true) {
+        Ok(parsed) => parsed,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid entry IDs").into_response(),
     };
 
-    if config.auth_enabled && !ids.is_empty() {
-        let ids_json = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
-        let gql = format!(
-            r#"mutation {{
-                updateEntriesStatus(entryIds: {ids_json}, status: READ)
-            }}"#
-        );
-        let res = schema.execute(&gql).await;
-        if !res.errors.is_empty() {
-            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
-        }
+    let undo_ids = match form.unread_entry_ids.as_deref() {
+        Some(raw_unread) => match parse_validated_entry_ids(Some(raw_unread), true) {
+            Ok(parsed) => parsed,
+            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid entry IDs").into_response(),
+        },
+        None => ids.clone(),
+    };
+
+    if let Err(resp) =
+        update_entries_status_and_invalidate(&schema, &cache, &headers, &undo_ids, "READ").await
+    {
+        return *resp;
     }
 
-    cache.invalidate("entries:").await;
-    cache.invalidate("index_page_entries").await;
-
-    let current_offset = form.offset.unwrap_or(0);
+    let current_offset = form.offset.unwrap_or(0).max(0);
     let limit = 50;
-    let is_unread = form.status.as_deref() == Some("unread") || form.status.is_none();
+    let normalized_status = form
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let is_unread = matches!(normalized_status, None | Some("unread"));
 
     let (target_offset, show_last_page_toast) = if is_unread {
         (0, false)
     } else {
-        // Count total items under current filter
-        let count_filter = build_graphql_filter(
-            &EntriesFilterQuery {
-                status: form.status.clone(),
-                search: form.search.clone(),
-                feed_id: form.feed_id,
-                category_id: form.category_id,
-                limit: Some(1),
-                offset: Some(0),
-                request_brief: None,
-            },
-            1,
-            0,
-            config.auth_enabled,
-        );
-        let gql = format!(
-            r#"query {{
-                entriesResult(filter: {{ {count_filter} }}) {{
-                    total
-                }}
-            }}"#
-        );
-        let res = schema.execute(&gql).await;
-        if !res.errors.is_empty() {
-            return handle_htmx_error(&headers, AppError::Upstream(format!("{:?}", res.errors)));
-        }
-        let total = res
-            .data
-            .into_json()
-            .ok()
-            .and_then(|d| {
-                d.get("entriesResult")
-                    .and_then(|r| r.get("total"))
-                    .and_then(|v| v.as_i64())
-            })
-            .unwrap_or(0);
-
+        let total = match query_entries_total(&schema, &config, &headers, &form).await {
+            Ok(t) => t,
+            Err(resp) => return *resp,
+        };
         let next_offset = current_offset + limit;
         if next_offset < total {
             (next_offset, false)
@@ -1483,6 +1563,27 @@ pub async fn mark_page_read_htmx(
             (current_offset, true)
         }
     };
+
+    let undo_action = (!undo_ids.is_empty()).then(|| {
+        let payload = ToastUndoPayload {
+            entry_ids: undo_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            status: form.status.clone(),
+            search: form
+                .search
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+            feed_id: form.feed_id,
+            category_id: form.category_id,
+            offset: current_offset,
+        };
+        ToastUndoAction::from_payload("/hx/mark-page-unread", "Undo", &payload)
+    });
 
     let filter_query = EntriesFilterQuery {
         status: form.status,
@@ -1494,10 +1595,11 @@ pub async fn mark_page_read_htmx(
         request_brief: None,
     };
 
+    let ai_ref = config.ai_enabled.then_some(ai_service.as_ref());
     let html = render_entries_list_html(
         &schema,
-        None,
-        None,
+        Some(&cache),
+        ai_ref,
         &headers,
         &filter_query,
         config.auth_enabled,
@@ -1513,6 +1615,79 @@ pub async fn mark_page_read_htmx(
             let toast = ToastTemplate {
                 message: message.to_string(),
                 is_error: false,
+                undo: undo_action,
+            };
+            let toast_html = toast.render().unwrap_or_default();
+            Html(format!("{entries_html}{toast_html}")).into_response()
+        }
+        Err(resp) => *resp,
+    }
+}
+
+pub async fn mark_page_unread_htmx(
+    _user: AuthenticatedUser,
+    State(schema): State<AppSchema>,
+    State(config): State<Arc<Config>>,
+    State(cache): State<Arc<MinifluxCache>>,
+    State(ai_service): State<Arc<AiService>>,
+    headers: HeaderMap,
+    Form(form): Form<MarkPageReadForm>,
+) -> Response {
+    if !config.auth_enabled {
+        return (StatusCode::FORBIDDEN, "Mutations require authentication").into_response();
+    }
+
+    let ids = match parse_validated_entry_ids(form.entry_ids.as_deref(), false) {
+        Ok(parsed) => parsed,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid entry IDs").into_response(),
+    };
+
+    if let Err(resp) =
+        update_entries_status_and_invalidate(&schema, &cache, &headers, &ids, "UNREAD").await
+    {
+        return *resp;
+    }
+
+    let limit = 50;
+    let mut target_offset = form.offset.unwrap_or(0).max(0);
+    if target_offset > 0 {
+        let total = match query_entries_total(&schema, &config, &headers, &form).await {
+            Ok(t) => t,
+            Err(resp) => return *resp,
+        };
+        if total <= 0 {
+            target_offset = 0;
+        } else if target_offset >= total {
+            target_offset = ((total - 1) / limit) * limit;
+        }
+    }
+
+    let filter_query = EntriesFilterQuery {
+        status: form.status,
+        search: form.search,
+        feed_id: form.feed_id,
+        category_id: form.category_id,
+        limit: Some(limit),
+        offset: Some(target_offset),
+        request_brief: None,
+    };
+
+    let ai_ref = config.ai_enabled.then_some(ai_service.as_ref());
+    let html = render_entries_list_html(
+        &schema,
+        Some(&cache),
+        ai_ref,
+        &headers,
+        &filter_query,
+        config.auth_enabled,
+    )
+    .await;
+    match html {
+        Ok(entries_html) => {
+            let toast = ToastTemplate {
+                message: "Mark as read undone.".to_string(),
+                is_error: false,
+                undo: None,
             };
             let toast_html = toast.render().unwrap_or_default();
             Html(format!("{entries_html}{toast_html}")).into_response()
@@ -2245,7 +2420,7 @@ pub async fn mark_entry_read_htmx(
             published_at: e
                 .get("publishedAt")
                 .and_then(|v| v.as_str())
-                .unwrap_or("Just now")
+                .unwrap_or("")
                 .to_string(),
             category_title: None,
             reading_time: e.get("readingTime").and_then(|v| v.as_i64()).unwrap_or(1) as i32,
@@ -2280,7 +2455,7 @@ pub async fn mark_entry_read_htmx(
             suggested_title: None,
             feed_title: "Feed".to_string(),
             category_title: None,
-            published_at: "Just now".to_string(),
+            published_at: "".to_string(),
             reading_time: 2,
             summary: "Article marked status.".to_string(),
             sanitized_content: None,
@@ -3233,10 +3408,14 @@ mod tests {
     #[test]
     fn test_parse_validated_entry_ids_rejects_invalid_and_accepts_valid() {
         assert_eq!(
-            parse_validated_entry_ids(Some("101, 102"), false).unwrap(),
+            parse_validated_entry_ids(Some("101, 102, 101"), false).unwrap(),
             vec![101, 102]
         );
-        assert_eq!(parse_validated_entry_ids(Some(""), false).unwrap(), vec![]);
+        assert_eq!(
+            parse_validated_entry_ids(Some("[101, \"102\", 101]"), true).unwrap(),
+            vec![101, 102]
+        );
+        assert_eq!(parse_validated_entry_ids(Some(""), false).unwrap(), Vec::<i64>::new());
         assert!(parse_validated_entry_ids(Some("101,abc"), false).is_err());
         assert!(parse_validated_entry_ids(Some("0,101"), false).is_err());
         assert!(parse_validated_entry_ids(Some("-5"), false).is_err());
@@ -3509,11 +3688,13 @@ mod tests {
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
         assert!(
-            !html.contains("<time")
+            html.contains("Tech Feed")
+                && html.contains("<time")
+                && html.contains(r#"data-relative-time="true""#)
+                && html.contains(" · ")
                 && !html.contains("data-date-format")
-                && !html.contains("Tech Feed")
-                && !html.contains("23/11/2026"),
-            "Detail route must omit feed_title and <time> metadata: {}",
+                && !html.contains("min read"),
+            "Detail route must render feed_title and relative <time> metadata without data-date-format or reading_time: {}",
             html
         );
     }
@@ -3614,8 +3795,9 @@ mod tests {
         assert!(html.contains(r#"data-fallback-summary="AI brief 779.""#));
         assert!(html.contains(r#"hx-trigger="ai-rewrite-done-779 from:body""#));
         assert!(!html.contains("Fourth sentence raw Miniflux body 779"));
-        assert!(!html.contains("Hidden Wire 779"));
-        assert!(!html.contains("<time"));
+        assert!(html.contains("Hidden Wire 779"));
+        assert!(html.contains("<time") && html.contains(r#"data-relative-time="true""#));
+        assert!(!html.contains("4 min read"));
 
         // 2. ai_enabled = false -> inline warning + plain-text fallback, no /rewrite trigger, no #ai-analysis-box
         let app_no_ai = make_app(false).await;
@@ -4690,8 +4872,8 @@ mod tests {
             assert!(!html[start..end].contains("Original Miniflux Body"));
             assert!(!html[start..end].contains("javascript:alert(3)"));
             assert!(item.get("sanitized_content").is_none());
-            assert!(item.get("feed_title").is_none());
-            assert!(item.get("published_at").is_none());
+            assert_eq!(item["feed_title"], "Tech Feed");
+            assert_eq!(item["published_at"], "2026-11-23T12:00:00Z");
             assert!(item.get("formatted_date").is_none());
             assert!(item.get("author").is_none());
             assert!(item.get("reading_time").is_none());

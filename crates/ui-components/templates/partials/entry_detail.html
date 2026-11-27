@@ -1,22 +1,45 @@
 <div class="flex flex-col h-full w-full" data-entry-id="{{ entry.id }}">
   <!-- Detail Header: fixed h-8 matching skeleton, full parent width, no border, no vertical jump -->
   <div class="flex items-center justify-between mb-6 shrink-0 w-full h-8">
-    <button 
-      id="detail-back-btn"
-      onclick="closeDetailPanel()" 
-      class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity shrink-0">
-      <i data-lucide="chevron-left" class="w-4 h-4 shrink-0"></i>
-      <span>Back</span>
-    </button>
+    <div class="flex items-center gap-1.5 h-8 shrink-0">
+      <button 
+        id="detail-back-btn"
+        type="button"
+        onclick="closeDetailPanel()" 
+        class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold hover:opacity-90 transition-opacity shrink-0">
+        <i data-lucide="chevron-left" class="w-4 h-4 shrink-0"></i>
+        <span>Back</span>
+      </button>
+      <button
+        id="detail-prev-btn"
+        type="button"
+        onclick="navigateDetailArticle(-1)"
+        aria-label="Previous article"
+        title="Previous article"
+        class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+        <i data-lucide="chevron-up" class="w-4 h-4 shrink-0"></i>
+      </button>
+      <button
+        id="detail-next-btn"
+        type="button"
+        onclick="navigateDetailArticle(1)"
+        aria-label="Next article"
+        title="Next article"
+        class="w-8 h-8 inline-flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted text-foreground transition-colors shrink-0 disabled:opacity-40 disabled:pointer-events-none">
+        <i data-lucide="chevron-down" class="w-4 h-4 shrink-0"></i>
+      </button>
+    </div>
 
-    <div class="flex items-center gap-2 h-8 shrink-0">
+    <div class="flex items-center gap-1.5 h-8 shrink-0">
       <a 
         href="{{ self.safe_entry_url() }}" 
         target="_blank" 
         rel="noopener noreferrer" 
         onclick="markArticleRead({{ entry.id }})" 
-        class="h-8 px-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors shrink-0">
-        <span>Original</span>
+        aria-label="Original article"
+        title="Original article"
+        class="detail-original-link h-8 px-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-card hover:bg-muted text-xs font-medium text-foreground transition-colors shrink-0">
+        <span class="detail-original-label">Original</span>
         <i data-lucide="external-link" class="w-3.5 h-3.5 shrink-0"></i>
       </a>
 
@@ -74,6 +97,11 @@
         <h1 class="text-xl md:text-2xl font-bold font-sans text-white leading-snug drop-shadow-sm">
           {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
         </h1>
+        {% if !entry.feed_title.trim().is_empty() || !entry.published_at.trim().is_empty() %}
+        <div class="text-xs text-white/85 font-sans mt-1.5 truncate">
+          {% if !entry.feed_title.trim().is_empty() %}<span>{{ entry.feed_title }}</span>{% endif %}{% if !entry.feed_title.trim().is_empty() && !entry.published_at.trim().is_empty() %}<span aria-hidden="true"> · </span>{% endif %}{% if !entry.published_at.trim().is_empty() %}<time datetime="{{ entry.published_at }}" data-relative-time="true">{{ entry.relative_published_at() }}</time>{% endif %}
+        </div>
+        {% endif %}
       </div>
     </div>
     {% else %}
@@ -81,6 +109,11 @@
       <h1 class="text-2xl font-bold font-sans text-foreground leading-snug">
         {% if let Some(suggested) = entry.suggested_title %}{{ suggested }}{% else %}{{ entry.title }}{% endif %}
       </h1>
+      {% if !entry.feed_title.trim().is_empty() || !entry.published_at.trim().is_empty() %}
+      <div class="text-xs text-muted-foreground font-sans mt-1.5 truncate">
+        {% if !entry.feed_title.trim().is_empty() %}<span>{{ entry.feed_title }}</span>{% endif %}{% if !entry.feed_title.trim().is_empty() && !entry.published_at.trim().is_empty() %}<span aria-hidden="true"> · </span>{% endif %}{% if !entry.published_at.trim().is_empty() %}<time datetime="{{ entry.published_at }}" data-relative-time="true">{{ entry.relative_published_at() }}</time>{% endif %}
+      </div>
+      {% endif %}
     </div>
     {% endif %}
 
